@@ -1,8 +1,9 @@
 // Ações de edição sobre a seleção. Usadas pelo teclado e pela barra de ações (toque).
 import { detachForeign, reidentify } from "./binding";
-import { HirakuElement, TextElement } from "./model";
+import { parseHex, pushRecent } from "./color";
+import { HirakuElement, TextElement, isLinear } from "./model";
 import { applyXform, moveXform } from "./selection";
-import { selectActivePage, useDoc, useSel } from "./store";
+import { selectActivePage, useDoc, useSel, useTool } from "./store";
 import { beginEditText, useEdit } from "./textEdit";
 import { measureBlock } from "./text";
 
@@ -67,6 +68,32 @@ export function recolorSelection(color: string) {
   const els = selectedElements();
   if (!els.length) return;
   useDoc.getState().updateElements(els.map((e) => (e.type === "stroke" || e.type === "text" ? { ...e, color } : { ...e, stroke: color })));
+}
+
+/**
+ * Escolhe a cor ativa. `commit: false` serve para arrastes (só muda a cor da ferramenta, sem encher o
+ * histórico); `commit: true` (padrão) também recolore a seleção/o texto e vale como um passo de desfazer.
+ * `remember: false` não põe a cor nos recentes (usado pelas cores fixas da barra).
+ */
+export function applyColor(color: string, opts: { commit?: boolean; remember?: boolean } = {}) {
+  const c = parseHex(color);
+  if (!c) return;
+  const t = useTool.getState();
+  useEdit.getState().patch({ color: c }); // muda a cor do texto em edição
+  if (opts.commit === false) {
+    t.set({ color: c });
+    return;
+  }
+  t.set(opts.remember === false ? { color: c } : { color: c, recent: pushRecent(t.recent, c) });
+  if (useSel.getState().ids.length > 0 && (t.tool === "select" || t.tool === "lasso")) recolorSelection(c);
+  else if (t.tool === "eraser" || t.tool === "hand") t.setTool("pen");
+}
+
+/** Cor "principal" de um elemento, para o conta-gotas (forma preenchida → preenchimento). */
+export function elementColor(el: HirakuElement): string {
+  if (el.type === "stroke" || el.type === "text") return el.color;
+  if (isLinear(el)) return el.stroke;
+  return el.fill ?? el.stroke;
 }
 
 /** Vai para a página anterior (-1) ou próxima (+1). */

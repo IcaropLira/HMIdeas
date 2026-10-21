@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { applyColor, elementColor } from "../core/actions";
+import { getBrush } from "../core/brushes";
 import { panBy, screenToWorld, zoomAt } from "../core/camera";
 import { elementHit } from "../core/geometry";
 import { bindableAt, makeBinding, solveArrow } from "../core/binding";
@@ -9,6 +11,7 @@ import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/stor
 import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
 import { InputController, Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
+import { InkStyle } from "../render/strokeDraw";
 import { createSelectController } from "../tools/selectTool";
 
 interface Smoothed { x: number; y: number; p: number }
@@ -21,6 +24,7 @@ export function CanvasView() {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tool = useTool((s) => s.tool);
+  const picking = useTool((s) => s.picking);
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -37,7 +41,7 @@ export function CanvasView() {
     let sm: Smoothed = { x: 0, y: 0, p: 0.5 }; // posição suavizada (tela)
     let raw: Smoothed = { x: 0, y: 0, p: 0.5 }; // última amostra real (tela)
     let style = {
-      color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0,
+      color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0, brush: "pen", opacity: 1,
       lineStyle: "solid" as ShapeElement["strokeStyle"], fill: null as string | null, rounded: true,
       startHead: "none" as ArrowHead, endHead: "arrow" as ArrowHead, curved: false,
     };
@@ -79,7 +83,27 @@ export function CanvasView() {
       return Math.hypot(pt.x - last.x, pt.y - last.y) >= min;
     };
 
-    const inkStyle = () => ({ color: style.color, width: style.width, sens: style.sens, taper: style.taper });
+    /** Estilo da tinta: a largura guardada no traço já inclui o multiplicador do brush; opacidade = brush × usuário. */
+    const inkStyle = (): InkStyle => {
+      const b = getBrush(style.brush);
+      return { color: style.color, width: style.width * b.size, sens: style.sens, taper: style.taper, brush: b.id, opacity: b.opacity * style.opacity };
+    };
+
+    /** Conta-gotas: pega a cor do elemento mais acima sob o toque (ou a do papel, se não houver nenhum). */
+    const pickColorAt = (s: Sample) => {
+      const cam = useView.getState().camera;
+      const P = screenToWorld(cam, s.x, s.y);
+      const page = selectActivePage(useDoc.getState());
+      let color = page.background;
+      for (let i = page.elements.length - 1; i >= 0; i--) {
+        if (elementHit(page.elements[i], P.x, P.y, 3 / cam.zoom)) {
+          color = elementColor(page.elements[i]);
+          break;
+        }
+      }
+      useTool.getState().set({ picking: false });
+      applyColor(color);
+    };
 
     const shapeFrom = (id: string, box: Box): ShapeElement =>
       makeShape(id, shapeType, box, {
@@ -157,11 +181,15 @@ export function CanvasView() {
             const t = useTool.getState();
             style = {
               color: t.color, width: t.width, sens: t.pressureSens, smoothing: t.smoothing, taper: t.taper,
+              brush: t.brush, opacity: t.opacity,
               lineStyle: t.lineStyle, fill: t.fill, rounded: t.rounded,
               startHead: t.startHead, endHead: t.endHead, curved: t.curved,
             };
 
-            if (s.eraserTip || t.tool === "eraser") {
+            if (t.picking) {
+              mode = "text"; // sem movimento/fim: só pega a cor e acabou
+              pickColorAt(s);
+            } else if (s.eraserTip || t.tool === "eraser") {
               mode = "erase";
               erased = new Set();
               lastErase = null;
@@ -296,15 +324,17 @@ export function CanvasView() {
               if (accept(pt)) points.push(pt);
             }
             if (points.length) {
+              const ink = inkStyle();
               useDoc.getState().addElement({
                 id: newId(),
                 type: "stroke",
                 points,
-                color: style.color,
-                width: style.width,
-                sens: style.sens,
-                taper: style.taper,
-                opacity: 1,
+                color: ink.color,
+                width: ink.width,
+                sens: ink.sens,
+                taper: ink.taper,
+                brush: ink.brush,
+                opacity: ink.opacity,
               });
             }
             // Primeiro grava no documento (o sync desenha o traço final), depois limpa o ao vivo.
@@ -369,7 +399,7 @@ export function CanvasView() {
 
   return (
     <div ref={hostRef} className="canvas-host">
-      <canvas ref={canvasRef} className={`canvas ${tool}`} />
+      <canvas ref={canvasRef} className={`canvas ${tool}${picking ? " pick" : ""}`} />
     </div>
   );
 }

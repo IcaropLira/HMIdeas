@@ -4,11 +4,12 @@ import { defaultCamera } from "../core/camera";
 import { ARROW_HEADS, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES } from "../core/model";
 import { resetPageCameras } from "../core/pageView";
 import { downloadDoc, parseDoc } from "../core/serialize";
-import { deleteSelection, duplicateSelection, recolorSelection, restyleText } from "../core/actions";
+import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
 import { ToolId, selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { FONTS, FONT_SIZES } from "../core/text";
-import { useEdit } from "../core/textEdit";
 import { useUI } from "../core/ui";
+import { BrushPanel } from "./BrushPanel";
+import { ColorPicker } from "./ColorPicker";
 
 const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
 const FILLS: { value: string | null; label: string }[] = [
@@ -31,7 +32,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
-type Panel = null | "paper" | "feel" | "shape" | "text";
+type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color";
 
 export function Toolbar() {
   const t = useTool();
@@ -106,6 +107,18 @@ export function Toolbar() {
               ))}
             </div>
           </div>
+        )}
+
+        {panel === "brush" && <BrushPanel />}
+
+        {panel === "color" && (
+          <ColorPicker
+            onEyedropper={() => {
+              setPanel(null);
+              t.set({ picking: true });
+              useUI.getState().showToast("Toque num desenho para pegar a cor dele (ou na folha, para pegar a cor do papel).");
+            }}
+          />
         )}
 
         {panel === "feel" && (
@@ -243,6 +256,9 @@ export function Toolbar() {
             {toolBtn("select", "Selecionar", <path d="M5 3l14 7-6 2-2 6L5 3z" />, "Selecionar (V)")}
             {toolBtn("lasso", "Laço", <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>, "Laço (L)")}
             {toolBtn("pen", "Caneta", <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>, "Caneta (P)")}
+            <button className={panel === "brush" ? "btn on" : "btn"} onClick={() => toggle("brush")} aria-expanded={panel === "brush"} aria-label="Pincéis" title="Pincéis">
+              <Icon><path d="M20 4l-8.5 8.5" /><path d="M11.5 12.5c-2.5-.5-4.5 1-4.5 3.5 0 1.5-1 2.5-3 3 2.5 2 7.5 1 8-1.5.4-2-.2-3.8-.5-5z" /></Icon>
+            </button>
             {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
             {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
             {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
@@ -274,18 +290,17 @@ export function Toolbar() {
               <button
                 key={c}
                 role="radio"
-                aria-checked={t.color === c}
+                aria-checked={t.color.toUpperCase() === c}
                 aria-label={`Cor ${c}`}
-                className={t.color === c ? "swatch on" : "swatch"}
+                className={t.color.toUpperCase() === c ? "swatch on" : "swatch"}
                 style={{ background: c }}
-                onClick={() => {
-                  t.set({ color: c });
-                  useEdit.getState().patch({ color: c }); // muda a cor do texto em edição
-                  if (selCount > 0 && (t.tool === "select" || t.tool === "lasso")) recolorSelection(c); // recolore a seleção
-                  else if (erasing || t.tool === "hand") t.setTool("pen");
-                }}
+                onClick={() => applyColor(c, { remember: false })}
               />
             ))}
+            {!COLORS.includes(t.color.toUpperCase()) && (
+              <button role="radio" aria-checked aria-label={`Cor ${t.color}`} title={t.color} className="swatch on" style={{ background: t.color }} onClick={() => toggle("color")} />
+            )}
+            <button className={panel === "color" ? "swatch more on" : "swatch more"} onClick={() => toggle("color")} aria-expanded={panel === "color"} aria-label="Mais cores" title="Mais cores" />
           </div>
 
           <label className="group size">

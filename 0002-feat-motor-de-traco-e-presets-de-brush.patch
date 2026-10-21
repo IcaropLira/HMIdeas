@@ -1,0 +1,369 @@
+From da8f10e6d4838a59e2bd63466a913afeed50c3b9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8Dcaro=20Lira?= <icaroplira@gmail.com>
+Date: Wed, 21 Oct 2026 16:03:37 +0000
+Subject: [PATCH] feat: motor de traco mais preciso e presets de brush
+
+---
+ src/components/CanvasView.tsx | 14 ++++--
+ src/components/Toolbar.tsx    | 92 ++++++++++++++++++++++++++++++++++-
+ src/core/model.ts             | 15 +++++-
+ src/core/store.ts             | 10 +++-
+ src/input/InputController.ts  |  3 ++
+ src/render/strokeDraw.ts      | 23 ++++++---
+ 6 files changed, 142 insertions(+), 15 deletions(-)
+
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 20b178f..c3fef81 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -3,7 +3,7 @@ import { panBy, screenToWorld, zoomAt } from "../core/camera";
+ import { elementHit } from "../core/geometry";
+ import { bindableAt, makeBinding, solveArrow } from "../core/binding";
+ import { makeLinear, snapAngle } from "../core/linear";
+-import { ArrowBinding, ArrowHead, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
++import { ArrowBinding, ArrowHead, BrushKind, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
+ import { Box, Pt, boxFromDrag, makeShape, outlinePath } from "../core/shapes";
+ import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
+ import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
+@@ -37,7 +37,7 @@ export function CanvasView() {
+     let sm: Smoothed = { x: 0, y: 0, p: 0.5 }; // posição suavizada (tela)
+     let raw: Smoothed = { x: 0, y: 0, p: 0.5 }; // última amostra real (tela)
+     let style = {
+-      color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0,
++      color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0, brush: "ink" as BrushKind, opacity: 1,
+       lineStyle: "solid" as ShapeElement["strokeStyle"], fill: null as string | null, rounded: true,
+       startHead: "none" as ArrowHead, endHead: "arrow" as ArrowHead, curved: false,
+     };
+@@ -79,7 +79,7 @@ export function CanvasView() {
+       return Math.hypot(pt.x - last.x, pt.y - last.y) >= min;
+     };
+ 
+-    const inkStyle = () => ({ color: style.color, width: style.width, sens: style.sens, taper: style.taper });
++    const inkStyle = () => ({ color: style.color, width: style.width, sens: style.sens, taper: style.taper, brush: style.brush, opacity: style.opacity });
+ 
+     const shapeFrom = (id: string, box: Box): ShapeElement =>
+       makeShape(id, shapeType, box, {
+@@ -156,7 +156,7 @@ export function CanvasView() {
+           drawStart(s) {
+             const t = useTool.getState();
+             style = {
+-              color: t.color, width: t.width, sens: t.pressureSens, smoothing: t.smoothing, taper: t.taper,
++              color: t.color, width: t.width, sens: t.pressureSens, smoothing: t.smoothing, taper: t.taper, brush: t.brush, opacity: t.brushOpacity,
+               lineStyle: t.lineStyle, fill: t.fill, rounded: t.rounded,
+               startHead: t.startHead, endHead: t.endHead, curved: t.curved,
+             };
+@@ -295,16 +295,20 @@ export function CanvasView() {
+               const pt = smoothStep(raw);
+               if (accept(pt)) points.push(pt);
+             }
++            // A última amostra deve coincidir com o ponto em que o usuário soltou o ponteiro.
++            const endpoint = worldPoint(raw.x, raw.y, raw.p);
++            if (accept(endpoint)) points.push(endpoint);
+             if (points.length) {
+               useDoc.getState().addElement({
+                 id: newId(),
+                 type: "stroke",
+                 points,
+                 color: style.color,
++                brush: style.brush,
+                 width: style.width,
+                 sens: style.sens,
+                 taper: style.taper,
+-                opacity: 1,
++                opacity: style.opacity,
+               });
+             }
+             // Primeiro grava no documento (o sync desenha o traço final), depois limpa o ao vivo.
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index e1a2441..373fec5 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -1,7 +1,7 @@
+ import { ReactNode, useEffect, useRef, useState } from "react";
+ import { Icon } from "./Icon";
+ import { defaultCamera } from "../core/camera";
+-import { ARROW_HEADS, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES } from "../core/model";
++import { ARROW_HEADS, BRUSH_PRESETS, BrushKind, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES } from "../core/model";
+ import { resetPageCameras } from "../core/pageView";
+ import { downloadDoc, parseDoc } from "../core/serialize";
+ import { deleteSelection, duplicateSelection, recolorSelection, restyleText } from "../core/actions";
+@@ -31,7 +31,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
+   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
+ };
+ 
+-type Panel = null | "paper" | "feel" | "shape" | "text";
++type Panel = null | "paper" | "feel" | "brush" | "shape" | "text";
+ 
+ export function Toolbar() {
+   const t = useTool();
+@@ -42,6 +42,7 @@ export function Toolbar() {
+   const selCount = useSel((s) => s.ids.length);
+   const [panel, setPanel] = useState<Panel>(null);
+   const fileRef = useRef<HTMLInputElement>(null);
++  const brushFileRef = useRef<HTMLInputElement>(null);
+   const dockRef = useRef<HTMLDivElement>(null);
+ 
+   // Fecha o painel ao tocar fora (inclusive no canvas).
+@@ -56,6 +57,62 @@ export function Toolbar() {
+ 
+   const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
+ 
++  const chooseBrush = (id: BrushKind) => {
++    const preset = BRUSH_PRESETS.find((b) => b.id === id);
++    if (!preset) return;
++    t.set({ brush: id, width: preset.width, pressureSens: preset.sens, taper: preset.taper, brushOpacity: preset.opacity });
++  };
++
++  const exportBrush = () => {
++    const data = {
++      format: "hmideas-brush",
++      version: 1,
++      name: BRUSH_PRESETS.find((b) => b.id === t.brush)?.label ?? t.brush,
++      brush: t.brush,
++      width: t.width,
++      pressureSens: t.pressureSens,
++      taper: t.taper,
++      opacity: t.brushOpacity,
++      smoothing: t.smoothing,
++      color: t.color,
++    };
++    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
++    const url = URL.createObjectURL(blob);
++    const a = document.createElement("a");
++    a.href = url;
++    a.download = `hmideas-brush-${t.brush}.json`;
++    a.click();
++    URL.revokeObjectURL(url);
++    useUI.getState().showToast("Preset do HMIdeas exportado.");
++  };
++
++  const importBrush = async (file: File | undefined) => {
++    if (!file) return;
++    try {
++      const data = JSON.parse(await file.text()) as Record<string, unknown>;
++      const kinds: BrushKind[] = ["pencil", "ink", "marker", "highlighter", "charcoal", "soft"];
++      if (data.format !== "hmideas-brush" || data.version !== 1 || !kinds.includes(data.brush as BrushKind)) {
++        throw new Error("Formato não reconhecido. Por enquanto, importe presets JSON exportados pelo HMIdeas; formatos Krita, ABR e sut exigem conversores próprios.");
++      }
++      const numberIn = (key: string, min: number, max: number, fallback: number) =>
++        typeof data[key] === "number" && Number.isFinite(data[key]) ? Math.max(min, Math.min(max, data[key] as number)) : fallback;
++      t.set({
++        brush: data.brush as BrushKind,
++        width: numberIn("width", 1, 40, t.width),
++        pressureSens: numberIn("pressureSens", 0, 1, t.pressureSens),
++        taper: numberIn("taper", 0, 1, t.taper),
++        brushOpacity: numberIn("opacity", 0.05, 1, t.brushOpacity),
++        smoothing: numberIn("smoothing", 0, 0.9, t.smoothing),
++        ...(typeof data.color === "string" && /^#[0-9a-f]{6}$/i.test(data.color) ? { color: data.color } : {}),
++      });
++      useUI.getState().showToast("Preset importado. Os parâmetros foram aplicados à ferramenta.");
++    } catch (err) {
++      useUI.getState().showToast(err instanceof Error ? err.message : "Não foi possível importar o preset.");
++    } finally {
++      if (brushFileRef.current) brushFileRef.current.value = "";
++    }
++  };
++
+   const open = async (file: File | undefined) => {
+     if (!file) return;
+     try {
+@@ -108,6 +165,34 @@ export function Toolbar() {
+           </div>
+         )}
+ 
++        {panel === "brush" && (
++          <div className="panel" role="dialog" aria-label="Biblioteca de pincéis">
++            <div className="row" role="radiogroup" aria-label="Pincel">
++              {BRUSH_PRESETS.map((b) => (
++                <button key={b.id} role="radio" aria-checked={t.brush === b.id} className={t.brush === b.id ? "chip on" : "chip"} title={b.description} onClick={() => chooseBrush(b.id)}>
++                  {b.label}
++                </button>
++              ))}
++            </div>
++            <label className="slider">
++              <span>Tamanho</span>
++              <input type="range" min={1} max={40} step={0.5} value={t.width} onChange={(e) => t.set({ width: +e.target.value })} />
++              <output>{t.width.toFixed(1)}</output>
++            </label>
++            <label className="slider">
++              <span>Opacidade</span>
++              <input type="range" min={0.05} max={1} step={0.05} value={t.brushOpacity} onChange={(e) => t.set({ brushOpacity: +e.target.value })} />
++              <output>{Math.round(t.brushOpacity * 100)}%</output>
++            </label>
++            <div className="row">
++              <button className="chip" onClick={exportBrush}>Exportar preset</button>
++              <button className="chip" onClick={() => brushFileRef.current?.click()}>Importar JSON</button>
++              <input ref={brushFileRef} type="file" accept=".json,application/json" hidden onChange={(e) => { void importBrush(e.target.files?.[0]); }} />
++            </div>
++            <p className="hint">Mouse funciona sem mesa digitalizadora; canetas compatíveis usam pressão real. A importação de formatos proprietários (Krita, Photoshop/ABR e CSP/SUT) será feita por conversores específicos, pois esses arquivos podem conter dinâmicas e texturas que o JSON nativo não representa.</p>
++          </div>
++        )}
++
+         {panel === "feel" && (
+           <div className="panel" role="dialog" aria-label="Ajustes da caneta">
+             <label className="slider">
+@@ -243,6 +328,9 @@ export function Toolbar() {
+             {toolBtn("select", "Selecionar", <path d="M5 3l14 7-6 2-2 6L5 3z" />, "Selecionar (V)")}
+             {toolBtn("lasso", "Laço", <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>, "Laço (L)")}
+             {toolBtn("pen", "Caneta", <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>, "Caneta (P)")}
++            <button className={panel === "brush" ? "btn on" : "btn"} onClick={() => toggle("brush")} aria-expanded={panel === "brush"} aria-label="Biblioteca de pincéis" title="Pincéis e presets">
++              <Icon><path d="M14 4l6 6M4 20c2.5 0 4-1.5 4-4 0-2 1-3 3-3l7-7a2 2 0 00-3-3l-7 7c0 2-1 3-3 3-2.5 0-4 1.5-4 4v3z" /></Icon>
++            </button>
+             {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
+             {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
+             {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
+diff --git a/src/core/model.ts b/src/core/model.ts
+index 3a00fcd..a7df0e1 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -11,9 +11,22 @@ export interface InkPoint {
+   p: number;
+ }
+ 
++export type BrushKind = "pencil" | "ink" | "marker" | "highlighter" | "charcoal" | "soft";
++
++export const BRUSH_PRESETS: { id: BrushKind; label: string; description: string; width: number; sens: number; taper: number; opacity: number }[] = [
++  { id: "pencil", label: "Lápis HB", description: "Traço fino para estudo e esboço.", width: 2, sens: 0.55, taper: 0.18, opacity: 0.9 },
++  { id: "ink", label: "Caneta técnica", description: "Contorno limpo e firme.", width: 2.5, sens: 0.25, taper: 0.12, opacity: 1 },
++  { id: "marker", label: "Marcador", description: "Traço largo e macio.", width: 7, sens: 0.18, taper: 0.04, opacity: 0.82 },
++  { id: "highlighter", label: "Marca-texto", description: "Transparente para destacar texto.", width: 14, sens: 0.05, taper: 0, opacity: 0.28 },
++  { id: "charcoal", label: "Carvão", description: "Traço mais orgânico e expressivo.", width: 6, sens: 0.75, taper: 0.3, opacity: 0.82 },
++  { id: "soft", label: "Pincel suave", description: "Traço suave para pintura simples.", width: 10, sens: 0.35, taper: 0.08, opacity: 0.48 },
++];
++
+ export interface StrokeElement {
+   id: ID;
+   type: "stroke";
++  /** Perfil visual; ausente em arquivos antigos equivale à caneta técnica. */
++  brush?: BrushKind;
+   points: InkPoint[];
+   color: string;
+   /** Largura base em unidades do mundo. */
+@@ -204,7 +217,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         ? p.elements.filter(validElement).map((e: any) =>
+             e.type === "stroke"
+-              ? { ...e, sens: typeof e.sens === "number" ? e.sens : 1, taper: typeof e.taper === "number" ? e.taper : 0 }
++              ? { ...e, brush: ["pencil", "ink", "marker", "highlighter", "charcoal", "soft"].includes(e.brush) ? e.brush : "ink", sens: typeof e.sens === "number" ? e.sens : 1, taper: typeof e.taper === "number" ? e.taper : 0, opacity: typeof e.opacity === "number" ? Math.max(0, Math.min(1, e.opacity)) : 1 }
+               : e.type === "arrow"
+                 ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
+                 : e.type === "text"
+diff --git a/src/core/store.ts b/src/core/store.ts
+index 331514f..3904985 100644
+--- a/src/core/store.ts
++++ b/src/core/store.ts
+@@ -2,7 +2,7 @@ import { create } from "zustand";
+ import { persist } from "zustand/middleware";
+ import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
+ import { Camera, defaultCamera } from "./camera";
+-import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
++import { ArrowHead, BrushKind, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
+ 
+ export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | ShapeType | LinearType;
+ 
+@@ -187,6 +187,10 @@ export const useView = create<ViewState>((set) => ({
+ interface ToolState {
+   tool: ToolId;
+   color: string;
++  /** Perfil do pincel selecionado. */
++  brush: BrushKind;
++  /** Opacidade geral do pincel, de 0 a 1. */
++  brushOpacity: number;
+   /** Largura da caneta / contorno das formas, em unidades do mundo. */
+   width: number;
+   /** Diâmetro da borracha em pixels de tela. */
+@@ -223,6 +227,8 @@ export const useTool = create<ToolState>()(
+     (set) => ({
+       tool: "pen",
+       color: "#1B2233",
++      brush: "ink",
++      brushOpacity: 1,
+       width: 3,
+       eraserSize: 28,
+       pressureSens: 0.8,
+@@ -246,6 +252,8 @@ export const useTool = create<ToolState>()(
+       name: "hmideas-tool",
+       partialize: (s) => ({
+         color: s.color,
++        brush: s.brush,
++        brushOpacity: s.brushOpacity,
+         width: s.width,
+         eraserSize: s.eraserSize,
+         pressureSens: s.pressureSens,
+diff --git a/src/input/InputController.ts b/src/input/InputController.ts
+index 193739e..36e7bc0 100644
+--- a/src/input/InputController.ts
++++ b/src/input/InputController.ts
+@@ -217,6 +217,9 @@ export class InputController {
+   private onUp = (e: PointerEvent) => {
+     this.touches.delete(e.pointerId);
+     if (this.mode === "draw" && e.pointerId === this.drawPointerId) {
++      // O último pointermove pode não chegar ao ponto exato do pointerup (especialmente no mouse).
++      // Inclui a posição final antes de confirmar o traço; pontos repetidos são filtrados pela ferramenta.
++      this.h.drawMove([this.sample(e)]);
+       this.h.drawEnd();
+       this.reset();
+     } else if (this.mode === "pan" && e.pointerId === this.panPointerId) {
+diff --git a/src/render/strokeDraw.ts b/src/render/strokeDraw.ts
+index e256c3c..42b43ae 100644
+--- a/src/render/strokeDraw.ts
++++ b/src/render/strokeDraw.ts
+@@ -3,27 +3,38 @@
+ // O MESMO código desenha o traço ao vivo e o gravado → nada "salta" ao soltar a caneta.
+ import { getStroke } from "perfect-freehand";
+ import { Graphics } from "pixi.js";
+-import { InkPoint, StrokeElement } from "../core/model";
++import { BrushKind, InkPoint, StrokeElement } from "../core/model";
+ 
+ export interface InkStyle {
+   color: string;
+   width: number;
+   sens: number;
+   taper: number;
++  brush?: BrushKind;
++  opacity?: number;
+ }
+ 
+ /** Contorno do traço como lista plana [x0, y0, x1, y1, ...]. */
+ export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean): number[] {
+   // Caneta real varia a pressão; mouse/dedo ficam sempre em 0.5.
+   const simulate = !points.some((p) => p.p !== 0.5);
++  const brush = st.brush ?? "ink";
+   const taper = st.taper * st.width * 6;
++  const profile = {
++    pencil: { thinning: 0.62, smoothing: 0.58, streamline: 0.22 },
++    ink: { thinning: 0.32, smoothing: 0.72, streamline: 0.28 },
++    marker: { thinning: 0.12, smoothing: 0.68, streamline: 0.2 },
++    highlighter: { thinning: 0.02, smoothing: 0.72, streamline: 0.18 },
++    charcoal: { thinning: 0.82, smoothing: 0.38, streamline: 0.12 },
++    soft: { thinning: 0.24, smoothing: 0.88, streamline: 0.3 },
++  }[brush];
+   const outline = getStroke(
+     points.map((p) => [p.x, p.y, p.p]),
+     {
+       size: st.width,
+-      thinning: (simulate ? 0.5 : 0.8) * st.sens,
+-      smoothing: 0.5,
+-      streamline: 0.15,
++      thinning: (simulate ? 0.5 : profile.thinning) * st.sens,
++      smoothing: profile.smoothing,
++      streamline: profile.streamline,
+       simulatePressure: simulate,
+       start: { taper, cap: true },
+       end: { taper, cap: true },
+@@ -39,10 +50,10 @@ export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean):
+ export function drawInk(g: Graphics, points: InkPoint[], st: InkStyle, last: boolean) {
+   if (!points.length) return;
+   const flat = strokeOutline(points, st, last);
+-  if (flat.length >= 6) g.poly(flat).fill({ color: st.color });
++  if (flat.length >= 6) g.poly(flat).fill({ color: st.color, alpha: st.opacity ?? 1 });
+ }
+ 
+ export function drawStrokeElement(g: Graphics, el: StrokeElement) {
+-  drawInk(g, el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper }, true);
++  drawInk(g, el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper, brush: el.brush ?? "ink" }, true);
+   g.alpha = el.opacity;
+ }
+-- 
+2.47.3
+

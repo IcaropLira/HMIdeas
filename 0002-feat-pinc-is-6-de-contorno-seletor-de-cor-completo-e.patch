@@ -1,0 +1,2143 @@
+From fbe3c7da28a652236f45f70954db41007e0731a9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8Dcaro=20Lira?= <icaroplira@gmail.com>
+Date: Wed, 21 Oct 2026 02:39:18 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20pinc=C3=A9is=20(6=20de=20contorno),=20s?=
+ =?UTF-8?q?eletor=20de=20cor=20completo=20e=20conta-gotas?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Registro de brushes em core/brushes.ts (puro) + contorno em core/ink.ts (puro, testável).
+Brushes de contorno: caneta, esferográfica, nanquim, marcador, marca-texto (translúcido,
+multiply, ponta reta) e pincel. A caneta gera exatamente o mesmo contorno de antes
+(coberto por teste), então traços e arquivos antigos não mudam.
+
+- StrokeElement ganha `brush`; arquivos antigos viram "pen" em normalizeDoc (continua versão 1: campo aditivo)
+- width/opacity guardados já são os efetivos (controle × brush), então seleção/escala/miniatura não conhecem brushes
+- painel "Pincéis" com pré-visualização (mesmo contorno do traço), opacidade e cor lembrada por brush
+  (marca-texto sugere amarelo e a cor da caneta volta ao trocar de novo)
+- seletor de cor: quadrado SV + matiz + hex, 4 paletas, recentes; arrastar não enche o histórico,
+  soltar recolore a seleção/texto em 1 passo de desfazer
+- conta-gotas: pega a cor do desenho sob o toque (ou a do papel); Esc cancela
+- borracha "fantasma" restaura a opacidade real do elemento (não 1)
+- Vitest (como o AGENTS.md pedia ao criar o primeiro teste): 28 testes de cor, brushes, contorno,
+  compatibilidade do arquivo e fumaça dos painéis; `npm test` entra no ci.yml
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01McWqM3f4hjhqZ4vu3T5NWj
+---
+ .github/workflows/ci.yml        |   1 +
+ AGENTS.md                       |  20 +-
+ README.md                       |   2 +-
+ package-lock.json               | 442 +++++++++++++++++++++++++++++++-
+ package.json                    |   4 +-
+ src/App.tsx                     |   1 +
+ src/components/BrushPanel.tsx   |  39 +++
+ src/components/BrushPreview.tsx |  40 +++
+ src/components/CanvasView.tsx   |  48 +++-
+ src/components/ColorPicker.tsx  | 211 +++++++++++++++
+ src/components/Toolbar.tsx      |  37 ++-
+ src/components/panels.test.tsx  |  39 +++
+ src/core/actions.ts             |  31 ++-
+ src/core/brushes.test.ts        |  66 +++++
+ src/core/brushes.ts             |  99 +++++++
+ src/core/color.test.ts          |  66 +++++
+ src/core/color.ts               |  74 ++++++
+ src/core/ink.test.ts            |  69 +++++
+ src/core/ink.ts                 |  41 +++
+ src/core/model.ts               |  10 +-
+ src/core/store.ts               |  35 ++-
+ src/render/Renderer.ts          |  11 +-
+ src/render/strokeDraw.ts        |  48 +---
+ src/render/svgThumb.ts          |   6 +-
+ src/styles.css                  |  60 +++++
+ vitest.config.ts                |   4 +
+ 26 files changed, 1433 insertions(+), 71 deletions(-)
+ create mode 100644 src/components/BrushPanel.tsx
+ create mode 100644 src/components/BrushPreview.tsx
+ create mode 100644 src/components/ColorPicker.tsx
+ create mode 100644 src/components/panels.test.tsx
+ create mode 100644 src/core/brushes.test.ts
+ create mode 100644 src/core/brushes.ts
+ create mode 100644 src/core/color.test.ts
+ create mode 100644 src/core/color.ts
+ create mode 100644 src/core/ink.test.ts
+ create mode 100644 src/core/ink.ts
+ create mode 100644 vitest.config.ts
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 8dd5394..518d3e6 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -15,4 +15,5 @@ jobs:
+           node-version: 20
+       - run: npm install --no-audit --no-fund
+       - run: npm run typecheck
++      - run: npm test
+       - run: npm run build
+diff --git a/AGENTS.md b/AGENTS.md
+index 795272d..49a9fb8 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -75,10 +75,23 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
+ - Pendências de texto: texto dentro de formas (rótulo com quebra automática), fontes embutidas (Excalifont/Virgil etc.), espessura/negrito, listas
+ - **M1c concluído.** Próximo: M1d (export PNG/SVG, import/export `.excalidraw`, estilo rascunho) + marca-texto
+ - Pendências de páginas: arrastar-e-soltar para reordenar, título do caderno, fundo de PDF por página (M2)
++- [x] Brushes (parte A): **registro de brushes** (`core/brushes.ts`) + 6 de contorno (caneta, esferográfica, nanquim, marcador, marca-texto, pincel), painel de pincéis com pré-visualização, opacidade, **seletor de cor** (HSV + hex, 4 paletas, recentes, cor lembrada por brush) e **conta-gotas** (pega a cor do desenho sob o toque)
+ - [ ] M1d: Estilo rascunho (rough.js), export PNG/SVG, import/export `.excalidraw` + **marca-texto e borracha por traço**
+ - [ ] M2: Molduras, bibliotecas, mermaid, laser pointer + **anotação de PDF**
+ - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
+ 
++## Brushes (pincéis)
++
++- **`core/brushes.ts`** só DESCREVE cada brush (puro); **`core/ink.ts`** calcula o contorno (puro, testável em Node);
++  `render/strokeDraw.ts` pinta no Pixi. Novo brush = nova entrada no registro, sem tocar no resto.
++- O traço guarda `brush` (id), `color`, `width`, `sens`, `taper` e `opacity`. **`width` e `opacity` guardados já são os EFETIVOS**
++  (espessura do controle × `size` do brush; opacidade do controle × a do brush), para seleção, hit-test, escala e miniatura
++  continuarem funcionando sem conhecer brushes. Brush desconhecido cai na caneta (`getBrush`).
++- Arquivo `.hiraku`: `brush` é campo opcional novo, completado em `normalizeDoc` (traço antigo vira `"pen"`). Segue **versão 1**
++  porque é aditivo (mesmo critério das migrações leves anteriores).
++- Cor: `core/color.ts` (puro). `applyColor` é o único ponto que muda a cor ativa: `commit:false` durante arrastes
++  (não enche o histórico), `commit:true` ao soltar (recolore seleção/texto, entra nos recentes).
++
+ ## Como rodar
+ 
+ ```bash
+@@ -87,15 +100,16 @@ npm run icons          # gera src-tauri/icons a partir de app-icon.png (1 vez)
+ npm run tauri dev      # desktop (Linux)
+ npm run dev            # só o front no navegador (PWA / debug rápido)
+ npm run typecheck
++npm test               # Vitest: lógica pura (core/*, parsers) e fumaça dos painéis
+ ```
+ Android: `npm run tauri android init` (1 vez) e depois `npm run tauri android dev`.
+ Requer Android Studio, SDK, NDK e `JAVA_HOME`/`ANDROID_HOME`/`NDK_HOME` configurados.
+ 
+ ## Testes e verificação
+ 
+-- Antes de concluir qualquer tarefa: `npm run typecheck` e `npm run build` devem passar.
+-- Lógica pura (`core/*`, geometria, serialização) ganha testes com **Vitest** (ainda não instalado: adicione
+-  ao criar o primeiro teste).
++- Antes de concluir qualquer tarefa: `npm run typecheck`, `npm test` e `npm run build` devem passar.
++- Lógica pura (`core/*`, geometria, serialização, parsers) ganha testes com **Vitest** (`*.test.ts` ao lado do código;
++  `vitest.config.ts` roda em Node, sem o PWA do Vite).
+ - Mudanças em input/render: descreva como testou (mouse, caneta, toque) e em qual plataforma.
+ 
+ ## Uso do REA (engenharia reversa assistida)
+diff --git a/README.md b/README.md
+index a4b6a14..ef8aaac 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,7 @@
+ **Hiraku Manager Ideas**: quadro branco e caderno de anotações com caneta, parte da família Hiraku.
+ Tauri 2 + React + zustand + PixiJS.
+ 
+-Estado atual: **v0.2.0** — canvas infinito, caneta com pressão e afilamento (perfect-freehand), formas, linhas e setas conectadas, texto, borracha, seleção/laço, várias páginas com miniaturas, papéis, desfazer/refazer, salvar/abrir `.hiraku`.
++Estado atual: **v0.2.0** — canvas infinito, caneta com pressão e afilamento (perfect-freehand) e vários pincéis (caneta, esferográfica, nanquim, marcador, marca-texto, pincel), seletor de cor completo e conta-gotas, formas, linhas e setas conectadas, texto, borracha, seleção/laço, várias páginas com miniaturas, papéis, desfazer/refazer, salvar/abrir `.hiraku`.
+ 
+ Veja `AGENTS.md` para decisões, arquitetura e roadmap.
+ 
+diff --git a/package-lock.json b/package-lock.json
+index ec8268e..6f1ef42 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -23,7 +23,8 @@
+         "@vitejs/plugin-react": "^4.3.0",
+         "typescript": "^5.6.0",
+         "vite": "^6.0.0",
+-        "vite-plugin-pwa": "^0.21.0"
++        "vite-plugin-pwa": "^0.21.0",
++        "vitest": "^3.2.7"
+       }
+     },
+     "node_modules/@apideck/better-ajv-errors": {
+@@ -2918,6 +2919,24 @@
+         "@babel/types": "^7.28.2"
+       }
+     },
++    "node_modules/@types/chai": {
++      "version": "5.2.3",
++      "resolved": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
++      "integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/deep-eql": "*",
++        "assertion-error": "^2.0.1"
++      }
++    },
++    "node_modules/@types/deep-eql": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/@types/deep-eql/-/deep-eql-4.0.2.tgz",
++      "integrity": "sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@types/earcut": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/@types/earcut/-/earcut-3.0.0.tgz",
+@@ -3004,6 +3023,131 @@
+         "vite": "^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
+       }
+     },
++    "node_modules/@vitest/expect": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/expect/-/expect-3.2.7.tgz",
++      "integrity": "sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/chai": "^5.2.2",
++        "@vitest/spy": "3.2.7",
++        "@vitest/utils": "3.2.7",
++        "chai": "^5.2.0",
++        "tinyrainbow": "^2.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/mocker": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-3.2.7.tgz",
++      "integrity": "sha512-Trr0hYO9CM3Wj6ksWHRhK9IZpIY6wTMO5u/MqXurMxT57sWBaOPEtP3Oq60ihZuh5JsiagKfz95OcxdEP6dBrA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/spy": "3.2.7",
++        "estree-walker": "^3.0.3",
++        "magic-string": "^0.30.17"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "msw": "^2.4.9",
++        "vite": "^5.0.0 || ^6.0.0 || ^7.0.0-0"
++      },
++      "peerDependenciesMeta": {
++        "msw": {
++          "optional": true
++        },
++        "vite": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@vitest/mocker/node_modules/estree-walker": {
++      "version": "3.0.3",
++      "resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
++      "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "^1.0.0"
++      }
++    },
++    "node_modules/@vitest/pretty-format": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-3.2.7.tgz",
++      "integrity": "sha512-KUHlwqVu0sRlhCdyPdQ/wBoTfRahjUky1MubOmYw9fWfIZy1gNoHpuaaQBPAaMaVYdQYHJLurzj8ECCj5OwTqA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "tinyrainbow": "^2.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/runner": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/runner/-/runner-3.2.7.tgz",
++      "integrity": "sha512-sB9y4ovltoQP+WaUPwmSxO9WIg9Ig694Di5PalVPsYHklAdE027mehpWF2SQSVq+k6sFgaivbTjTJwZLSHbedA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/utils": "3.2.7",
++        "pathe": "^2.0.3",
++        "strip-literal": "^3.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/snapshot": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-3.2.7.tgz",
++      "integrity": "sha512-7C+MwShwtBSI5Buwoyg3s/iY1eHL9PKAf+O1wVh/TdnjXUtkoL/9YQtre90i4MtNXM6edP1wJ2zOBpfCyhIS7g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/pretty-format": "3.2.7",
++        "magic-string": "^0.30.17",
++        "pathe": "^2.0.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/spy": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-3.2.7.tgz",
++      "integrity": "sha512-Q2eQGI6d2L/hBtZ0qNuKcAGid68XK6cv1xsoaIma6PaJhHPoqcEJhYpXZ/5myCMqkNgtP6UKuBhbc0nHKnrkuQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "tinyspy": "^4.0.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/utils": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/@vitest/utils/-/utils-3.2.7.tgz",
++      "integrity": "sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/pretty-format": "3.2.7",
++        "loupe": "^3.1.4",
++        "tinyrainbow": "^2.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
+     "node_modules/@webgpu/types": {
+       "version": "0.1.74",
+       "resolved": "https://registry.npmjs.org/@webgpu/types/-/types-0.1.74.tgz",
+@@ -3088,6 +3232,16 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/assertion-error": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
++      "integrity": "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/async": {
+       "version": "3.2.6",
+       "resolved": "https://registry.npmjs.org/async/-/async-3.2.6.tgz",
+@@ -3250,6 +3404,16 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/cac": {
++      "version": "6.7.14",
++      "resolved": "https://registry.npmjs.org/cac/-/cac-6.7.14.tgz",
++      "integrity": "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/call-bind": {
+       "version": "1.0.9",
+       "resolved": "https://registry.npmjs.org/call-bind/-/call-bind-1.0.9.tgz",
+@@ -3321,6 +3485,33 @@
+       ],
+       "license": "CC-BY-4.0"
+     },
++    "node_modules/chai": {
++      "version": "5.3.3",
++      "resolved": "https://registry.npmjs.org/chai/-/chai-5.3.3.tgz",
++      "integrity": "sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "assertion-error": "^2.0.1",
++        "check-error": "^2.1.1",
++        "deep-eql": "^5.0.1",
++        "loupe": "^3.1.0",
++        "pathval": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/check-error": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/check-error/-/check-error-2.1.3.tgz",
++      "integrity": "sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 16"
++      }
++    },
+     "node_modules/commander": {
+       "version": "2.20.3",
+       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
+@@ -3466,6 +3657,16 @@
+         }
+       }
+     },
++    "node_modules/deep-eql": {
++      "version": "5.0.2",
++      "resolved": "https://registry.npmjs.org/deep-eql/-/deep-eql-5.0.2.tgz",
++      "integrity": "sha512-h5k/5U50IJJFpzfL6nO9jaaumfjO/f2NjK/oYB2Djzm4p9L+3T9qWpZqZ2hAbLPuuYq9wrU08WQyBTL5GbPk5Q==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/deepmerge": {
+       "version": "4.3.1",
+       "resolved": "https://registry.npmjs.org/deepmerge/-/deepmerge-4.3.1.tgz",
+@@ -3664,6 +3865,13 @@
+         "node": ">= 0.4"
+       }
+     },
++    "node_modules/es-module-lexer": {
++      "version": "1.7.0",
++      "resolved": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-1.7.0.tgz",
++      "integrity": "sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/es-object-atoms": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz",
+@@ -3802,6 +4010,16 @@
+       "integrity": "sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==",
+       "license": "MIT"
+     },
++    "node_modules/expect-type": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz",
++      "integrity": "sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=12.0.0"
++      }
++    },
+     "node_modules/fast-deep-equal": {
+       "version": "3.1.3",
+       "resolved": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+@@ -4826,6 +5044,13 @@
+         "loose-envify": "cli.js"
+       }
+     },
++    "node_modules/loupe": {
++      "version": "3.2.1",
++      "resolved": "https://registry.npmjs.org/loupe/-/loupe-3.2.1.tgz",
++      "integrity": "sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/lru-cache": {
+       "version": "5.1.1",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-5.1.1.tgz",
+@@ -5038,6 +5263,23 @@
+         "node": "20 || >=22"
+       }
+     },
++    "node_modules/pathe": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz",
++      "integrity": "sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/pathval": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/pathval/-/pathval-2.0.1.tgz",
++      "integrity": "sha512-//nshmD55c46FuFw26xV/xFAaB5HF9Xdap7HJBBnrKdAd6/GxDBaNA1870O79+9ueg61cZLSVc+OaFlfmObYVQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 14.16"
++      }
++    },
+     "node_modules/perfect-freehand": {
+       "version": "1.2.3",
+       "resolved": "https://registry.npmjs.org/perfect-freehand/-/perfect-freehand-1.2.3.tgz",
+@@ -5589,6 +5831,13 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/siginfo": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
++      "integrity": "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==",
++      "dev": true,
++      "license": "ISC"
++    },
+     "node_modules/signal-exit": {
+       "version": "4.1.0",
+       "resolved": "https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz",
+@@ -5653,6 +5902,20 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/stackback": {
++      "version": "0.0.2",
++      "resolved": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
++      "integrity": "sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/std-env": {
++      "version": "3.10.0",
++      "resolved": "https://registry.npmjs.org/std-env/-/std-env-3.10.0.tgz",
++      "integrity": "sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/stop-iteration-iterator": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/stop-iteration-iterator/-/stop-iteration-iterator-1.1.0.tgz",
+@@ -5780,6 +6043,26 @@
+         "node": ">=10"
+       }
+     },
++    "node_modules/strip-literal": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/strip-literal/-/strip-literal-3.1.0.tgz",
++      "integrity": "sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "js-tokens": "^9.0.1"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/antfu"
++      }
++    },
++    "node_modules/strip-literal/node_modules/js-tokens": {
++      "version": "9.0.1",
++      "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-9.0.1.tgz",
++      "integrity": "sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/supports-preserve-symlinks-flag": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz",
+@@ -5850,6 +6133,20 @@
+         "node": ">=12"
+       }
+     },
++    "node_modules/tinybench": {
++      "version": "2.9.0",
++      "resolved": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz",
++      "integrity": "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/tinyexec": {
++      "version": "0.3.2",
++      "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-0.3.2.tgz",
++      "integrity": "sha512-KQQR9yN7R5+OSwaK0XQoj22pwHoTlgYqmUscPYoknOoWCWfj/5/ABTMRi69FrKU5ffPVh5QcFikpWJI/P1ocHA==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/tinyglobby": {
+       "version": "0.2.17",
+       "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+@@ -5867,6 +6164,36 @@
+         "url": "https://github.com/sponsors/SuperchupuDev"
+       }
+     },
++    "node_modules/tinypool": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/tinypool/-/tinypool-1.1.1.tgz",
++      "integrity": "sha512-Zba82s87IFq9A9XmjiX5uZA/ARWDrB03OHlq+Vw1fSdt0I+4/Kutwy8BP4Y/y/aORMo61FQ0vIb5j44vSo5Pkg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": "^18.0.0 || >=20.0.0"
++      }
++    },
++    "node_modules/tinyrainbow": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-2.0.0.tgz",
++      "integrity": "sha512-op4nsTR47R6p0vMUUoYl/a+ljLFVtlfaXkLQmqfLR1qHma1h/ysYk4hEXZ880bf2CYgTskvTa/e196Vd5dDQXw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=14.0.0"
++      }
++    },
++    "node_modules/tinyspy": {
++      "version": "4.0.6",
++      "resolved": "https://registry.npmjs.org/tinyspy/-/tinyspy-4.0.6.tgz",
++      "integrity": "sha512-u8KszXvGfU68hVcZpRHKG28T0krMuv2G5nDhiHaMLen/gIuFEgIJhaJuO69qjnXg5paSrbPMFfx3brNuN8eVSg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=14.0.0"
++      }
++    },
+     "node_modules/type-fest": {
+       "version": "0.16.0",
+       "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-0.16.0.tgz",
+@@ -6181,6 +6508,29 @@
+         }
+       }
+     },
++    "node_modules/vite-node": {
++      "version": "3.2.4",
++      "resolved": "https://registry.npmjs.org/vite-node/-/vite-node-3.2.4.tgz",
++      "integrity": "sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "cac": "^6.7.14",
++        "debug": "^4.4.1",
++        "es-module-lexer": "^1.7.0",
++        "pathe": "^2.0.3",
++        "vite": "^5.0.0 || ^6.0.0 || ^7.0.0-0"
++      },
++      "bin": {
++        "vite-node": "vite-node.mjs"
++      },
++      "engines": {
++        "node": "^18.0.0 || ^20.0.0 || >=22.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
+     "node_modules/vite-plugin-pwa": {
+       "version": "0.21.2",
+       "resolved": "https://registry.npmjs.org/vite-plugin-pwa/-/vite-plugin-pwa-0.21.2.tgz",
+@@ -6212,6 +6562,79 @@
+         }
+       }
+     },
++    "node_modules/vitest": {
++      "version": "3.2.7",
++      "resolved": "https://registry.npmjs.org/vitest/-/vitest-3.2.7.tgz",
++      "integrity": "sha512-KrxIJ62Fd89gfysR4WotlgZABiz2dqFPgqGzX7s+CwsqLFomRH7777ZcrOD6+WVAh7khPQP41A+BKbpcJFrdEg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/chai": "^5.2.2",
++        "@vitest/expect": "3.2.7",
++        "@vitest/mocker": "3.2.7",
++        "@vitest/pretty-format": "^3.2.7",
++        "@vitest/runner": "3.2.7",
++        "@vitest/snapshot": "3.2.7",
++        "@vitest/spy": "3.2.7",
++        "@vitest/utils": "3.2.7",
++        "chai": "^5.2.0",
++        "debug": "^4.4.1",
++        "expect-type": "^1.2.1",
++        "magic-string": "^0.30.17",
++        "pathe": "^2.0.3",
++        "picomatch": "^4.0.2",
++        "std-env": "^3.9.0",
++        "tinybench": "^2.9.0",
++        "tinyexec": "^0.3.2",
++        "tinyglobby": "^0.2.14",
++        "tinypool": "^1.1.1",
++        "tinyrainbow": "^2.0.0",
++        "vite": "^5.0.0 || ^6.0.0 || ^7.0.0-0",
++        "vite-node": "3.2.4",
++        "why-is-node-running": "^2.3.0"
++      },
++      "bin": {
++        "vitest": "vitest.mjs"
++      },
++      "engines": {
++        "node": "^18.0.0 || ^20.0.0 || >=22.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "@edge-runtime/vm": "*",
++        "@types/debug": "^4.1.12",
++        "@types/node": "^18.0.0 || ^20.0.0 || >=22.0.0",
++        "@vitest/browser": "3.2.7",
++        "@vitest/ui": "3.2.7",
++        "happy-dom": "*",
++        "jsdom": "*"
++      },
++      "peerDependenciesMeta": {
++        "@edge-runtime/vm": {
++          "optional": true
++        },
++        "@types/debug": {
++          "optional": true
++        },
++        "@types/node": {
++          "optional": true
++        },
++        "@vitest/browser": {
++          "optional": true
++        },
++        "@vitest/ui": {
++          "optional": true
++        },
++        "happy-dom": {
++          "optional": true
++        },
++        "jsdom": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/which": {
+       "version": "2.0.2",
+       "resolved": "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+@@ -6317,6 +6740,23 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/why-is-node-running": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
++      "integrity": "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "siginfo": "^2.0.0",
++        "stackback": "0.0.2"
++      },
++      "bin": {
++        "why-is-node-running": "cli.js"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/workbox-background-sync": {
+       "version": "7.4.1",
+       "resolved": "https://registry.npmjs.org/workbox-background-sync/-/workbox-background-sync-7.4.1.tgz",
+diff --git a/package.json b/package.json
+index dffa053..93f90af 100644
+--- a/package.json
++++ b/package.json
+@@ -8,6 +8,7 @@
+     "build": "tsc --noEmit && vite build",
+     "preview": "vite preview",
+     "typecheck": "tsc --noEmit",
++    "test": "vitest run",
+     "tauri": "tauri",
+     "icons": "tauri icon app-icon.png",
+     "patch": "node scripts/apply-patch.mjs",
+@@ -30,6 +31,7 @@
+     "@vitejs/plugin-react": "^4.3.0",
+     "typescript": "^5.6.0",
+     "vite": "^6.0.0",
+-    "vite-plugin-pwa": "^0.21.0"
++    "vite-plugin-pwa": "^0.21.0",
++    "vitest": "^3.2.7"
+   }
+ }
+diff --git a/src/App.tsx b/src/App.tsx
+index cbf872e..a18d500 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -45,6 +45,7 @@ export default function App() {
+         goPage(k === "pageup" ? -1 : 1);
+       } else if (k === "escape") {
+         useSel.getState().clear();
++        if (useTool.getState().picking) useTool.getState().set({ picking: false });
+       } else if (k.startsWith("arrow") && useSel.getState().ids.length) {
+         e.preventDefault();
+         const n = e.shiftKey ? 10 : 1;
+diff --git a/src/components/BrushPanel.tsx b/src/components/BrushPanel.tsx
+new file mode 100644
+index 0000000..1235c07
+--- /dev/null
++++ b/src/components/BrushPanel.tsx
+@@ -0,0 +1,39 @@
++import { listBrushes, getBrush } from "../core/brushes";
++import { useTool } from "../core/store";
++import { BrushPreview } from "./BrushPreview";
++
++/** Painel de pincéis: grade com pré-visualização + opacidade. */
++export function BrushPanel() {
++  const t = useTool();
++  const brushes = listBrushes();
++  const current = getBrush(t.brush);
++
++  return (
++    <div className="panel" role="dialog" aria-label="Pincéis">
++      <div className="brushes" role="radiogroup" aria-label="Pincel">
++        {brushes.map((b) => (
++          <button
++            key={b.id}
++            role="radio"
++            aria-checked={current.id === b.id}
++            className={current.id === b.id ? "brush on" : "brush"}
++            title={b.hint}
++            onClick={() => {
++              t.setBrush(b.id);
++              t.setTool("pen"); // escolher um pincel é querer desenhar com ele
++            }}
++          >
++            <BrushPreview brush={b} color={t.color} width={t.width} sens={t.pressureSens} taper={t.taper} opacity={t.opacity} />
++            <span>{b.label}</span>
++          </button>
++        ))}
++      </div>
++      <label className="slider">
++        <span>Opacidade</span>
++        <input type="range" min={0.1} max={1} step={0.05} value={t.opacity} onChange={(e) => t.set({ opacity: +e.target.value })} />
++        <output>{Math.round(t.opacity * 100)}%</output>
++      </label>
++      <p className="hint">{current.hint} Espessura, pressão e afilamento ficam na barra e em “Ajustes da caneta”.</p>
++    </div>
++  );
++}
+diff --git a/src/components/BrushPreview.tsx b/src/components/BrushPreview.tsx
+new file mode 100644
+index 0000000..2f2d491
+--- /dev/null
++++ b/src/components/BrushPreview.tsx
+@@ -0,0 +1,40 @@
++// Pré-visualização de um brush: uma onda com pressão subindo e descendo, desenhada com o MESMO
++// contorno do traço de verdade (strokeOutline), então reflete cor, pressão e afilamento atuais.
++import { useMemo } from "react";
++import { Brush } from "../core/brushes";
++import { InkPoint } from "../core/model";
++import { strokeOutline } from "../core/ink";
++
++export const PREVIEW_W = 120;
++export const PREVIEW_H = 34;
++
++const SAMPLE: InkPoint[] = Array.from({ length: 40 }, (_, i) => {
++  const t = i / 39;
++  return { x: 10 + t * (PREVIEW_W - 20), y: PREVIEW_H / 2 + Math.sin(t * Math.PI * 2) * 7, p: 0.2 + 0.7 * Math.sin(Math.PI * t) };
++});
++
++interface Props {
++  brush: Brush;
++  color: string;
++  /** Espessura escolhida no controle (antes do multiplicador do brush). */
++  width: number;
++  sens: number;
++  taper: number;
++  opacity: number;
++}
++
++export function BrushPreview({ brush, color, width, sens, taper, opacity }: Props) {
++  const d = useMemo(() => {
++    const w = Math.min(width * brush.size, PREVIEW_H * 0.5);
++    const flat = strokeOutline(SAMPLE, { color, width: w, sens, taper, brush: brush.id, opacity }, true);
++    let path = "";
++    for (let i = 0; i < flat.length; i += 2) path += (i ? "L" : "M") + flat[i].toFixed(1) + " " + flat[i + 1].toFixed(1);
++    return flat.length >= 6 ? path + "Z" : "";
++  }, [brush, color, width, sens, taper, opacity]);
++
++  return (
++    <svg className="bprev" viewBox={`0 0 ${PREVIEW_W} ${PREVIEW_H}`} aria-hidden="true">
++      <path d={d} fill={color} opacity={brush.opacity * opacity} style={{ mixBlendMode: brush.blend }} />
++    </svg>
++  );
++}
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 20b178f..5314a30 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -1,4 +1,6 @@
+ import { useEffect, useRef } from "react";
++import { applyColor, elementColor } from "../core/actions";
++import { getBrush } from "../core/brushes";
+ import { panBy, screenToWorld, zoomAt } from "../core/camera";
+ import { elementHit } from "../core/geometry";
+ import { bindableAt, makeBinding, solveArrow } from "../core/binding";
+@@ -9,6 +11,7 @@ import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/stor
+ import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
+ import { InputController, Sample } from "../input/InputController";
+ import { Renderer } from "../render/Renderer";
++import { InkStyle } from "../render/strokeDraw";
+ import { createSelectController } from "../tools/selectTool";
+ 
+ interface Smoothed { x: number; y: number; p: number }
+@@ -21,6 +24,7 @@ export function CanvasView() {
+   const hostRef = useRef<HTMLDivElement>(null);
+   const canvasRef = useRef<HTMLCanvasElement>(null);
+   const tool = useTool((s) => s.tool);
++  const picking = useTool((s) => s.picking);
+ 
+   useEffect(() => {
+     const host = hostRef.current!;
+@@ -37,7 +41,7 @@ export function CanvasView() {
+     let sm: Smoothed = { x: 0, y: 0, p: 0.5 }; // posição suavizada (tela)
+     let raw: Smoothed = { x: 0, y: 0, p: 0.5 }; // última amostra real (tela)
+     let style = {
+-      color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0,
++      color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0, brush: "pen", opacity: 1,
+       lineStyle: "solid" as ShapeElement["strokeStyle"], fill: null as string | null, rounded: true,
+       startHead: "none" as ArrowHead, endHead: "arrow" as ArrowHead, curved: false,
+     };
+@@ -79,7 +83,27 @@ export function CanvasView() {
+       return Math.hypot(pt.x - last.x, pt.y - last.y) >= min;
+     };
+ 
+-    const inkStyle = () => ({ color: style.color, width: style.width, sens: style.sens, taper: style.taper });
++    /** Estilo da tinta: a largura guardada no traço já inclui o multiplicador do brush; opacidade = brush × usuário. */
++    const inkStyle = (): InkStyle => {
++      const b = getBrush(style.brush);
++      return { color: style.color, width: style.width * b.size, sens: style.sens, taper: style.taper, brush: b.id, opacity: b.opacity * style.opacity };
++    };
++
++    /** Conta-gotas: pega a cor do elemento mais acima sob o toque (ou a do papel, se não houver nenhum). */
++    const pickColorAt = (s: Sample) => {
++      const cam = useView.getState().camera;
++      const P = screenToWorld(cam, s.x, s.y);
++      const page = selectActivePage(useDoc.getState());
++      let color = page.background;
++      for (let i = page.elements.length - 1; i >= 0; i--) {
++        if (elementHit(page.elements[i], P.x, P.y, 3 / cam.zoom)) {
++          color = elementColor(page.elements[i]);
++          break;
++        }
++      }
++      useTool.getState().set({ picking: false });
++      applyColor(color);
++    };
+ 
+     const shapeFrom = (id: string, box: Box): ShapeElement =>
+       makeShape(id, shapeType, box, {
+@@ -157,11 +181,15 @@ export function CanvasView() {
+             const t = useTool.getState();
+             style = {
+               color: t.color, width: t.width, sens: t.pressureSens, smoothing: t.smoothing, taper: t.taper,
++              brush: t.brush, opacity: t.opacity,
+               lineStyle: t.lineStyle, fill: t.fill, rounded: t.rounded,
+               startHead: t.startHead, endHead: t.endHead, curved: t.curved,
+             };
+ 
+-            if (s.eraserTip || t.tool === "eraser") {
++            if (t.picking) {
++              mode = "text"; // sem movimento/fim: só pega a cor e acabou
++              pickColorAt(s);
++            } else if (s.eraserTip || t.tool === "eraser") {
+               mode = "erase";
+               erased = new Set();
+               lastErase = null;
+@@ -296,15 +324,17 @@ export function CanvasView() {
+               if (accept(pt)) points.push(pt);
+             }
+             if (points.length) {
++              const ink = inkStyle();
+               useDoc.getState().addElement({
+                 id: newId(),
+                 type: "stroke",
+                 points,
+-                color: style.color,
+-                width: style.width,
+-                sens: style.sens,
+-                taper: style.taper,
+-                opacity: 1,
++                color: ink.color,
++                width: ink.width,
++                sens: ink.sens,
++                taper: ink.taper,
++                brush: ink.brush,
++                opacity: ink.opacity,
+               });
+             }
+             // Primeiro grava no documento (o sync desenha o traço final), depois limpa o ao vivo.
+@@ -369,7 +399,7 @@ export function CanvasView() {
+ 
+   return (
+     <div ref={hostRef} className="canvas-host">
+-      <canvas ref={canvasRef} className={`canvas ${tool}`} />
++      <canvas ref={canvasRef} className={`canvas ${tool}${picking ? " pick" : ""}`} />
+     </div>
+   );
+ }
+diff --git a/src/components/ColorPicker.tsx b/src/components/ColorPicker.tsx
+new file mode 100644
+index 0000000..af46c43
+--- /dev/null
++++ b/src/components/ColorPicker.tsx
+@@ -0,0 +1,211 @@
++// Seletor de cor: quadrado de saturação/brilho + matiz + hex, paletas, recentes e conta-gotas.
++// Arrastar só muda a cor da ferramenta; soltar confirma (recolore a seleção e vale 1 passo de desfazer).
++import { CSSProperties, KeyboardEvent as RKeyboardEvent, PointerEvent as RPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
++import { applyColor } from "../core/actions";
++import { HSV, PALETTES, contrastOn, hexToHsv, hsvToHex, parseHex } from "../core/color";
++import { useTool } from "../core/store";
++
++const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
++
++interface AreaProps {
++  className: string;
++  label: string;
++  valueText: string;
++  style?: CSSProperties;
++  children: ReactNode;
++  onDrag: (fx: number, fy: number) => void;
++  onEnd: () => void;
++  onKey: (e: RKeyboardEvent<HTMLDivElement>) => void;
++}
++
++/** Área arrastável por toque, caneta ou mouse (captura o ponteiro, então não perde o gesto ao sair da caixa). */
++function DragArea({ className, label, valueText, style, children, onDrag, onEnd, onKey }: AreaProps) {
++  const ref = useRef<HTMLDivElement>(null);
++  const active = useRef(false);
++  const at = (e: RPointerEvent) => {
++    const r = ref.current!.getBoundingClientRect();
++    onDrag(clamp01((e.clientX - r.left) / r.width), clamp01((e.clientY - r.top) / r.height));
++  };
++  return (
++    <div
++      ref={ref}
++      className={className}
++      style={style}
++      tabIndex={0}
++      role="slider"
++      aria-label={label}
++      aria-valuetext={valueText}
++      onPointerDown={(e) => {
++        active.current = true;
++        e.currentTarget.setPointerCapture(e.pointerId);
++        at(e);
++      }}
++      onPointerMove={(e) => active.current && at(e)}
++      onPointerUp={(e) => {
++        if (!active.current) return;
++        active.current = false;
++        at(e);
++        onEnd();
++      }}
++      onPointerCancel={() => {
++        if (!active.current) return;
++        active.current = false;
++        onEnd();
++      }}
++      onKeyDown={onKey}
++    >
++      {children}
++    </div>
++  );
++}
++
++export function ColorPicker({ onEyedropper }: { onEyedropper: () => void }) {
++  const color = useTool((s) => s.color);
++  const recent = useTool((s) => s.recent);
++  const [hsv, setHsv] = useState<HSV>(() => hexToHsv(color));
++  const hsvRef = useRef(hsv);
++  const [hex, setHex] = useState(color);
++  const [palette, setPalette] = useState(PALETTES[0].id);
++  const own = useRef<string | null>(null); // última cor aplicada por AQUI (não recalcula o matiz por cima)
++
++  const put = (n: HSV) => {
++    hsvRef.current = n;
++    setHsv(n);
++  };
++
++  // Cor mudou por fora (paleta, conta-gotas, brush): sincroniza. Cinza/preto/branco não têm matiz: mantém o atual.
++  useEffect(() => {
++    setHex(color);
++    if (own.current === color) return;
++    const n = hexToHsv(color);
++    put(n.s === 0 || n.v === 0 ? { h: hsvRef.current.h, s: n.s, v: n.v } : n);
++  }, [color]);
++
++  const live = (n: HSV) => {
++    put(n);
++    const c = hsvToHex(n);
++    own.current = c;
++    applyColor(c, { commit: false });
++  };
++  const commit = () => {
++    const c = hsvToHex(hsvRef.current);
++    own.current = c;
++    applyColor(c);
++  };
++  const step = (e: RKeyboardEvent<HTMLDivElement>, fn: (d: number) => HSV) => {
++    const dir = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;
++    if (!dir) return;
++    e.preventDefault();
++    live(fn(dir * (e.shiftKey ? 0.1 : 0.02)));
++    commit();
++  };
++
++  const { h, s, v } = hsv;
++  const pure = `hsl(${h.toFixed(0)} 100% 50%)`;
++
++  return (
++    <div
++      className="panel colorpanel"
++      role="dialog"
++      aria-label="Cores"
++      data-text-ui
++      onMouseDown={(e) => {
++        if (!(e.target instanceof HTMLInputElement)) e.preventDefault(); // não tira o foco do texto em edição
++      }}
++    >
++      <DragArea
++        className="cp-sv"
++        label="Saturação e brilho"
++        valueText={`saturação ${Math.round(s * 100)}%, brilho ${Math.round(v * 100)}%`}
++        style={{ backgroundImage: `linear-gradient(to top, #000, rgba(0,0,0,0)), linear-gradient(to right, #fff, ${pure})` }}
++        onDrag={(fx, fy) => live({ h: hsvRef.current.h, s: fx, v: 1 - fy })}
++        onEnd={commit}
++        onKey={(e) => {
++          if (e.key === "ArrowLeft" || e.key === "ArrowRight") step(e, (d) => ({ ...hsvRef.current, s: clamp01(hsvRef.current.s + d) }));
++          else step(e, (d) => ({ ...hsvRef.current, v: clamp01(hsvRef.current.v + d) }));
++        }}
++      >
++        <span className="cp-knob" style={{ left: `${s * 100}%`, top: `${(1 - v) * 100}%`, background: color, borderColor: contrastOn(color) }} />
++      </DragArea>
++
++      <DragArea
++        className="cp-hue"
++        label="Matiz"
++        valueText={`${Math.round(h)} graus`}
++        onDrag={(fx) => live({ ...hsvRef.current, h: fx * 359.99 })}
++        onEnd={commit}
++        onKey={(e) => step(e, (d) => ({ ...hsvRef.current, h: (hsvRef.current.h + d * 360 + 360) % 360 }))}
++      >
++        <span className="cp-knob" style={{ left: `${(h / 360) * 100}%`, top: "50%", background: pure }} />
++      </DragArea>
++
++      <div className="row cp-hexrow">
++        <span className="cp-now" style={{ background: color }} aria-hidden="true" />
++        <input
++          className="cp-hex"
++          aria-label="Código da cor (hex)"
++          spellCheck={false}
++          maxLength={7}
++          value={hex}
++          onChange={(e) => {
++            setHex(e.target.value);
++            const c = parseHex(e.target.value);
++            if (c) {
++              own.current = null;
++              applyColor(c, { commit: false });
++            }
++          }}
++          onBlur={() => {
++            const c = parseHex(hex);
++            if (c) applyColor(c);
++            else setHex(color);
++          }}
++          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
++        />
++        <button className="chip" onClick={onEyedropper} title="Pegar a cor de um desenho na página">Conta-gotas</button>
++      </div>
++
++      <div className="row" role="tablist" aria-label="Paletas">
++        {PALETTES.map((p) => (
++          <button key={p.id} role="tab" aria-selected={palette === p.id} className={palette === p.id ? "chip sm on" : "chip sm"} onClick={() => setPalette(p.id)}>
++            {p.label}
++          </button>
++        ))}
++      </div>
++      <div className="cp-grid" role="radiogroup" aria-label="Cores da paleta">
++        {PALETTES.find((p) => p.id === palette)!.colors.map((c) => (
++          <button
++            key={c}
++            role="radio"
++            aria-checked={color.toUpperCase() === c}
++            aria-label={`Cor ${c}`}
++            title={c}
++            className={color.toUpperCase() === c ? "swatch on" : "swatch"}
++            style={{ background: c }}
++            onClick={() => applyColor(c)}
++          />
++        ))}
++      </div>
++
++      {recent.length > 0 && (
++        <>
++          <span className="rowlabel">Recentes</span>
++          <div className="cp-grid" role="radiogroup" aria-label="Cores recentes">
++            {recent.map((c) => (
++              <button
++                key={c}
++                role="radio"
++                aria-checked={color.toUpperCase() === c}
++                aria-label={`Cor ${c}`}
++                title={c}
++                className={color.toUpperCase() === c ? "swatch on" : "swatch"}
++                style={{ background: c }}
++                onClick={() => applyColor(c)}
++              />
++            ))}
++          </div>
++        </>
++      )}
++    </div>
++  );
++}
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index e1a2441..e8085a1 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -4,11 +4,12 @@ import { defaultCamera } from "../core/camera";
+ import { ARROW_HEADS, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES } from "../core/model";
+ import { resetPageCameras } from "../core/pageView";
+ import { downloadDoc, parseDoc } from "../core/serialize";
+-import { deleteSelection, duplicateSelection, recolorSelection, restyleText } from "../core/actions";
++import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
+ import { ToolId, selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
+ import { FONTS, FONT_SIZES } from "../core/text";
+-import { useEdit } from "../core/textEdit";
+ import { useUI } from "../core/ui";
++import { BrushPanel } from "./BrushPanel";
++import { ColorPicker } from "./ColorPicker";
+ 
+ const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
+ const FILLS: { value: string | null; label: string }[] = [
+@@ -31,7 +32,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
+   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
+ };
+ 
+-type Panel = null | "paper" | "feel" | "shape" | "text";
++type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color";
+ 
+ export function Toolbar() {
+   const t = useTool();
+@@ -108,6 +109,18 @@ export function Toolbar() {
+           </div>
+         )}
+ 
++        {panel === "brush" && <BrushPanel />}
++
++        {panel === "color" && (
++          <ColorPicker
++            onEyedropper={() => {
++              setPanel(null);
++              t.set({ picking: true });
++              useUI.getState().showToast("Toque num desenho para pegar a cor dele (ou na folha, para pegar a cor do papel).");
++            }}
++          />
++        )}
++
+         {panel === "feel" && (
+           <div className="panel" role="dialog" aria-label="Ajustes da caneta">
+             <label className="slider">
+@@ -243,6 +256,9 @@ export function Toolbar() {
+             {toolBtn("select", "Selecionar", <path d="M5 3l14 7-6 2-2 6L5 3z" />, "Selecionar (V)")}
+             {toolBtn("lasso", "Laço", <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>, "Laço (L)")}
+             {toolBtn("pen", "Caneta", <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>, "Caneta (P)")}
++            <button className={panel === "brush" ? "btn on" : "btn"} onClick={() => toggle("brush")} aria-expanded={panel === "brush"} aria-label="Pincéis" title="Pincéis">
++              <Icon><path d="M20 4l-8.5 8.5" /><path d="M11.5 12.5c-2.5-.5-4.5 1-4.5 3.5 0 1.5-1 2.5-3 3 2.5 2 7.5 1 8-1.5.4-2-.2-3.8-.5-5z" /></Icon>
++            </button>
+             {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
+             {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
+             {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
+@@ -274,18 +290,17 @@ export function Toolbar() {
+               <button
+                 key={c}
+                 role="radio"
+-                aria-checked={t.color === c}
++                aria-checked={t.color.toUpperCase() === c}
+                 aria-label={`Cor ${c}`}
+-                className={t.color === c ? "swatch on" : "swatch"}
++                className={t.color.toUpperCase() === c ? "swatch on" : "swatch"}
+                 style={{ background: c }}
+-                onClick={() => {
+-                  t.set({ color: c });
+-                  useEdit.getState().patch({ color: c }); // muda a cor do texto em edição
+-                  if (selCount > 0 && (t.tool === "select" || t.tool === "lasso")) recolorSelection(c); // recolore a seleção
+-                  else if (erasing || t.tool === "hand") t.setTool("pen");
+-                }}
++                onClick={() => applyColor(c, { remember: false })}
+               />
+             ))}
++            {!COLORS.includes(t.color.toUpperCase()) && (
++              <button role="radio" aria-checked aria-label={`Cor ${t.color}`} title={t.color} className="swatch on" style={{ background: t.color }} onClick={() => toggle("color")} />
++            )}
++            <button className={panel === "color" ? "swatch more on" : "swatch more"} onClick={() => toggle("color")} aria-expanded={panel === "color"} aria-label="Mais cores" title="Mais cores" />
+           </div>
+ 
+           <label className="group size">
+diff --git a/src/components/panels.test.tsx b/src/components/panels.test.tsx
+new file mode 100644
+index 0000000..571e1b6
+--- /dev/null
++++ b/src/components/panels.test.tsx
+@@ -0,0 +1,39 @@
++// Fumaça: os painéis novos montam sem erro e mostram o que devem.
++// Renderização no servidor (sem DOM): no servidor o zustand lê o estado INICIAL, então aqui valem os padrões.
++import { renderToString } from "react-dom/server";
++import { describe, expect, it } from "vitest";
++import { listBrushes } from "../core/brushes";
++import { PALETTES } from "../core/color";
++import { BrushPanel } from "./BrushPanel";
++import { ColorPicker } from "./ColorPicker";
++
++describe("BrushPanel", () => {
++  const html = renderToString(<BrushPanel />);
++
++  it("lista todos os brushes, cada um com pré-visualização", () => {
++    for (const b of listBrushes()) expect(html).toContain(b.label);
++    expect((html.match(/class="bprev"/g) ?? []).length).toBe(listBrushes().length);
++    expect((html.match(/<path d="M/g) ?? []).length).toBe(listBrushes().length); // contorno de verdade, não vazio
++  });
++
++  it("marca a caneta como ativa por padrão e tem o controle de opacidade", () => {
++    expect(html).toMatch(/aria-checked="true" class="brush on"[^>]*>(?:(?!<\/button>).)*Caneta/s);
++    expect(html).toContain("Opacidade");
++  });
++});
++
++describe("ColorPicker", () => {
++  const html = renderToString(<ColorPicker onEyedropper={() => {}} />);
++
++  it("mostra quadrado SV, matiz, hex atual, conta-gotas e paletas", () => {
++    expect(html).toContain("cp-sv");
++    expect(html).toContain("cp-hue");
++    expect(html).toContain('value="#1B2233"');
++    expect(html).toContain("Conta-gotas");
++    for (const p of PALETTES) expect(html).toContain(p.label);
++  });
++
++  it("não mostra 'Recentes' enquanto não há cores recentes", () => {
++    expect(html).not.toContain("Recentes");
++  });
++});
+diff --git a/src/core/actions.ts b/src/core/actions.ts
+index 1c34678..91960df 100644
+--- a/src/core/actions.ts
++++ b/src/core/actions.ts
+@@ -1,8 +1,9 @@
+ // Ações de edição sobre a seleção. Usadas pelo teclado e pela barra de ações (toque).
+ import { detachForeign, reidentify } from "./binding";
+-import { HirakuElement, TextElement } from "./model";
++import { parseHex, pushRecent } from "./color";
++import { HirakuElement, TextElement, isLinear } from "./model";
+ import { applyXform, moveXform } from "./selection";
+-import { selectActivePage, useDoc, useSel } from "./store";
++import { selectActivePage, useDoc, useSel, useTool } from "./store";
+ import { beginEditText, useEdit } from "./textEdit";
+ import { measureBlock } from "./text";
+ 
+@@ -69,6 +70,32 @@ export function recolorSelection(color: string) {
+   useDoc.getState().updateElements(els.map((e) => (e.type === "stroke" || e.type === "text" ? { ...e, color } : { ...e, stroke: color })));
+ }
+ 
++/**
++ * Escolhe a cor ativa. `commit: false` serve para arrastes (só muda a cor da ferramenta, sem encher o
++ * histórico); `commit: true` (padrão) também recolore a seleção/o texto e vale como um passo de desfazer.
++ * `remember: false` não põe a cor nos recentes (usado pelas cores fixas da barra).
++ */
++export function applyColor(color: string, opts: { commit?: boolean; remember?: boolean } = {}) {
++  const c = parseHex(color);
++  if (!c) return;
++  const t = useTool.getState();
++  useEdit.getState().patch({ color: c }); // muda a cor do texto em edição
++  if (opts.commit === false) {
++    t.set({ color: c });
++    return;
++  }
++  t.set(opts.remember === false ? { color: c } : { color: c, recent: pushRecent(t.recent, c) });
++  if (useSel.getState().ids.length > 0 && (t.tool === "select" || t.tool === "lasso")) recolorSelection(c);
++  else if (t.tool === "eraser" || t.tool === "hand") t.setTool("pen");
++}
++
++/** Cor "principal" de um elemento, para o conta-gotas (forma preenchida → preenchimento). */
++export function elementColor(el: HirakuElement): string {
++  if (el.type === "stroke" || el.type === "text") return el.color;
++  if (isLinear(el)) return el.stroke;
++  return el.fill ?? el.stroke;
++}
++
+ /** Vai para a página anterior (-1) ou próxima (+1). */
+ export function goPage(dir: -1 | 1) {
+   const { doc, activePageId, setActivePage } = useDoc.getState();
+diff --git a/src/core/brushes.test.ts b/src/core/brushes.test.ts
+new file mode 100644
+index 0000000..3983f58
+--- /dev/null
++++ b/src/core/brushes.test.ts
+@@ -0,0 +1,66 @@
++import { describe, expect, it } from "vitest";
++import { DEFAULT_BRUSH_ID, getBrush, hasBrush, listBrushes, registerBrush, unregisterBrush } from "./brushes";
++import { parseHex } from "./color";
++import { normalizeDoc } from "./model";
++
++describe("registro de brushes", () => {
++  it("tem os 6 de contorno, ids únicos, e a caneta primeiro", () => {
++    const ids = listBrushes().map((b) => b.id);
++    expect(ids.slice(0, 6)).toEqual(["pen", "ballpoint", "ink", "marker", "highlighter", "brushpen"]);
++    expect(new Set(ids).size).toBe(ids.length);
++    expect(ids[0]).toBe(DEFAULT_BRUSH_ID);
++  });
++
++  it("parâmetros dentro das faixas", () => {
++    for (const b of listBrushes()) {
++      if (b.kind !== "outline") continue;
++      expect(b.size, b.id).toBeGreaterThan(0);
++      for (const v of [b.thinning, b.simThinning, b.smoothing, b.streamline, b.opacity]) {
++        expect(v, b.id).toBeGreaterThanOrEqual(0);
++        expect(v, b.id).toBeLessThanOrEqual(1);
++      }
++      if (b.taper !== null) expect(b.taper, b.id).toBeLessThanOrEqual(1);
++      if (b.defaultColor) expect(parseHex(b.defaultColor), b.id).toBe(b.defaultColor);
++    }
++  });
++
++  it("marca-texto é translúcido, multiplica e tem cor própria", () => {
++    const h = getBrush("highlighter");
++    expect(h.opacity).toBeLessThan(0.6);
++    expect(h.blend).toBe("multiply");
++    expect(h.defaultColor).toBeDefined();
++  });
++
++  it("id desconhecido → caneta; nativos não saem do registro", () => {
++    expect(getBrush("xyz").id).toBe("pen");
++    expect(getBrush(null).id).toBe("pen");
++    unregisterBrush("pen");
++    expect(hasBrush("pen")).toBe(true);
++  });
++
++  it("registra e remove um brush extra", () => {
++    registerBrush({ ...getBrush("pen"), id: "teste-extra", label: "Extra" });
++    expect(hasBrush("teste-extra")).toBe(true);
++    expect(listBrushes().at(-1)!.id).toBe("teste-extra");
++    unregisterBrush("teste-extra");
++    expect(hasBrush("teste-extra")).toBe(false);
++  });
++});
++
++describe("compatibilidade do arquivo", () => {
++  const doc = (stroke: object) => ({ version: 1, pages: [{ id: "p", name: "P", paper: "blank", background: "#FFFFFF", elements: [stroke] }] });
++  const base = { id: "s1", type: "stroke", points: [{ x: 0, y: 0, p: 0.5 }], color: "#000000", width: 3, opacity: 1 };
++
++  it("traço antigo (sem brush) vira caneta", () => {
++    const el = normalizeDoc(doc(base)).pages[0].elements[0];
++    expect(el.type === "stroke" && el.brush).toBe("pen");
++  });
++  it("mantém o brush gravado", () => {
++    const el = normalizeDoc(doc({ ...base, brush: "ink" })).pages[0].elements[0];
++    expect(el.type === "stroke" && el.brush).toBe("ink");
++  });
++  it("brush inválido (não texto) vira caneta", () => {
++    const el = normalizeDoc(doc({ ...base, brush: 42 })).pages[0].elements[0];
++    expect(el.type === "stroke" && el.brush).toBe("pen");
++  });
++});
+diff --git a/src/core/brushes.ts b/src/core/brushes.ts
+new file mode 100644
+index 0000000..97863f0
+--- /dev/null
++++ b/src/core/brushes.ts
+@@ -0,0 +1,99 @@
++// Registro de brushes (pincéis). Puro: sem Pixi, sem React. Só DESCREVE como cada brush se comporta;
++// quem desenha é render/strokeDraw.ts.
++//
++// Um traço guarda só o `brush` (id) além de cor/largura/pressão/afilamento/opacidade, então trocar ou
++// ajustar um brush aqui não reescreve o documento: arquivos antigos (sem `brush`) abrem como "pen".
++
++/** Brush de contorno: o traço vira UM polígono variável (perfect-freehand). */
++export interface OutlineBrush {
++  kind: "outline";
++  id: string;
++  label: string;
++  /** Multiplica a espessura escolhida no controle (marca-texto é bem mais largo que a caneta). */
++  size: number;
++  /** Resposta à pressão com caneta real (perfect-freehand `thinning`): 0 = largura constante. */
++  thinning: number;
++  /** Idem, para mouse/dedo, onde a pressão é simulada pela velocidade do traço. */
++  simThinning: number;
++  /** perfect-freehand: suavização do contorno e "streamline" (quanto o traço segue atrasado). */
++  smoothing: number;
++  streamline: number;
++  /** Afilamento fixo das pontas (0..1). null = usa o controle "Afilamento" do usuário. */
++  taper: number | null;
++  /** Pontas arredondadas (true) ou retas, como um marca-texto chanfrado (false). */
++  round: boolean;
++  /** Opacidade própria do brush; é multiplicada pelo controle de opacidade do usuário. */
++  opacity: number;
++  /** "multiply" escurece o que está embaixo (marca-texto de verdade, não tampa o texto). */
++  blend: "normal" | "multiply";
++  /** Cor sugerida ao escolher o brush (marca-texto → amarelo). Sem isso, mantém a cor atual. */
++  defaultColor?: string;
++  /** Texto curto para a dica do painel. */
++  hint: string;
++}
++
++export type Brush = OutlineBrush;
++
++export const DEFAULT_BRUSH_ID = "pen";
++
++const OUTLINE: OutlineBrush[] = [
++  {
++    kind: "outline", id: "pen", label: "Caneta",
++    size: 1, thinning: 0.8, simThinning: 0.5, smoothing: 0.5, streamline: 0.15, taper: null,
++    round: true, opacity: 1, blend: "normal",
++    hint: "A caneta padrão: varia com a pressão e afila nas pontas.",
++  },
++  {
++    kind: "outline", id: "ballpoint", label: "Esferográfica",
++    size: 0.9, thinning: 0.25, simThinning: 0.12, smoothing: 0.5, streamline: 0.3, taper: 0.08,
++    round: true, opacity: 1, blend: "normal",
++    hint: "Linha firme e quase constante, como uma esferográfica.",
++  },
++  {
++    kind: "outline", id: "ink", label: "Nanquim",
++    size: 1.1, thinning: 0.9, simThinning: 0.75, smoothing: 0.55, streamline: 0.2, taper: 0.7,
++    round: true, opacity: 1, blend: "normal",
++    hint: "Pena de nanquim: grossa e fina conforme a pressão, pontas bem afiladas.",
++  },
++  {
++    kind: "outline", id: "marker", label: "Marcador",
++    size: 2.2, thinning: 0, simThinning: 0, smoothing: 0.5, streamline: 0.25, taper: 0,
++    round: true, opacity: 0.9, blend: "normal",
++    hint: "Ponta de feltro: traço grosso, de largura constante.",
++  },
++  {
++    kind: "outline", id: "highlighter", label: "Marca-texto",
++    size: 5, thinning: 0, simThinning: 0, smoothing: 0.6, streamline: 0.4, taper: 0,
++    round: false, opacity: 0.4, blend: "multiply", defaultColor: "#F2C14E",
++    hint: "Translúcido e sem tapar o que está por baixo.",
++  },
++  {
++    kind: "outline", id: "brushpen", label: "Pincel",
++    size: 1.8, thinning: 0.9, simThinning: 0.7, smoothing: 0.6, streamline: 0.4, taper: 0.8,
++    round: true, opacity: 1, blend: "normal",
++    hint: "Caneta-pincel: bem sensível à pressão, com final longo e fino.",
++  },
++];
++
++const registry = new Map<string, Brush>(OUTLINE.map((b) => [b.id, b]));
++/** Ordem de exibição no painel. */
++let order: string[] = OUTLINE.map((b) => b.id);
++
++/** Brush pelo id; id desconhecido (arquivo de outra máquina, brush removido) cai na caneta. */
++export const getBrush = (id: string | null | undefined): Brush => registry.get(id ?? "") ?? registry.get(DEFAULT_BRUSH_ID)!;
++
++export const hasBrush = (id: string): boolean => registry.has(id);
++
++export const listBrushes = (): Brush[] => order.map((id) => registry.get(id)!);
++
++/** Registra (ou substitui) um brush. Usado por brushes importados. */
++export function registerBrush(b: Brush) {
++  registry.set(b.id, b);
++  if (!order.includes(b.id)) order = [...order, b.id];
++}
++
++export function unregisterBrush(id: string) {
++  if (OUTLINE.some((b) => b.id === id)) return; // os nativos não saem
++  registry.delete(id);
++  order = order.filter((x) => x !== id);
++}
+diff --git a/src/core/color.test.ts b/src/core/color.test.ts
+new file mode 100644
+index 0000000..31310ae
+--- /dev/null
++++ b/src/core/color.test.ts
+@@ -0,0 +1,66 @@
++import { describe, expect, it } from "vitest";
++import { PALETTES, RECENT_MAX, contrastOn, hexToHsv, hexToRgb, hsvToHex, parseHex, pushRecent, rgbToHex } from "./color";
++
++describe("parseHex", () => {
++  it("normaliza #abc, abc e #aabbcc para #AABBCC", () => {
++    expect(parseHex("#abc")).toBe("#AABBCC");
++    expect(parseHex("abc")).toBe("#AABBCC");
++    expect(parseHex(" #aabbcc ")).toBe("#AABBCC");
++  });
++  it("rejeita lixo", () => {
++    for (const bad of ["", "#12", "#12345", "#1234567", "#ggg", "red", "rgb(1,2,3)"]) expect(parseHex(bad)).toBeNull();
++  });
++});
++
++describe("conversões", () => {
++  it("hex ↔ rgb", () => {
++    expect(hexToRgb("#C8372D")).toEqual({ r: 200, g: 55, b: 45 });
++    expect(rgbToHex({ r: 200, g: 55, b: 45 })).toBe("#C8372D");
++  });
++  it("cores primárias em HSV", () => {
++    expect(hexToHsv("#FF0000")).toEqual({ h: 0, s: 1, v: 1 });
++    expect(hexToHsv("#00FF00").h).toBeCloseTo(120);
++    expect(hexToHsv("#0000FF").h).toBeCloseTo(240);
++    expect(hexToHsv("#FFFFFF")).toEqual({ h: 0, s: 0, v: 1 });
++    expect(hexToHsv("#000000").v).toBe(0);
++  });
++  it("hex → hsv → hex é estável para todas as paletas", () => {
++    for (const p of PALETTES) for (const c of p.colors) expect(hsvToHex(hexToHsv(c))).toBe(c);
++  });
++  it("hsv → hex nos extremos do matiz", () => {
++    expect(hsvToHex({ h: 0, s: 1, v: 1 })).toBe("#FF0000");
++    expect(hsvToHex({ h: 359.99, s: 1, v: 1 })).toBe("#FF0000");
++    expect(hsvToHex({ h: 60, s: 1, v: 1 })).toBe("#FFFF00");
++  });
++});
++
++describe("contrastOn", () => {
++  it("escolhe escuro sobre claro e claro sobre escuro", () => {
++    expect(contrastOn("#FFFFFF")).toBe("#1B2233");
++    expect(contrastOn("#F2C14E")).toBe("#1B2233");
++    expect(contrastOn("#1B2233")).toBe("#FFFFFF");
++    expect(contrastOn("#2F4B8F")).toBe("#FFFFFF");
++  });
++});
++
++describe("pushRecent", () => {
++  it("põe no início, sem repetir (ignora maiúsculas)", () => {
++    expect(pushRecent(["#111111", "#222222"], "#222222")).toEqual(["#222222", "#111111"]);
++    expect(pushRecent(["#AAAAAA"], "#aaa")).toEqual(["#AAAAAA"]);
++  });
++  it("limita o tamanho e ignora cor inválida", () => {
++    let list: string[] = [];
++    for (let i = 0; i < RECENT_MAX + 5; i++) list = pushRecent(list, rgbToHex({ r: i, g: 0, b: 0 }));
++    expect(list).toHaveLength(RECENT_MAX);
++    expect(pushRecent(list, "não é cor")).toBe(list);
++  });
++});
++
++describe("paletas", () => {
++  it("só têm hex válido em maiúsculas, sem repetição", () => {
++    for (const p of PALETTES) {
++      expect(new Set(p.colors).size).toBe(p.colors.length);
++      for (const c of p.colors) expect(parseHex(c)).toBe(c);
++    }
++  });
++});
+diff --git a/src/core/color.ts b/src/core/color.ts
+new file mode 100644
+index 0000000..bc199bb
+--- /dev/null
++++ b/src/core/color.ts
+@@ -0,0 +1,74 @@
++// Utilidades de cor. Puro: sem Pixi, sem React. Cores do documento são sempre "#RRGGBB".
++
++export interface RGB { r: number; g: number; b: number }
++/** h em graus (0..360), s e v em 0..1. */
++export interface HSV { h: number; s: number; v: number }
++
++const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
++const hex2 = (n: number) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, "0");
++
++/** Aceita "#abc", "abc", "#aabbcc" (maiúsculas ou minúsculas) e devolve "#AABBCC", ou null se inválido. */
++export function parseHex(input: string): string | null {
++  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(input.trim());
++  if (!m) return null;
++  let h = m[1];
++  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
++  return "#" + h.toUpperCase();
++}
++
++export function hexToRgb(hex: string): RGB {
++  const h = parseHex(hex) ?? "#000000";
++  return { r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) };
++}
++
++export const rgbToHex = ({ r, g, b }: RGB): string => ("#" + hex2(r) + hex2(g) + hex2(b)).toUpperCase();
++
++export function rgbToHsv({ r, g, b }: RGB): HSV {
++  const R = r / 255, G = g / 255, B = b / 255;
++  const max = Math.max(R, G, B);
++  const d = max - Math.min(R, G, B);
++  let h = 0;
++  if (d > 0) {
++    if (max === R) h = ((G - B) / d) % 6;
++    else if (max === G) h = (B - R) / d + 2;
++    else h = (R - G) / d + 4;
++    h *= 60;
++    if (h < 0) h += 360;
++  }
++  return { h, s: max === 0 ? 0 : d / max, v: max };
++}
++
++export function hsvToRgb({ h, s, v }: HSV): RGB {
++  const c = v * s;
++  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
++  const m = v - c;
++  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
++  return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
++}
++
++export const hexToHsv = (hex: string): HSV => rgbToHsv(hexToRgb(hex));
++export const hsvToHex = (hsv: HSV): string => rgbToHex(hsvToRgb(hsv));
++
++/** Preto ou branco, o que contrastar mais com a cor (para desenhar aros e ícones sobre ela). */
++export function contrastOn(hex: string): "#1B2233" | "#FFFFFF" {
++  const { r, g, b } = hexToRgb(hex);
++  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#1B2233" : "#FFFFFF";
++}
++
++export const RECENT_MAX = 12;
++
++/** Põe a cor no início da lista de recentes (sem repetir, no máximo RECENT_MAX). */
++export function pushRecent(list: string[], color: string): string[] {
++  const c = parseHex(color);
++  if (!c) return list;
++  return [c, ...list.filter((x) => x.toUpperCase() !== c)].slice(0, RECENT_MAX);
++}
++
++export interface Palette { id: string; label: string; colors: string[] }
++
++export const PALETTES: Palette[] = [
++  { id: "classic", label: "Clássicas", colors: ["#1B2233", "#4B5468", "#8A93A6", "#FFFFFF", "#C8372D", "#E4572E", "#D98A1F", "#F2C14E", "#2F7D5B", "#2F4B8F", "#6B4FA0", "#B5517A"] },
++  { id: "pastel", label: "Pastel", colors: ["#F6D5D2", "#F7E3BD", "#FBF1B5", "#CFE8DB", "#C9D6F2", "#DDD0F0", "#F3D1E4", "#D9E4EA", "#E8DCCB", "#EDEDED", "#FFE0C2", "#C9ECE6"] },
++  { id: "vivid", label: "Vivas", colors: ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#00C7BE", "#32ADE6", "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E", "#000000"] },
++  { id: "earth", label: "Terra", colors: ["#3B2A20", "#6B4A2F", "#8C6239", "#B8864B", "#D9B382", "#EAD7B7", "#5B6B3A", "#8A9A5B", "#4F6D7A", "#2E4057", "#7A3E3E", "#A65E2E"] },
++];
+diff --git a/src/core/ink.test.ts b/src/core/ink.test.ts
+new file mode 100644
+index 0000000..92cd5d6
+--- /dev/null
++++ b/src/core/ink.test.ts
+@@ -0,0 +1,69 @@
++import { getStroke } from "perfect-freehand";
++import { describe, expect, it } from "vitest";
++import { listBrushes } from "./brushes";
++import { InkStyle, strokeOutline } from "./ink";
++import { InkPoint } from "./model";
++
++const wave = (pressure: boolean): InkPoint[] =>
++  Array.from({ length: 30 }, (_, i) => ({ x: i * 4, y: Math.sin(i / 4) * 10, p: pressure ? 0.2 + 0.7 * Math.sin((Math.PI * i) / 29) : 0.5 }));
++
++const style = (over: Partial<InkStyle> = {}): InkStyle => ({ color: "#000000", width: 3, sens: 0.8, taper: 0.5, brush: "pen", opacity: 1, ...over });
++
++const bbox = (flat: number[]) => {
++  const ys = flat.filter((_, i) => i % 2);
++  return Math.max(...ys) - Math.min(...ys);
++};
++
++describe("strokeOutline", () => {
++  it("a caneta gera o MESMO contorno de antes dos brushes (compatibilidade com arquivos antigos)", () => {
++    for (const pressure of [true, false]) {
++      const pts = wave(pressure);
++      const st = style();
++      const simulate = !pressure;
++      const taper = st.taper * st.width * 6;
++      const old = getStroke(
++        pts.map((p) => [p.x, p.y, p.p]),
++        {
++          size: st.width, thinning: (simulate ? 0.5 : 0.8) * st.sens, smoothing: 0.5, streamline: 0.15, simulatePressure: simulate,
++          start: { taper, cap: true }, end: { taper, cap: true }, last: true,
++        },
++      ).flat();
++      expect(strokeOutline(pts, st, true)).toEqual(old);
++    }
++  });
++
++  it("todo brush produz um polígono válido, com e sem pressão", () => {
++    for (const b of listBrushes()) {
++      for (const pressure of [true, false]) {
++        const flat = strokeOutline(wave(pressure), style({ brush: b.id, width: 3 * b.size }), true);
++        expect(flat.length, b.id).toBeGreaterThanOrEqual(6);
++        expect(flat.every(Number.isFinite), b.id).toBe(true);
++      }
++    }
++  });
++
++  it("um único ponto (toque sem arrastar) ainda gera um pontinho", () => {
++    const flat = strokeOutline([{ x: 5, y: 5, p: 0.5 }], style(), true);
++    expect(flat.length).toBeGreaterThanOrEqual(6);
++  });
++
++  it("brush de afilamento fixo ignora o controle do usuário; o da caneta obedece", () => {
++    const pts = wave(true);
++    const fixedA = strokeOutline(pts, style({ brush: "ballpoint", taper: 0 }), true);
++    const fixedB = strokeOutline(pts, style({ brush: "ballpoint", taper: 1 }), true);
++    expect(fixedA).toEqual(fixedB);
++    expect(strokeOutline(pts, style({ taper: 0 }), true)).not.toEqual(strokeOutline(pts, style({ taper: 1 }), true));
++  });
++
++  it("marcador/marca-texto são mais largos que a caneta na mesma espessura escolhida", () => {
++    const pts = wave(false).map((p) => ({ ...p, y: 0 }));
++    const w = (id: string, size: number) => bbox(strokeOutline(pts, style({ brush: id, width: 3 * size }), true));
++    expect(w("marker", 2.2)).toBeGreaterThan(w("pen", 1));
++    expect(w("highlighter", 5)).toBeGreaterThan(w("marker", 2.2));
++  });
++
++  it("brush desconhecido cai na caneta", () => {
++    const pts = wave(true);
++    expect(strokeOutline(pts, style({ brush: "não-existe" }), true)).toEqual(strokeOutline(pts, style({ brush: "pen" }), true));
++  });
++});
+diff --git a/src/core/ink.ts b/src/core/ink.ts
+new file mode 100644
+index 0000000..9fe2044
+--- /dev/null
++++ b/src/core/ink.ts
+@@ -0,0 +1,41 @@
++// Contorno da tinta. Puro: só perfect-freehand, sem Pixi nem React (testável em Node).
++// O MESMO cálculo serve ao traço ao vivo, ao gravado, à miniatura e à pré-visualização do brush.
++// O comportamento de cada brush vem de core/brushes.ts; aqui só se aplica.
++import { getStroke } from "perfect-freehand";
++import { getBrush } from "./brushes";
++import { InkPoint } from "./model";
++
++export interface InkStyle {
++  color: string;
++  /** Largura JÁ multiplicada pelo `size` do brush (é o que fica guardado em StrokeElement.width). */
++  width: number;
++  sens: number;
++  taper: number;
++  brush: string;
++  /** Opacidade final (brush × controle do usuário). */
++  opacity: number;
++}
++
++/** Contorno do traço como lista plana [x0, y0, x1, y1, ...]. */
++export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean): number[] {
++  const b = getBrush(st.brush);
++  // Caneta real varia a pressão; mouse/dedo ficam sempre em 0.5.
++  const simulate = !points.some((p) => p.p !== 0.5);
++  const taper = (b.taper ?? st.taper) * st.width * 6;
++  const outline = getStroke(
++    points.map((p) => [p.x, p.y, p.p]),
++    {
++      size: st.width,
++      thinning: (simulate ? b.simThinning : b.thinning) * st.sens,
++      smoothing: b.smoothing,
++      streamline: b.streamline,
++      simulatePressure: simulate,
++      start: { taper, cap: b.round },
++      end: { taper, cap: b.round },
++      last,
++    },
++  );
++  const flat: number[] = [];
++  for (const [x, y] of outline) flat.push(x, y);
++  return flat;
++}
+diff --git a/src/core/model.ts b/src/core/model.ts
+index 3a00fcd..d3ee414 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -22,6 +22,9 @@ export interface StrokeElement {
+   sens: number;
+   /** Afilamento das pontas, 0..1 (0 = ponta cega). */
+   taper: number;
++  /** Id do brush (core/brushes.ts). Arquivos antigos não têm: viram "pen" em normalizeDoc. */
++  brush: string;
++  /** Opacidade final do traço (brush × controle de opacidade). */
+   opacity: number;
+ }
+ 
+@@ -204,7 +207,12 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         ? p.elements.filter(validElement).map((e: any) =>
+             e.type === "stroke"
+-              ? { ...e, sens: typeof e.sens === "number" ? e.sens : 1, taper: typeof e.taper === "number" ? e.taper : 0 }
++              ? {
++                  ...e,
++                  sens: typeof e.sens === "number" ? e.sens : 1,
++                  taper: typeof e.taper === "number" ? e.taper : 0,
++                  brush: typeof e.brush === "string" && e.brush ? e.brush : "pen",
++                }
+               : e.type === "arrow"
+                 ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
+                 : e.type === "text"
+diff --git a/src/core/store.ts b/src/core/store.ts
+index 331514f..07d55df 100644
+--- a/src/core/store.ts
++++ b/src/core/store.ts
+@@ -1,6 +1,7 @@
+ import { create } from "zustand";
+ import { persist } from "zustand/middleware";
+ import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
++import { getBrush } from "./brushes";
+ import { Camera, defaultCamera } from "./camera";
+ import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
+ 
+@@ -197,6 +198,16 @@ interface ToolState {
+   smoothing: number;
+   /** 0..1: afilamento das pontas do traço. */
+   taper: number;
++  /** Brush ativo da caneta (id de core/brushes.ts). */
++  brush: string;
++  /** 0.05..1: opacidade do traço (multiplica a opacidade própria do brush). */
++  opacity: number;
++  /** Últimas cores usadas (mais recente primeiro). */
++  recent: string[];
++  /** Última cor usada em cada brush: ao voltar para ele, a cor volta junto. */
++  brushColors: Record<string, string>;
++  /** Conta-gotas ativo: o próximo toque no canvas escolhe a cor do que estiver embaixo. Não persiste. */
++  picking: boolean;
+   /** Formas: estilo do contorno, preenchimento (null = nenhum) e cantos. */
+   lineStyle: LineStyle;
+   fill: string | null;
+@@ -214,13 +225,15 @@ interface ToolState {
+   /** Se false, toque com o dedo só move a tela (estilo GoodNotes). */
+   fingerDraws: boolean;
+   setTool: (t: ToolId) => void;
+-  set: (patch: Partial<Omit<ToolState, "setTool" | "set">>) => void;
++  /** Troca o brush (e a cor, se o brush tiver cor própria ou já tiver sido usado com outra). */
++  setBrush: (id: string) => void;
++  set: (patch: Partial<Omit<ToolState, "setTool" | "set" | "setBrush">>) => void;
+ }
+ 
+ /** Preferências de ferramenta: persistidas localmente (não fazem parte do documento). */
+ export const useTool = create<ToolState>()(
+   persist(
+-    (set) => ({
++    (set, get) => ({
+       tool: "pen",
+       color: "#1B2233",
+       width: 3,
+@@ -228,6 +241,11 @@ export const useTool = create<ToolState>()(
+       pressureSens: 0.8,
+       smoothing: 0.35,
+       taper: 0.5,
++      brush: "pen",
++      opacity: 1,
++      recent: [],
++      brushColors: {},
++      picking: false,
+       lineStyle: "solid",
+       fill: null,
+       rounded: true,
+@@ -239,7 +257,14 @@ export const useTool = create<ToolState>()(
+       textAlign: "left",
+       lassoMode: "inside",
+       fingerDraws: false,
+-      setTool: (tool) => set({ tool }),
++      setTool: (tool) => set({ tool, picking: false }),
++      setBrush: (id) => {
++        const s = get();
++        const next = getBrush(id);
++        // Guarda a cor do brush que está saindo e carrega a do que entra.
++        const brushColors = { ...s.brushColors, [s.brush]: s.color };
++        set({ brush: next.id, brushColors, color: brushColors[next.id] ?? next.defaultColor ?? s.color });
++      },
+       set: (patch) => set(patch),
+     }),
+     {
+@@ -251,6 +276,10 @@ export const useTool = create<ToolState>()(
+         pressureSens: s.pressureSens,
+         smoothing: s.smoothing,
+         taper: s.taper,
++        brush: s.brush,
++        opacity: s.opacity,
++        recent: s.recent,
++        brushColors: s.brushColors,
+         lineStyle: s.lineStyle,
+         fill: s.fill,
+         rounded: s.rounded,
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index 8679d7c..dab1552 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -7,7 +7,8 @@ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../cor
+ import { Pt } from "../core/shapes";
+ import { FONT_CSS, LINE_HEIGHT } from "../core/text";
+ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+-import { InkStyle, drawInk, drawStrokeElement } from "./strokeDraw";
++import { getBrush } from "../core/brushes";
++import { InkStyle, applyBrushLook, drawInk, drawStrokeElement } from "./strokeDraw";
+ 
+ const LINE = "#1B2233";
+ const INDIGO = "#2F4B8F";
+@@ -231,6 +232,7 @@ export class Renderer {
+   beginLive(style: InkStyle) {
+     this.live.clear();
+     this.liveStyle = style;
++    applyBrushLook(this.live, getBrush(style.brush), style.opacity);
+   }
+ 
+   updateLive(points: InkPoint[]) {
+@@ -241,6 +243,8 @@ export class Renderer {
+ 
+   previewElement(el: ShapeElement | LinearElement | null) {
+     this.live.clear();
++    this.live.alpha = 1;
++    this.live.blendMode = "normal";
+     if (!el) return;
+     if (isLinear(el)) drawLinearElement(this.live, el);
+     else drawShapeElement(this.live, el);
+@@ -248,6 +252,8 @@ export class Renderer {
+ 
+   endLive() {
+     this.live.clear();
++    this.live.alpha = 1;
++    this.live.blendMode = "normal";
+     this.liveStyle = null;
+   }
+ 
+@@ -316,7 +322,8 @@ export class Renderer {
+ 
+   /** Marca elementos que serão apagados (pré-visualização enquanto arrasta). */
+   setGhosts(ids: Set<string>) {
+-    for (const id of this.ghosts) if (!ids.has(id)) this.setAlpha(id, 1);
++    // Ao sair do "fantasma" volta à opacidade REAL do elemento (marca-texto, por exemplo, não é 1).
++    for (const id of this.ghosts) if (!ids.has(id)) this.setAlpha(id, this.nodes.get(id)?.el.opacity ?? 1);
+     for (const id of ids) this.setAlpha(id, 0.18);
+     this.ghosts = new Set(ids);
+   }
+diff --git a/src/render/strokeDraw.ts b/src/render/strokeDraw.ts
+index e256c3c..88cd06f 100644
+--- a/src/render/strokeDraw.ts
++++ b/src/render/strokeDraw.ts
+@@ -1,39 +1,12 @@
+-// Traço de tinta com perfect-freehand: contorno variável, afilamento nas pontas e
+-// simulação de pressão por velocidade quando o dispositivo não envia pressão (mouse/dedo).
++// Desenho do traço de tinta no Pixi. O contorno vem de core/ink.ts (puro); aqui só se pinta.
+ // O MESMO código desenha o traço ao vivo e o gravado → nada "salta" ao soltar a caneta.
+-import { getStroke } from "perfect-freehand";
+ import { Graphics } from "pixi.js";
++import { Brush, getBrush } from "../core/brushes";
++import { InkStyle, strokeOutline } from "../core/ink";
+ import { InkPoint, StrokeElement } from "../core/model";
+ 
+-export interface InkStyle {
+-  color: string;
+-  width: number;
+-  sens: number;
+-  taper: number;
+-}
+-
+-/** Contorno do traço como lista plana [x0, y0, x1, y1, ...]. */
+-export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean): number[] {
+-  // Caneta real varia a pressão; mouse/dedo ficam sempre em 0.5.
+-  const simulate = !points.some((p) => p.p !== 0.5);
+-  const taper = st.taper * st.width * 6;
+-  const outline = getStroke(
+-    points.map((p) => [p.x, p.y, p.p]),
+-    {
+-      size: st.width,
+-      thinning: (simulate ? 0.5 : 0.8) * st.sens,
+-      smoothing: 0.5,
+-      streamline: 0.15,
+-      simulatePressure: simulate,
+-      start: { taper, cap: true },
+-      end: { taper, cap: true },
+-      last,
+-    },
+-  );
+-  const flat: number[] = [];
+-  for (const [x, y] of outline) flat.push(x, y);
+-  return flat;
+-}
++export type { InkStyle };
++export { strokeOutline };
+ 
+ /** Desenha (ou redesenha) um traço em `g`. `last = false` enquanto a caneta ainda está no papel. */
+ export function drawInk(g: Graphics, points: InkPoint[], st: InkStyle, last: boolean) {
+@@ -42,7 +15,14 @@ export function drawInk(g: Graphics, points: InkPoint[], st: InkStyle, last: boo
+   if (flat.length >= 6) g.poly(flat).fill({ color: st.color });
+ }
+ 
++/** Opacidade e modo de mistura do brush num nó (traço gravado ou camada ao vivo). */
++export function applyBrushLook(g: Graphics, brush: Brush, opacity: number) {
++  g.alpha = opacity;
++  g.blendMode = brush.blend;
++}
++
+ export function drawStrokeElement(g: Graphics, el: StrokeElement) {
+-  drawInk(g, el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper }, true);
+-  g.alpha = el.opacity;
++  const brush = getBrush(el.brush);
++  drawInk(g, el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper, brush: brush.id, opacity: el.opacity }, true);
++  applyBrushLook(g, brush, el.opacity);
+ }
+diff --git a/src/render/svgThumb.ts b/src/render/svgThumb.ts
+index a5c3321..fad051e 100644
+--- a/src/render/svgThumb.ts
++++ b/src/render/svgThumb.ts
+@@ -4,7 +4,7 @@ import { HirakuElement, Page, isLinear } from "../core/model";
+ import { linearPath } from "../core/linear";
+ import { Bounds, elementBounds } from "../core/selection";
+ import { shapePath } from "../core/shapes";
+-import { strokeOutline } from "./strokeDraw";
++import { strokeOutline } from "../core/ink";
+ 
+ export interface ThumbPath {
+   d: string;
+@@ -35,9 +35,9 @@ export function thumbPath(el: HirakuElement): ThumbPath {
+   let tp: ThumbPath;
+   if (el.type === "stroke") {
+     tp = {
+-      d: pathFrom(strokeOutline(el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper }, true)),
++      d: pathFrom(strokeOutline(el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper, brush: el.brush, opacity: el.opacity }, true)),
+       fill: safeColor(el.color, "#1B2233"),
+-      stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: 1,
++      stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: el.opacity,
+     };
+   } else if (el.type === "text") {
+     const lines = el.text.split("\n");
+diff --git a/src/styles.css b/src/styles.css
+index a3dcb27..6151f07 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -28,6 +28,7 @@ html, body, #root {
+ .canvas.eraser { cursor: none; }
+ .canvas.hand { cursor: grab; }
+ .canvas.select { cursor: default; }
++.canvas.pick { cursor: copy; }
+ 
+ /* Barra + painéis: um único bloco fixo embaixo, centralizado. */
+ .dock {
+@@ -289,3 +290,62 @@ body[data-sidebar="open"] { --side: 256px; }
+ .brand-text { display: grid; line-height: 1.15; min-width: 0; }
+ .brand-text strong { font-size: 14px; letter-spacing: 0.01em; }
+ .brand-text span { font-size: 11px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++
++/* ---- pincéis e cores ---- */
++.swatch.more {
++  background: conic-gradient(#f44, #fb3, #7d4, #3cd, #47f, #c5e, #f44);
++}
++
++.brushes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
++.brush {
++  display: grid;
++  gap: 2px;
++  justify-items: center;
++  min-height: 64px;
++  padding: 6px 6px 8px;
++  border: 1px solid var(--line);
++  border-radius: 12px;
++  background: #fff;
++  color: var(--ink);
++  font: inherit;
++  font-size: 13px;
++  cursor: pointer;
++}
++.brush.on { border-color: var(--indigo); box-shadow: 0 0 0 2px var(--indigo); }
++.brush:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
++.bprev { display: block; width: 100%; height: 34px; }
++
++.chip.sm { min-height: 32px; padding: 0 10px; font-size: 13px; }
++
++.colorpanel { gap: 10px; }
++.cp-sv, .cp-hue { position: relative; border-radius: 10px; touch-action: none; cursor: crosshair; }
++.cp-sv { height: 150px; }
++.cp-hue { height: 22px; background-image: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
++.cp-sv:focus-visible, .cp-hue:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
++.cp-knob {
++  position: absolute;
++  width: 18px;
++  height: 18px;
++  margin: -9px 0 0 -9px;
++  border: 2px solid #fff;
++  border-radius: 50%;
++  box-shadow: 0 0 0 1px rgba(27, 34, 51, 0.45);
++  pointer-events: none;
++}
++.cp-hexrow { flex-wrap: nowrap; }
++.cp-now { flex: none; width: 32px; height: 32px; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
++.cp-hex {
++  flex: 1;
++  min-width: 0;
++  height: 40px;
++  padding: 0 10px;
++  border: 1px solid var(--line);
++  border-radius: 10px;
++  font: inherit;
++  font-size: 14px;
++  font-variant-numeric: tabular-nums;
++  text-transform: uppercase;
++  -webkit-user-select: text;
++  user-select: text;
++}
++.cp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px 0; justify-items: center; }
+diff --git a/vitest.config.ts b/vitest.config.ts
+new file mode 100644
+index 0000000..90b7c0c
+--- /dev/null
++++ b/vitest.config.ts
+@@ -0,0 +1,4 @@
++import { defineConfig } from "vitest/config";
++
++// Testes só da lógica pura (src/core, parsers…): ambiente Node, sem o PWA/Tauri do vite.config.
++export default defineConfig({ test: { environment: "node", include: ["src/**/*.test.{ts,tsx}"] } });
+-- 
+2.43.0
+

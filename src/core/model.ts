@@ -22,6 +22,9 @@ export interface StrokeElement {
   sens: number;
   /** Afilamento das pontas, 0..1 (0 = ponta cega). */
   taper: number;
+  /** Id do brush (core/brushes.ts). Arquivos antigos não têm: viram "pen" em normalizeDoc. */
+  brush: string;
+  /** Opacidade final do traço (brush × controle de opacidade). */
   opacity: number;
 }
 
@@ -204,7 +207,12 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ? p.elements.filter(validElement).map((e: any) =>
             e.type === "stroke"
-              ? { ...e, sens: typeof e.sens === "number" ? e.sens : 1, taper: typeof e.taper === "number" ? e.taper : 0 }
+              ? {
+                  ...e,
+                  sens: typeof e.sens === "number" ? e.sens : 1,
+                  taper: typeof e.taper === "number" ? e.taper : 0,
+                  brush: typeof e.brush === "string" && e.brush ? e.brush : "pen",
+                }
               : e.type === "arrow"
                 ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
                 : e.type === "text"

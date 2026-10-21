@@ -75,9 +75,22 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - Pendências de texto: texto dentro de formas (rótulo com quebra automática), fontes embutidas (Excalifont/Virgil etc.), espessura/negrito, listas
 - **M1c concluído.** Próximo: M1d (export PNG/SVG, import/export `.excalidraw`, estilo rascunho) + marca-texto
 - Pendências de páginas: arrastar-e-soltar para reordenar, título do caderno, fundo de PDF por página (M2)
+- [x] Brushes (parte A): **registro de brushes** (`core/brushes.ts`) + 6 de contorno (caneta, esferográfica, nanquim, marcador, marca-texto, pincel), painel de pincéis com pré-visualização, opacidade, **seletor de cor** (HSV + hex, 4 paletas, recentes, cor lembrada por brush) e **conta-gotas** (pega a cor do desenho sob o toque)
 - [ ] M1d: Estilo rascunho (rough.js), export PNG/SVG, import/export `.excalidraw` + **marca-texto e borracha por traço**
 - [ ] M2: Molduras, bibliotecas, mermaid, laser pointer + **anotação de PDF**
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
+
+## Brushes (pincéis)
+
+- **`core/brushes.ts`** só DESCREVE cada brush (puro); **`core/ink.ts`** calcula o contorno (puro, testável em Node);
+  `render/strokeDraw.ts` pinta no Pixi. Novo brush = nova entrada no registro, sem tocar no resto.
+- O traço guarda `brush` (id), `color`, `width`, `sens`, `taper` e `opacity`. **`width` e `opacity` guardados já são os EFETIVOS**
+  (espessura do controle × `size` do brush; opacidade do controle × a do brush), para seleção, hit-test, escala e miniatura
+  continuarem funcionando sem conhecer brushes. Brush desconhecido cai na caneta (`getBrush`).
+- Arquivo `.hiraku`: `brush` é campo opcional novo, completado em `normalizeDoc` (traço antigo vira `"pen"`). Segue **versão 1**
+  porque é aditivo (mesmo critério das migrações leves anteriores).
+- Cor: `core/color.ts` (puro). `applyColor` é o único ponto que muda a cor ativa: `commit:false` durante arrastes
+  (não enche o histórico), `commit:true` ao soltar (recolore seleção/texto, entra nos recentes).
 
 ## Como rodar
 
@@ -87,15 +100,16 @@ npm run icons          # gera src-tauri/icons a partir de app-icon.png (1 vez)
 npm run tauri dev      # desktop (Linux)
 npm run dev            # só o front no navegador (PWA / debug rápido)
 npm run typecheck
+npm test               # Vitest: lógica pura (core/*, parsers) e fumaça dos painéis
 ```
 Android: `npm run tauri android init` (1 vez) e depois `npm run tauri android dev`.
 Requer Android Studio, SDK, NDK e `JAVA_HOME`/`ANDROID_HOME`/`NDK_HOME` configurados.
 
 ## Testes e verificação
 
-- Antes de concluir qualquer tarefa: `npm run typecheck` e `npm run build` devem passar.
-- Lógica pura (`core/*`, geometria, serialização) ganha testes com **Vitest** (ainda não instalado: adicione
-  ao criar o primeiro teste).
+- Antes de concluir qualquer tarefa: `npm run typecheck`, `npm test` e `npm run build` devem passar.
+- Lógica pura (`core/*`, geometria, serialização, parsers) ganha testes com **Vitest** (`*.test.ts` ao lado do código;
+  `vitest.config.ts` roda em Node, sem o PWA do Vite).
 - Mudanças em input/render: descreva como testou (mouse, caneta, toque) e em qual plataforma.
 
 ## Uso do REA (engenharia reversa assistida)

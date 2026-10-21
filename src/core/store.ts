@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
+import { getBrush } from "./brushes";
 import { Camera, defaultCamera } from "./camera";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
@@ -197,6 +198,16 @@ interface ToolState {
   smoothing: number;
   /** 0..1: afilamento das pontas do traço. */
   taper: number;
+  /** Brush ativo da caneta (id de core/brushes.ts). */
+  brush: string;
+  /** 0.05..1: opacidade do traço (multiplica a opacidade própria do brush). */
+  opacity: number;
+  /** Últimas cores usadas (mais recente primeiro). */
+  recent: string[];
+  /** Última cor usada em cada brush: ao voltar para ele, a cor volta junto. */
+  brushColors: Record<string, string>;
+  /** Conta-gotas ativo: o próximo toque no canvas escolhe a cor do que estiver embaixo. Não persiste. */
+  picking: boolean;
   /** Formas: estilo do contorno, preenchimento (null = nenhum) e cantos. */
   lineStyle: LineStyle;
   fill: string | null;
@@ -214,13 +225,15 @@ interface ToolState {
   /** Se false, toque com o dedo só move a tela (estilo GoodNotes). */
   fingerDraws: boolean;
   setTool: (t: ToolId) => void;
-  set: (patch: Partial<Omit<ToolState, "setTool" | "set">>) => void;
+  /** Troca o brush (e a cor, se o brush tiver cor própria ou já tiver sido usado com outra). */
+  setBrush: (id: string) => void;
+  set: (patch: Partial<Omit<ToolState, "setTool" | "set" | "setBrush">>) => void;
 }
 
 /** Preferências de ferramenta: persistidas localmente (não fazem parte do documento). */
 export const useTool = create<ToolState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       tool: "pen",
       color: "#1B2233",
       width: 3,
@@ -228,6 +241,11 @@ export const useTool = create<ToolState>()(
       pressureSens: 0.8,
       smoothing: 0.35,
       taper: 0.5,
+      brush: "pen",
+      opacity: 1,
+      recent: [],
+      brushColors: {},
+      picking: false,
       lineStyle: "solid",
       fill: null,
       rounded: true,
@@ -239,7 +257,14 @@ export const useTool = create<ToolState>()(
       textAlign: "left",
       lassoMode: "inside",
       fingerDraws: false,
-      setTool: (tool) => set({ tool }),
+      setTool: (tool) => set({ tool, picking: false }),
+      setBrush: (id) => {
+        const s = get();
+        const next = getBrush(id);
+        // Guarda a cor do brush que está saindo e carrega a do que entra.
+        const brushColors = { ...s.brushColors, [s.brush]: s.color };
+        set({ brush: next.id, brushColors, color: brushColors[next.id] ?? next.defaultColor ?? s.color });
+      },
       set: (patch) => set(patch),
     }),
     {
@@ -251,6 +276,10 @@ export const useTool = create<ToolState>()(
         pressureSens: s.pressureSens,
         smoothing: s.smoothing,
         taper: s.taper,
+        brush: s.brush,
+        opacity: s.opacity,
+        recent: s.recent,
+        brushColors: s.brushColors,
         lineStyle: s.lineStyle,
         fill: s.fill,
         rounded: s.rounded,

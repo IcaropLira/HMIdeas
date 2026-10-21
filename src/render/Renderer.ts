@@ -7,7 +7,8 @@ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../cor
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
-import { InkStyle, drawInk, drawStrokeElement } from "./strokeDraw";
+import { getBrush } from "../core/brushes";
+import { InkStyle, applyBrushLook, drawInk, drawStrokeElement } from "./strokeDraw";
 
 const LINE = "#1B2233";
 const INDIGO = "#2F4B8F";
@@ -231,6 +232,7 @@ export class Renderer {
   beginLive(style: InkStyle) {
     this.live.clear();
     this.liveStyle = style;
+    applyBrushLook(this.live, getBrush(style.brush), style.opacity);
   }
 
   updateLive(points: InkPoint[]) {
@@ -241,6 +243,8 @@ export class Renderer {
 
   previewElement(el: ShapeElement | LinearElement | null) {
     this.live.clear();
+    this.live.alpha = 1;
+    this.live.blendMode = "normal";
     if (!el) return;
     if (isLinear(el)) drawLinearElement(this.live, el);
     else drawShapeElement(this.live, el);
@@ -248,6 +252,8 @@ export class Renderer {
 
   endLive() {
     this.live.clear();
+    this.live.alpha = 1;
+    this.live.blendMode = "normal";
     this.liveStyle = null;
   }
 
@@ -316,7 +322,8 @@ export class Renderer {
 
   /** Marca elementos que serão apagados (pré-visualização enquanto arrasta). */
   setGhosts(ids: Set<string>) {
-    for (const id of this.ghosts) if (!ids.has(id)) this.setAlpha(id, 1);
+    // Ao sair do "fantasma" volta à opacidade REAL do elemento (marca-texto, por exemplo, não é 1).
+    for (const id of this.ghosts) if (!ids.has(id)) this.setAlpha(id, this.nodes.get(id)?.el.opacity ?? 1);
     for (const id of ids) this.setAlpha(id, 0.18);
     this.ghosts = new Set(ids);
   }

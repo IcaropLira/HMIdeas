@@ -45,6 +45,7 @@ export default function App() {
         goPage(k === "pageup" ? -1 : 1);
       } else if (k === "escape") {
         useSel.getState().clear();
+        if (useTool.getState().picking) useTool.getState().set({ picking: false });
       } else if (k.startsWith("arrow") && useSel.getState().ids.length) {
         e.preventDefault();
         const n = e.shiftKey ? 10 : 1;

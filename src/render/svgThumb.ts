@@ -4,7 +4,7 @@ import { HirakuElement, Page, isLinear } from "../core/model";
 import { linearPath } from "../core/linear";
 import { Bounds, elementBounds } from "../core/selection";
 import { shapePath } from "../core/shapes";
-import { strokeOutline } from "./strokeDraw";
+import { strokeOutline } from "../core/ink";
 
 export interface ThumbPath {
   d: string;
@@ -35,9 +35,9 @@ export function thumbPath(el: HirakuElement): ThumbPath {
   let tp: ThumbPath;
   if (el.type === "stroke") {
     tp = {
-      d: pathFrom(strokeOutline(el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper }, true)),
+      d: pathFrom(strokeOutline(el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper, brush: el.brush, opacity: el.opacity }, true)),
       fill: safeColor(el.color, "#1B2233"),
-      stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: 1,
+      stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: el.opacity,
     };
   } else if (el.type === "text") {
     const lines = el.text.split("\n");

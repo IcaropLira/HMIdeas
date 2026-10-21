@@ -1,0 +1,171 @@
+From 4c0a3756ca1cab43f5b880a0a201e7fe105f82bd Mon Sep 17 00:00:00 2001
+From: HMIdeas <dev@hmideas.local>
+Date: Wed, 21 Oct 2026 16:34:50 +0000
+Subject: [PATCH] fix: smooth brush caps and prevent live stroke lag
+
+---
+ src/components/CanvasView.tsx |  4 +++-
+ src/core/ink.test.ts          | 13 +++++++++++++
+ src/core/ink.ts               | 29 ++++++++++++++++++++++-------
+ src/core/store.ts             |  2 +-
+ src/render/Renderer.ts        | 18 ++++++++++++++++--
+ 5 files changed, 55 insertions(+), 11 deletions(-)
+
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 5314a30..a76f7f0 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -79,7 +79,9 @@ export function CanvasView() {
+     const accept = (pt: InkPoint): boolean => {
+       const last = points[points.length - 1];
+       if (!last) return true;
+-      const min = 0.3 / useView.getState().camera.zoom;
++      // Amostrar em pixels de tela (não em unidades do documento): mantém a fidelidade
++      // ao dar zoom sem criar milhares de pontos quase idênticos durante círculos rápidos.
++      const min = 0.6 / useView.getState().camera.zoom;
+       return Math.hypot(pt.x - last.x, pt.y - last.y) >= min;
+     };
+ 
+diff --git a/src/core/ink.test.ts b/src/core/ink.test.ts
+index 92cd5d6..f97f177 100644
+--- a/src/core/ink.test.ts
++++ b/src/core/ink.test.ts
+@@ -47,6 +47,19 @@ describe("strokeOutline", () => {
+     expect(flat.length).toBeGreaterThanOrEqual(6);
+   });
+ 
++  it("ignora amostras inválidas e limita a pressão ao intervalo 0..1", () => {
++    const pts: InkPoint[] = [
++      { x: 0, y: 0, p: 0.5 },
++      { x: 0, y: 0, p: 0.5 },
++      { x: Number.NaN, y: 2, p: 0.5 },
++      { x: 4, y: 0, p: 4 },
++      { x: 8, y: 1, p: -3 },
++    ];
++    const flat = strokeOutline(pts, style({ taper: 0 }), true);
++    expect(flat.length).toBeGreaterThanOrEqual(6);
++    expect(flat.every(Number.isFinite)).toBe(true);
++  });
++
+   it("brush de afilamento fixo ignora o controle do usuário; o da caneta obedece", () => {
+     const pts = wave(true);
+     const fixedA = strokeOutline(pts, style({ brush: "ballpoint", taper: 0 }), true);
+diff --git a/src/core/ink.ts b/src/core/ink.ts
+index 9fe2044..bee34cb 100644
+--- a/src/core/ink.ts
++++ b/src/core/ink.ts
+@@ -19,14 +19,25 @@ export interface InkStyle {
+ /** Contorno do traço como lista plana [x0, y0, x1, y1, ...]. */
+ export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean): number[] {
+   const b = getBrush(st.brush);
++  // Protege o renderizador contra amostras inválidas vindas de tablets/drivers instáveis.
++  // Também elimina pontos repetidos: eles podem produzir contornos degenerados em gestos curtos.
++  const clean: InkPoint[] = [];
++  for (const p of points) {
++    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.p)) continue;
++    const next = { x: p.x, y: p.y, p: Math.max(0, Math.min(1, p.p)) };
++    const prev = clean[clean.length - 1];
++    if (!prev || Math.hypot(next.x - prev.x, next.y - prev.y) > 0.001) clean.push(next);
++  }
++  if (!clean.length) return [];
++
+   // Caneta real varia a pressão; mouse/dedo ficam sempre em 0.5.
+-  const simulate = !points.some((p) => p.p !== 0.5);
+-  const taper = (b.taper ?? st.taper) * st.width * 6;
++  const simulate = !clean.some((p) => p.p !== 0.5);
++  const taper = Math.max(0, b.taper ?? st.taper) * st.width * 6;
+   const outline = getStroke(
+-    points.map((p) => [p.x, p.y, p.p]),
++    clean.map((p) => [p.x, p.y, p.p]),
+     {
+-      size: st.width,
+-      thinning: (simulate ? b.simThinning : b.thinning) * st.sens,
++      size: Math.max(0.1, st.width),
++      thinning: (simulate ? b.simThinning : b.thinning) * Math.max(0, st.sens),
+       smoothing: b.smoothing,
+       streamline: b.streamline,
+       simulatePressure: simulate,
+@@ -36,6 +47,10 @@ export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean):
+     },
+   );
+   const flat: number[] = [];
+-  for (const [x, y] of outline) flat.push(x, y);
+-  return flat;
++  for (const [x, y] of outline) {
++    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
++    flat.push(x, y);
++  }
++  // Pixi não deve receber um polígono com menos de três vértices.
++  return flat.length >= 6 ? flat : [];
+ }
+diff --git a/src/core/store.ts b/src/core/store.ts
+index 07d55df..23a8701 100644
+--- a/src/core/store.ts
++++ b/src/core/store.ts
+@@ -240,7 +240,7 @@ export const useTool = create<ToolState>()(
+       eraserSize: 28,
+       pressureSens: 0.8,
+       smoothing: 0.35,
+-      taper: 0.5,
++      taper: 0,
+       brush: "pen",
+       opacity: 1,
+       recent: [],
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index dab1552..b9d894c 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -34,6 +34,8 @@ export class Renderer {
+   private nodes = new Map<string, Node>();
+   private ghosts = new Set<string>();
+   private liveStyle: InkStyle | null = null;
++  private pendingLivePoints: InkPoint[] | null = null;
++  private liveDirty = false;
+   private selUI: SelectionUI | null = null;
+   private hiddenId: string | null = null;
+   private resTimer: ReturnType<typeof setTimeout> | undefined;
+@@ -59,6 +61,13 @@ export class Renderer {
+     this.app.ticker.add(() => {
+       const { width, height } = this.app.screen;
+       if (width !== this.paperSize.w || height !== this.paperSize.h) this.drawPaper();
++      // Eventos de ponteiro podem chegar muito mais rápido que a tela. Agrupa-os por frame:
++      // evita redesenhar o polígono completo dezenas/centenas de vezes entre dois frames.
++      if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
++        this.liveDirty = false;
++        this.live.clear();
++        drawInk(this.live, this.pendingLivePoints, this.liveStyle, false);
++      }
+     });
+     this.ready = true;
+   }
+@@ -232,13 +241,16 @@ export class Renderer {
+   beginLive(style: InkStyle) {
+     this.live.clear();
+     this.liveStyle = style;
++    this.pendingLivePoints = null;
++    this.liveDirty = false;
+     applyBrushLook(this.live, getBrush(style.brush), style.opacity);
+   }
+ 
+   updateLive(points: InkPoint[]) {
+     if (!this.liveStyle) return;
+-    this.live.clear();
+-    drawInk(this.live, points, this.liveStyle, false);
++    // Guarda a referência mais recente; o ticker renderiza no máximo uma vez por frame.
++    this.pendingLivePoints = points;
++    this.liveDirty = true;
+   }
+ 
+   previewElement(el: ShapeElement | LinearElement | null) {
+@@ -255,6 +267,8 @@ export class Renderer {
+     this.live.alpha = 1;
+     this.live.blendMode = "normal";
+     this.liveStyle = null;
++    this.pendingLivePoints = null;
++    this.liveDirty = false;
+   }
+ 
+   // ---------------- seleção (espaço de tela) ----------------
+-- 
+2.47.3
+

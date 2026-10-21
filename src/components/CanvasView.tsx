@@ -79,7 +79,9 @@ export function CanvasView() {
     const accept = (pt: InkPoint): boolean => {
       const last = points[points.length - 1];
       if (!last) return true;
-      const min = 0.3 / useView.getState().camera.zoom;
+      // Amostrar em pixels de tela (não em unidades do documento): mantém a fidelidade
+      // ao dar zoom sem criar milhares de pontos quase idênticos durante círculos rápidos.
+      const min = 0.6 / useView.getState().camera.zoom;
       return Math.hypot(pt.x - last.x, pt.y - last.y) >= min;
     };
 

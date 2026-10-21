@@ -34,6 +34,8 @@ export class Renderer {
   private nodes = new Map<string, Node>();
   private ghosts = new Set<string>();
   private liveStyle: InkStyle | null = null;
+  private pendingLivePoints: InkPoint[] | null = null;
+  private liveDirty = false;
   private selUI: SelectionUI | null = null;
   private hiddenId: string | null = null;
   private resTimer: ReturnType<typeof setTimeout> | undefined;
@@ -59,6 +61,13 @@ export class Renderer {
     this.app.ticker.add(() => {
       const { width, height } = this.app.screen;
       if (width !== this.paperSize.w || height !== this.paperSize.h) this.drawPaper();
+      // Eventos de ponteiro podem chegar muito mais rápido que a tela. Agrupa-os por frame:
+      // evita redesenhar o polígono completo dezenas/centenas de vezes entre dois frames.
+      if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
+        this.liveDirty = false;
+        this.live.clear();
+        drawInk(this.live, this.pendingLivePoints, this.liveStyle, false);
+      }
     });
     this.ready = true;
   }
@@ -232,13 +241,16 @@ export class Renderer {
   beginLive(style: InkStyle) {
     this.live.clear();
     this.liveStyle = style;
+    this.pendingLivePoints = null;
+    this.liveDirty = false;
     applyBrushLook(this.live, getBrush(style.brush), style.opacity);
   }
 
   updateLive(points: InkPoint[]) {
     if (!this.liveStyle) return;
-    this.live.clear();
-    drawInk(this.live, points, this.liveStyle, false);
+    // Guarda a referência mais recente; o ticker renderiza no máximo uma vez por frame.
+    this.pendingLivePoints = points;
+    this.liveDirty = true;
   }
 
   previewElement(el: ShapeElement | LinearElement | null) {
@@ -255,6 +267,8 @@ export class Renderer {
     this.live.alpha = 1;
     this.live.blendMode = "normal";
     this.liveStyle = null;
+    this.pendingLivePoints = null;
+    this.liveDirty = false;
   }
 
   // ---------------- seleção (espaço de tela) ----------------

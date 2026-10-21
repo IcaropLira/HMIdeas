@@ -240,7 +240,7 @@ export const useTool = create<ToolState>()(
       eraserSize: 28,
       pressureSens: 0.8,
       smoothing: 0.35,
-      taper: 0.5,
+      taper: 0,
       brush: "pen",
       opacity: 1,
       recent: [],

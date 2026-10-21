@@ -47,6 +47,19 @@ describe("strokeOutline", () => {
     expect(flat.length).toBeGreaterThanOrEqual(6);
   });
 
+  it("ignora amostras inválidas e limita a pressão ao intervalo 0..1", () => {
+    const pts: InkPoint[] = [
+      { x: 0, y: 0, p: 0.5 },
+      { x: 0, y: 0, p: 0.5 },
+      { x: Number.NaN, y: 2, p: 0.5 },
+      { x: 4, y: 0, p: 4 },
+      { x: 8, y: 1, p: -3 },
+    ];
+    const flat = strokeOutline(pts, style({ taper: 0 }), true);
+    expect(flat.length).toBeGreaterThanOrEqual(6);
+    expect(flat.every(Number.isFinite)).toBe(true);
+  });
+
   it("brush de afilamento fixo ignora o controle do usuário; o da caneta obedece", () => {
     const pts = wave(true);
     const fixedA = strokeOutline(pts, style({ brush: "ballpoint", taper: 0 }), true);

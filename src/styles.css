@@ -349,3 +349,6 @@ body[data-sidebar="open"] { --side: 256px; }
   user-select: text;
 }
 .cp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px 0; justify-items: center; }
+
+.brush-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.brush-actions .chip { min-height: 32px; padding: 5px 9px; font-size: 12px; }

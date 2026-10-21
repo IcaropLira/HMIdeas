@@ -1,0 +1,9 @@
+node_modules
+dist
+dev-dist
+src-tauri/target
+src-tauri/gen/schemas
+.DS_Store
+*.log
+# patches recebidos (aplique com `npm run patch`)
+patches/

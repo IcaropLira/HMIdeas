@@ -1,0 +1,61 @@
+name: Release
+
+# Envie uma tag `v*` (ou rode `npm run release -- x.y.z`) para gerar os instaladores:
+# Linux (DEB, RPM, AppImage), Windows (MSI, NSIS) e macOS (DMG universal).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Dependências do Linux
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev build-essential
+
+      - name: Aplicar a versão da tag
+        shell: bash
+        run: node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - run: npm install --no-audit --no-fund
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "HM Ideas ${{ github.ref_name }}"
+          releaseBody: "Instaladores gerados a partir da tag."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

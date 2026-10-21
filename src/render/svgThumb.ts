@@ -1,6 +1,6 @@
 // Miniaturas de página em SVG: independente do Pixi, barato e fácil de memorizar.
 // Cada elemento é convertido UMA vez (WeakMap, elementos são imutáveis).
-import { HirakuElement, Page } from "../core/model";
+import { HirakuElement, Page, isLinear } from "../core/model";
 import { linearPath } from "../core/linear";
 import { Bounds, elementBounds } from "../core/selection";
 import { shapePath } from "../core/shapes";
@@ -48,7 +48,7 @@ export function thumbPath(el: HirakuElement): ThumbPath {
       return `M${el.x.toFixed(1)} ${(el.y + i * lh + lh * 0.25).toFixed(1)}h${lw.toFixed(1)}v${(lh * 0.5).toFixed(1)}h${(-lw).toFixed(1)}Z`;
     });
     tp = { d: bars.join(""), fill: safeColor(el.color, "#1B2233"), stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: 0.55 };
-  } else if (el.type === "line" || el.type === "arrow") {
+  } else if (isLinear(el)) {
     const w = el.strokeWidth;
     tp = {
       d: pathFrom(linearPath(el).flatMap((p) => [p.x, p.y]), false), // pontas omitidas na miniatura

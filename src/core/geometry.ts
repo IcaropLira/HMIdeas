@@ -1,4 +1,4 @@
-import { HirakuElement, StrokeElement } from "./model";
+import { HirakuElement, StrokeElement, isLinear } from "./model";
 import { linearPath } from "./linear";
 import { outlinePath, pointInPolygon, shapePath } from "./shapes";
 
@@ -47,7 +47,7 @@ export function strokeHit(el: StrokeElement, x: number, y: number, r: number): b
 export function elementHit(el: HirakuElement, x: number, y: number, r: number): boolean {
   if (el.type === "stroke") return strokeHit(el, x, y, r);
 
-  if (el.type === "line" || el.type === "arrow") {
+  if (isLinear(el)) {
     const lr = r + el.strokeWidth / 2;
     const path = linearPath(el);
     for (let i = 1; i < path.length; i++) {

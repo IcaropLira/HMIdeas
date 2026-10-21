@@ -6,7 +6,7 @@ import { bindableAt, detachForeign, makeBinding, solveAffected, solveArrow } fro
 import { screenToWorld } from "../core/camera";
 import { elementHit } from "../core/geometry";
 import { snapAngle } from "../core/linear";
-import { HirakuElement, LinearElement } from "../core/model";
+import { HirakuElement, LinearElement, isLinear } from "../core/model";
 import {
   Frame, HandleId, SelectionUI, Xform, applyXform, boundsPolygon, boxSelect, elementBounds,
   hitHandle, lassoSelect, moveXform, pointInFrame, resizeXform, rotateXform, selectionFrame,
@@ -25,7 +25,6 @@ type Gesture =
   | { kind: "box"; startP: Pt; startS: Pt; base: string[]; moved: boolean }
   | { kind: "lasso"; pts: Pt[]; base: string[] };
 
-const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
 const touchy = (s: Sample) => s.pointerType !== "mouse";
 
 /** Último toque do Selecionar: dois toques rápidos = editar texto / criar texto. */

@@ -1,0 +1,267 @@
+From 38c081bd43131c54012aab6ec570fdd5da6bc83b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8Dcaro=20Lira?= <icaroplira@gmail.com>
+Date: Wed, 21 Oct 2026 02:30:56 -0300
+Subject: [PATCH] fix: tipos de forma/linha e @types/node para o typecheck
+ passar
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O TS 5.9 não separa ShapeElement de LinearElement só por `type ===`, porque
+o discriminante de cada um é uma união de literais. Isso quebrava o
+`npm run typecheck` (e o ci.yml) em geometry, selection, Renderer e svgThumb.
+
+- model.ts: guardas isLinear/isShape (isLinear sai do selectTool e vira compartilhada)
+- usa as guardas onde o typecheck falhava
+- @types/node + "node" em tsconfig.types para o vite.config.ts enxergar `process`
+
+Sem mudança de comportamento.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01McWqM3f4hjhqZ4vu3T5NWj
+---
+ package-lock.json       | 18 ++++++++++++++++++
+ package.json            |  1 +
+ src/core/geometry.ts    |  4 ++--
+ src/core/model.ts       |  4 ++++
+ src/core/selection.ts   | 14 +++++++-------
+ src/render/Renderer.ts  |  8 ++++----
+ src/render/svgThumb.ts  |  4 ++--
+ src/tools/selectTool.ts |  3 +--
+ tsconfig.json           |  2 +-
+ 9 files changed, 40 insertions(+), 18 deletions(-)
+
+diff --git a/package-lock.json b/package-lock.json
+index 05f588a..ec8268e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -17,6 +17,7 @@
+       },
+       "devDependencies": {
+         "@tauri-apps/cli": "^2.0.0",
++        "@types/node": "^22.20.5",
+         "@types/react": "^18.3.0",
+         "@types/react-dom": "^18.3.0",
+         "@vitejs/plugin-react": "^4.3.0",
+@@ -2930,6 +2931,16 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@types/node": {
++      "version": "22.20.5",
++      "resolved": "https://registry.npmjs.org/@types/node/-/node-22.20.5.tgz",
++      "integrity": "sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "undici-types": "~6.21.0"
++      }
++    },
+     "node_modules/@types/prop-types": {
+       "version": "15.7.15",
+       "resolved": "https://registry.npmjs.org/@types/prop-types/-/prop-types-15.7.15.tgz",
+@@ -5979,6 +5990,13 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/undici-types": {
++      "version": "6.21.0",
++      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
++      "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/unicode-canonical-property-names-ecmascript": {
+       "version": "2.0.1",
+       "resolved": "https://registry.npmjs.org/unicode-canonical-property-names-ecmascript/-/unicode-canonical-property-names-ecmascript-2.0.1.tgz",
+diff --git a/package.json b/package.json
+index 2e1f632..dffa053 100644
+--- a/package.json
++++ b/package.json
+@@ -24,6 +24,7 @@
+   },
+   "devDependencies": {
+     "@tauri-apps/cli": "^2.0.0",
++    "@types/node": "^22.20.5",
+     "@types/react": "^18.3.0",
+     "@types/react-dom": "^18.3.0",
+     "@vitejs/plugin-react": "^4.3.0",
+diff --git a/src/core/geometry.ts b/src/core/geometry.ts
+index f9ca499..60d4c2c 100644
+--- a/src/core/geometry.ts
++++ b/src/core/geometry.ts
+@@ -1,4 +1,4 @@
+-import { HirakuElement, StrokeElement } from "./model";
++import { HirakuElement, StrokeElement, isLinear } from "./model";
+ import { linearPath } from "./linear";
+ import { outlinePath, pointInPolygon, shapePath } from "./shapes";
+ 
+@@ -47,7 +47,7 @@ export function strokeHit(el: StrokeElement, x: number, y: number, r: number): b
+ export function elementHit(el: HirakuElement, x: number, y: number, r: number): boolean {
+   if (el.type === "stroke") return strokeHit(el, x, y, r);
+ 
+-  if (el.type === "line" || el.type === "arrow") {
++  if (isLinear(el)) {
+     const lr = r + el.strokeWidth / 2;
+     const path = linearPath(el);
+     for (let i = 1; i < path.length; i++) {
+diff --git a/src/core/model.ts b/src/core/model.ts
+index 02bbc4a..3a00fcd 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -110,6 +110,10 @@ export interface TextElement {
+ // M2+ adiciona: image
+ export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement;
+ 
++/** Guardas de tipo: `type` de forma/linha é uma união de literais, então só `===` não separa as duas no TS. */
++export const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
++export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES as string[]).includes(el.type);
++
+ export type PaperKind = "blank" | "ruled" | "grid" | "dots";
+ 
+ export const PAPER_KINDS: { id: PaperKind; label: string }[] = [
+diff --git a/src/core/selection.ts b/src/core/selection.ts
+index 0c85869..08b29b8 100644
+--- a/src/core/selection.ts
++++ b/src/core/selection.ts
+@@ -2,7 +2,7 @@
+ // exceto onde o nome diz "Screen".
+ import { Camera } from "./camera";
+ import { elementHit } from "./geometry";
+-import { HirakuElement } from "./model";
++import { HirakuElement, isLinear } from "./model";
+ import { linearPath } from "./linear";
+ import { Pt, outlinePath, pointInPolygon, shapePath } from "./shapes";
+ 
+@@ -36,7 +36,7 @@ export function applyXform(el: HirakuElement, x: Xform): HirakuElement {
+       width: uniform ? el.width * Math.abs(x.sx) : el.width,
+     };
+   }
+-  if (el.type === "line" || el.type === "arrow") {
++  if (isLinear(el)) {
+     return { ...el, points: el.points.map((p) => { const q = applyAffine(x.m, p.x, p.y); return { x: q.x, y: q.y }; }) };
+   }
+   if (el.type === "text") {
+@@ -68,7 +68,7 @@ export function elementBounds(el: HirakuElement): Bounds {
+   if (el.type === "stroke") {
+     el.points.forEach((p) => add(p.x, p.y));
+     pad = el.width * 0.9;
+-  } else if (el.type === "line" || el.type === "arrow") {
++  } else if (isLinear(el)) {
+     linearPath(el).forEach((p) => add(p.x, p.y));
+     pad = el.strokeWidth / 2 + (el.startHead !== "none" || el.endHead !== "none" ? 8 + el.strokeWidth * 2 : 0);
+   } else if (el.type === "text") {
+@@ -92,10 +92,10 @@ export interface Frame { cx: number; cy: number; w: number; h: number; angle: nu
+ export function selectionFrame(els: HirakuElement[]): Frame | null {
+   if (!els.length) return null;
+   // Uma linha/seta sozinha não tem quadro: ela é editada ponto a ponto.
+-  if (els.length === 1 && (els[0].type === "line" || els[0].type === "arrow")) return null;
+-  if (els.length === 1 && els[0].type !== "stroke") {
++  if (els.length === 1) {
+     const e = els[0];
+-    return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
++    if (isLinear(e)) return null;
++    if (e.type !== "stroke") return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
+   }
+   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+   for (const el of els) {
+@@ -214,7 +214,7 @@ export function boxSelect(els: HirakuElement[], a: Pt, b: Pt): string[] {
+ }
+ 
+ function samplePoints(el: HirakuElement): Pt[] {
+-  const pts: Pt[] = el.type === "stroke" ? el.points : el.type === "line" || el.type === "arrow" ? linearPath(el) : outlinePath(el);
++  const pts: Pt[] = el.type === "stroke" ? el.points : isLinear(el) ? linearPath(el) : outlinePath(el);
+   const stride = Math.max(1, Math.ceil(pts.length / 80));
+   const out: Pt[] = [];
+   for (let i = 0; i < pts.length; i += stride) out.push(pts[i]);
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index 432fc2c..8679d7c 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -2,7 +2,7 @@
+ // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
+ import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
+ import { Camera, defaultCamera } from "../core/camera";
+-import { DEFAULT_BACKGROUND, HirakuElement, InkPoint, LinearElement, PaperKind, ShapeElement } from "../core/model";
++import { DEFAULT_BACKGROUND, HirakuElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
+ import { Pt } from "../core/shapes";
+ import { FONT_CSS, LINE_HEIGHT } from "../core/text";
+@@ -17,8 +17,8 @@ interface Node { g: Container; el: HirakuElement }
+ 
+ const drawEl = (g: Graphics, el: HirakuElement) => {
+   if (el.type === "stroke") drawStrokeElement(g, el);
+-  else if (el.type === "line" || el.type === "arrow") drawLinearElement(g, el);
+-  else drawShapeElement(g, el);
++  else if (isLinear(el)) drawLinearElement(g, el);
++  else if (isShape(el)) drawShapeElement(g, el);
+ };
+ 
+ export class Renderer {
+@@ -242,7 +242,7 @@ export class Renderer {
+   previewElement(el: ShapeElement | LinearElement | null) {
+     this.live.clear();
+     if (!el) return;
+-    if (el.type === "line" || el.type === "arrow") drawLinearElement(this.live, el);
++    if (isLinear(el)) drawLinearElement(this.live, el);
+     else drawShapeElement(this.live, el);
+   }
+ 
+diff --git a/src/render/svgThumb.ts b/src/render/svgThumb.ts
+index 67a4464..a5c3321 100644
+--- a/src/render/svgThumb.ts
++++ b/src/render/svgThumb.ts
+@@ -1,6 +1,6 @@
+ // Miniaturas de página em SVG: independente do Pixi, barato e fácil de memorizar.
+ // Cada elemento é convertido UMA vez (WeakMap, elementos são imutáveis).
+-import { HirakuElement, Page } from "../core/model";
++import { HirakuElement, Page, isLinear } from "../core/model";
+ import { linearPath } from "../core/linear";
+ import { Bounds, elementBounds } from "../core/selection";
+ import { shapePath } from "../core/shapes";
+@@ -48,7 +48,7 @@ export function thumbPath(el: HirakuElement): ThumbPath {
+       return `M${el.x.toFixed(1)} ${(el.y + i * lh + lh * 0.25).toFixed(1)}h${lw.toFixed(1)}v${(lh * 0.5).toFixed(1)}h${(-lw).toFixed(1)}Z`;
+     });
+     tp = { d: bars.join(""), fill: safeColor(el.color, "#1B2233"), stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: 0.55 };
+-  } else if (el.type === "line" || el.type === "arrow") {
++  } else if (isLinear(el)) {
+     const w = el.strokeWidth;
+     tp = {
+       d: pathFrom(linearPath(el).flatMap((p) => [p.x, p.y]), false), // pontas omitidas na miniatura
+diff --git a/src/tools/selectTool.ts b/src/tools/selectTool.ts
+index b4f42f6..8c31cd3 100644
+--- a/src/tools/selectTool.ts
++++ b/src/tools/selectTool.ts
+@@ -6,7 +6,7 @@ import { bindableAt, detachForeign, makeBinding, solveAffected, solveArrow } fro
+ import { screenToWorld } from "../core/camera";
+ import { elementHit } from "../core/geometry";
+ import { snapAngle } from "../core/linear";
+-import { HirakuElement, LinearElement } from "../core/model";
++import { HirakuElement, LinearElement, isLinear } from "../core/model";
+ import {
+   Frame, HandleId, SelectionUI, Xform, applyXform, boundsPolygon, boxSelect, elementBounds,
+   hitHandle, lassoSelect, moveXform, pointInFrame, resizeXform, rotateXform, selectionFrame,
+@@ -25,7 +25,6 @@ type Gesture =
+   | { kind: "box"; startP: Pt; startS: Pt; base: string[]; moved: boolean }
+   | { kind: "lasso"; pts: Pt[]; base: string[] };
+ 
+-const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
+ const touchy = (s: Sample) => s.pointerType !== "mouse";
+ 
+ /** Último toque do Selecionar: dois toques rápidos = editar texto / criar texto. */
+diff --git a/tsconfig.json b/tsconfig.json
+index 1e64a29..95df9a4 100644
+--- a/tsconfig.json
++++ b/tsconfig.json
+@@ -13,7 +13,7 @@
+     "isolatedModules": true,
+     "resolveJsonModule": true,
+     "noEmit": true,
+-    "types": ["vite/client", "vite-plugin-pwa/client"]
++    "types": ["vite/client", "vite-plugin-pwa/client", "node"]
+   },
+   "include": ["src", "vite.config.ts"]
+ }
+-- 
+2.43.0
+

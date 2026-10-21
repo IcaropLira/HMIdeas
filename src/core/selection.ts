@@ -2,7 +2,7 @@
 // exceto onde o nome diz "Screen".
 import { Camera } from "./camera";
 import { elementHit } from "./geometry";
-import { HirakuElement } from "./model";
+import { HirakuElement, isLinear } from "./model";
 import { linearPath } from "./linear";
 import { Pt, outlinePath, pointInPolygon, shapePath } from "./shapes";
 
@@ -36,7 +36,7 @@ export function applyXform(el: HirakuElement, x: Xform): HirakuElement {
       width: uniform ? el.width * Math.abs(x.sx) : el.width,
     };
   }
-  if (el.type === "line" || el.type === "arrow") {
+  if (isLinear(el)) {
     return { ...el, points: el.points.map((p) => { const q = applyAffine(x.m, p.x, p.y); return { x: q.x, y: q.y }; }) };
   }
   if (el.type === "text") {
@@ -68,7 +68,7 @@ export function elementBounds(el: HirakuElement): Bounds {
   if (el.type === "stroke") {
     el.points.forEach((p) => add(p.x, p.y));
     pad = el.width * 0.9;
-  } else if (el.type === "line" || el.type === "arrow") {
+  } else if (isLinear(el)) {
     linearPath(el).forEach((p) => add(p.x, p.y));
     pad = el.strokeWidth / 2 + (el.startHead !== "none" || el.endHead !== "none" ? 8 + el.strokeWidth * 2 : 0);
   } else if (el.type === "text") {
@@ -92,10 +92,10 @@ export interface Frame { cx: number; cy: number; w: number; h: number; angle: nu
 export function selectionFrame(els: HirakuElement[]): Frame | null {
   if (!els.length) return null;
   // Uma linha/seta sozinha não tem quadro: ela é editada ponto a ponto.
-  if (els.length === 1 && (els[0].type === "line" || els[0].type === "arrow")) return null;
-  if (els.length === 1 && els[0].type !== "stroke") {
+  if (els.length === 1) {
     const e = els[0];
-    return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
+    if (isLinear(e)) return null;
+    if (e.type !== "stroke") return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
   }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const el of els) {
@@ -214,7 +214,7 @@ export function boxSelect(els: HirakuElement[], a: Pt, b: Pt): string[] {
 }
 
 function samplePoints(el: HirakuElement): Pt[] {
-  const pts: Pt[] = el.type === "stroke" ? el.points : el.type === "line" || el.type === "arrow" ? linearPath(el) : outlinePath(el);
+  const pts: Pt[] = el.type === "stroke" ? el.points : isLinear(el) ? linearPath(el) : outlinePath(el);
   const stride = Math.max(1, Math.ceil(pts.length / 80));
   const out: Pt[] = [];
   for (let i = 0; i < pts.length; i += stride) out.push(pts[i]);

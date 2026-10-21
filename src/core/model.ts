@@ -110,6 +110,10 @@ export interface TextElement {
 // M2+ adiciona: image
 export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement;
 
+/** Guardas de tipo: `type` de forma/linha é uma união de literais, então só `===` não separa as duas no TS. */
+export const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
+export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES as string[]).includes(el.type);
+
 export type PaperKind = "blank" | "ruled" | "grid" | "dots";
 
 export const PAPER_KINDS: { id: PaperKind; label: string }[] = [

@@ -2,7 +2,7 @@
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
 import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
 import { Camera, defaultCamera } from "../core/camera";
-import { DEFAULT_BACKGROUND, HirakuElement, InkPoint, LinearElement, PaperKind, ShapeElement } from "../core/model";
+import { DEFAULT_BACKGROUND, HirakuElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
@@ -17,8 +17,8 @@ interface Node { g: Container; el: HirakuElement }
 
 const drawEl = (g: Graphics, el: HirakuElement) => {
   if (el.type === "stroke") drawStrokeElement(g, el);
-  else if (el.type === "line" || el.type === "arrow") drawLinearElement(g, el);
-  else drawShapeElement(g, el);
+  else if (isLinear(el)) drawLinearElement(g, el);
+  else if (isShape(el)) drawShapeElement(g, el);
 };
 
 export class Renderer {
@@ -242,7 +242,7 @@ export class Renderer {
   previewElement(el: ShapeElement | LinearElement | null) {
     this.live.clear();
     if (!el) return;
-    if (el.type === "line" || el.type === "arrow") drawLinearElement(this.live, el);
+    if (isLinear(el)) drawLinearElement(this.live, el);
     else drawShapeElement(this.live, el);
   }
 

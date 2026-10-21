@@ -39,13 +39,13 @@ export const DEFAULT_BRUSH_ID = "pen";
 const OUTLINE: OutlineBrush[] = [
   {
     kind: "outline", id: "pen", label: "Caneta",
-    size: 1, thinning: 0.8, simThinning: 0.5, smoothing: 0.5, streamline: 0.15, taper: null,
+    size: 1, thinning: 0.68, simThinning: 0, smoothing: 0.45, streamline: 0.12, taper: null,
     round: true, opacity: 1, blend: "normal",
-    hint: "A caneta padrão: varia com a pressão e afila nas pontas.",
+    hint: "Caneta equilibrada: responde à pressão da mesa digitalizadora e mantém pontas arredondadas.",
   },
   {
     kind: "outline", id: "ballpoint", label: "Esferográfica",
-    size: 0.9, thinning: 0.25, simThinning: 0.12, smoothing: 0.5, streamline: 0.3, taper: 0.08,
+    size: 0.9, thinning: 0.22, simThinning: 0, smoothing: 0.45, streamline: 0.22, taper: 0,
     round: true, opacity: 1, blend: "normal",
     hint: "Linha firme e quase constante, como uma esferográfica.",
   },

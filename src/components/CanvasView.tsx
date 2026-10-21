@@ -70,8 +70,10 @@ export function CanvasView() {
 
     /** Estabilização: média móvel exponencial; pressão levemente suavizada para tirar tremida. */
     const smoothStep = (t: Smoothed): InkPoint => {
-      const k = style.smoothing;
-      sm = { x: sm.x + (t.x - sm.x) * (1 - k), y: sm.y + (t.y - sm.y) * (1 - k), p: sm.p + (t.p - sm.p) * 0.5 };
+      // A suavização extra deve estabilizar tremidos sem deixar a ponta muito atrás do cursor.
+      // O contorno final já é suavizado pelo perfect-freehand; aqui usamos um filtro de baixa latência.
+      const alpha = 1 - Math.max(0, Math.min(0.9, style.smoothing)) * 0.45;
+      sm = { x: sm.x + (t.x - sm.x) * alpha, y: sm.y + (t.y - sm.y) * alpha, p: sm.p + (t.p - sm.p) * 0.65 };
       return worldPoint(sm.x, sm.y, sm.p);
     };
 
@@ -290,7 +292,7 @@ export function CanvasView() {
             if (added) renderer.updateLive(points); // uma vez por evento, não por amostra
           },
 
-          drawEnd() {
+          drawEnd(endSample) {
             if (mode === "text") return;
             if (mode === "select") {
               selectCtl.end();
@@ -320,10 +322,15 @@ export function CanvasView() {
               shapeBox = null;
               return;
             }
-            // O traço suavizado fica atrás da caneta; alcança o último ponto de forma gradual.
-            for (let i = 0; i < 10; i++) {
-              const pt = smoothStep(raw);
-              if (accept(pt)) points.push(pt);
+            // pointerup pode chegar depois do último pointermove (muito comum em tablet).
+            // Incluí-lo evita que o traço termine atrás do cursor ou com uma ponta artificial.
+            if (endSample) {
+              const finalPressure = endSample.pointerType === "pen" && endSample.pressure === 0.5 ? raw.p : endSample.pressure;
+              raw = { x: endSample.x, y: endSample.y, p: finalPressure };
+              const filtered = smoothStep(raw);
+              if (accept(filtered)) points.push(filtered);
+              const exactEnd = worldPoint(raw.x, raw.y, raw.p);
+              if (accept(exactEnd)) points.push(exactEnd);
             }
             if (points.length) {
               const ink = inkStyle();

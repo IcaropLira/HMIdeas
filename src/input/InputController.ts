@@ -21,7 +21,7 @@ export interface Sample {
 export interface InputHandlers {
   drawStart(s: Sample): void;
   drawMove(samples: Sample[]): void;
-  drawEnd(): void;
+  drawEnd(sample: Sample): void;
   drawCancel(): void;
   pan(dx: number, dy: number): void;
   /** factor multiplicativo, centro em coordenadas da tela. */
@@ -217,7 +217,7 @@ export class InputController {
   private onUp = (e: PointerEvent) => {
     this.touches.delete(e.pointerId);
     if (this.mode === "draw" && e.pointerId === this.drawPointerId) {
-      this.h.drawEnd();
+      this.h.drawEnd(this.sample(e));
       this.reset();
     } else if (this.mode === "pan" && e.pointerId === this.panPointerId) {
       this.reset();

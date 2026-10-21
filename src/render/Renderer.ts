@@ -66,7 +66,9 @@ export class Renderer {
       if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
         this.liveDirty = false;
         this.live.clear();
-        drawInk(this.live, this.pendingLivePoints, this.liveStyle, false);
+        // Use a mesma geometria final durante o gesto e após soltar a caneta.
+        // `last: false` muda a terminação do perfect-freehand e causa um salto visual no pointerup.
+        drawInk(this.live, this.pendingLivePoints, this.liveStyle, true);
       }
     });
     this.ready = true;

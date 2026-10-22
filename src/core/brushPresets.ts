@@ -1,4 +1,4 @@
-import { Brush, hasBrush, registerBrush } from "./brushes";
+import { Brush, hasBrush, isNativeBrush, listBrushes, registerBrush, unregisterBrush } from "./brushes";
 
 export const BRUSH_PRESET_FORMAT = "hmideas-brush";
 export const BRUSH_PACK_FORMAT = "hmideas-brush-pack";
@@ -28,7 +28,11 @@ export function isBrushPreset(value: unknown): value is Brush {
     (value.taper === null || isUnit(value.taper)) && typeof value.round === "boolean" &&
     isUnit(value.opacity) && (value.blend === "normal" || value.blend === "multiply") &&
     (value.defaultColor === undefined || isColor(value.defaultColor)) &&
-    typeof value.hint === "string" && value.hint.length <= 240;
+    typeof value.hint === "string" && value.hint.length <= 240 &&
+    // campos opcionais (presets v1 mais antigos não os têm; completam com os padrões)
+    (value.minSize === undefined || isUnit(value.minSize)) &&
+    (value.taperStart === undefined || isUnit(value.taperStart)) &&
+    (value.pressureCurve === undefined || (typeof value.pressureCurve === "number" && Number.isFinite(value.pressureCurve) && value.pressureCurve >= 0.2 && value.pressureCurve <= 5));
 }
 
 /** Aceita um preset único ou um pacote JSON exportado pelo HMIdeas. */
@@ -67,7 +71,7 @@ export function loadCustomBrushes(raw: string | null): Brush[] {
   try {
     const data: unknown = JSON.parse(raw);
     if (!Array.isArray(data)) return [];
-    return data.filter(isBrushPreset).filter((b) => !["pen", "ballpoint", "ink", "marker", "highlighter", "brushpen"].includes(b.id));
+    return data.filter(isBrushPreset).filter((b) => !isNativeBrush(b.id));
   } catch {
     return [];
   }
@@ -88,4 +92,44 @@ export function importBrushes(incoming: Brush[], existing: Brush[]): Brush[] {
     added.push(brush);
   }
   return added;
+}
+
+/** Os pincéis do usuário (tudo que não é nativo), na ordem do painel. */
+export const customBrushes = (): Brush[] => listBrushes().filter((b) => !isNativeBrush(b.id));
+
+/** Grava os pincéis do usuário no armazenamento local (preferência do app, não faz parte do documento). */
+export function saveCustomBrushes() {
+  try {
+    window.localStorage.setItem(CUSTOM_BRUSH_STORAGE_KEY, JSON.stringify(customBrushes()));
+  } catch {
+    /* armazenamento indisponível (modo privado, cota): os pincéis valem só nesta sessão */
+  }
+}
+
+let loaded = false;
+/** Carrega os pincéis do usuário UMA vez, na partida do app (antes disso, um brush salvo cairia na caneta). */
+export function initCustomBrushes() {
+  if (loaded || typeof window === "undefined") return;
+  loaded = true;
+  try {
+    const saved = loadCustomBrushes(window.localStorage.getItem(CUSTOM_BRUSH_STORAGE_KEY));
+    for (const b of saved) if (!hasBrush(b.id)) registerBrush(b);
+  } catch {
+    /* sem armazenamento: só os nativos */
+  }
+}
+
+/** Cópia editável de um brush (id novo e único). */
+export function duplicateBrush(source: Brush): Brush {
+  let n = 1;
+  while (hasBrush(`custom-${n}`)) n++;
+  const base = source.label.replace(/ \(meu( \d+)?\)$/, "");
+  const label = `${base} (meu${n > 1 ? ` ${n}` : ""})`.slice(0, 48);
+  const copy: Brush = { ...source, id: `custom-${n}`, label };
+  registerBrush(copy);
+  return copy;
+}
+
+export function deleteCustomBrush(id: string) {
+  if (!isNativeBrush(id)) unregisterBrush(id);
 }

@@ -7,8 +7,8 @@ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../cor
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
-import { getBrush } from "../core/brushes";
-import { InkStyle, applyBrushLook, drawInk, drawStrokeElement } from "./strokeDraw";
+import { decimateForPreview } from "../core/ink";
+import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
 
 const LINE = "#1B2233";
 const INDIGO = "#2F4B8F";
@@ -17,8 +17,7 @@ const INDIGO = "#2F4B8F";
 interface Node { g: Container; el: HirakuElement }
 
 const drawEl = (g: Graphics, el: HirakuElement) => {
-  if (el.type === "stroke") drawStrokeElement(g, el);
-  else if (isLinear(el)) drawLinearElement(g, el);
+  if (isLinear(el)) drawLinearElement(g, el);
   else if (isShape(el)) drawShapeElement(g, el);
 };
 
@@ -28,6 +27,7 @@ export class Renderer {
   private world = new Container();
   private committed = new Container();
   private live = new Graphics();
+  private liveInk = new InkNode();
   private selLayer = new Graphics();
   private overlay = new Graphics();
 
@@ -55,7 +55,7 @@ export class Renderer {
       autoDensity: true,
       powerPreference: "high-performance",
     });
-    this.world.addChild(this.committed, this.live);
+    this.world.addChild(this.committed, this.live, this.liveInk);
     this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
@@ -65,10 +65,8 @@ export class Renderer {
       // evita redesenhar o polígono completo dezenas/centenas de vezes entre dois frames.
       if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
         this.liveDirty = false;
-        this.live.clear();
-        // Use a mesma geometria final durante o gesto e após soltar a caneta.
-        // `last: false` muda a terminação do perfect-freehand e causa um salto visual no pointerup.
-        drawInk(this.live, this.pendingLivePoints, this.liveStyle, true);
+        // Mesma geometria durante o gesto e depois de soltar: nada "salta" no pointerup.
+        this.liveInk.setStroke(decimateForPreview(this.pendingLivePoints), this.liveStyle);
       }
     });
     this.ready = true;
@@ -153,7 +151,7 @@ export class Renderer {
       alive.add(el.id);
       const n = this.nodes.get(el.id);
       if (!n) {
-        const g = el.type === "text" ? new Container() : new Graphics();
+        const g = el.type === "text" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
         this.paint(g, el);
         this.committed.addChild(g);
         this.nodes.set(el.id, { g, el });
@@ -201,6 +199,8 @@ export class Renderer {
       t.rotation = el.angle;
       node.addChild(t);
       node.alpha = el.opacity;
+    } else if (el.type === "stroke") {
+      drawStrokeElement(node as InkNode, el);
     } else {
       const g = node as Graphics;
       g.clear();
@@ -242,16 +242,16 @@ export class Renderer {
 
   beginLive(style: InkStyle) {
     this.live.clear();
+    this.liveInk.setStroke([], style); // só aplica cor/opacidade/mistura
     this.liveStyle = style;
     this.pendingLivePoints = null;
     this.liveDirty = false;
-    applyBrushLook(this.live, getBrush(style.brush), style.opacity);
   }
 
-  updateLive(points: InkPoint[]) {
+  updateLive(points: InkPoint[], predicted?: InkPoint[]) {
     if (!this.liveStyle) return;
-    // Guarda a referência mais recente; o ticker renderiza no máximo uma vez por frame.
-    this.pendingLivePoints = points;
+    // Guarda os pontos mais recentes; o ticker renderiza no máximo uma vez por frame.
+    this.pendingLivePoints = predicted?.length ? [...points, ...predicted] : points;
     this.liveDirty = true;
   }
 
@@ -268,6 +268,7 @@ export class Renderer {
     this.live.clear();
     this.live.alpha = 1;
     this.live.blendMode = "normal";
+    this.liveInk.setStroke([], { color: "#000000", width: 1, sens: 0, taper: 0, brush: "pen", opacity: 1 });
     this.liveStyle = null;
     this.pendingLivePoints = null;
     this.liveDirty = false;
@@ -339,7 +340,11 @@ export class Renderer {
   /** Marca elementos que serão apagados (pré-visualização enquanto arrasta). */
   setGhosts(ids: Set<string>) {
     // Ao sair do "fantasma" volta à opacidade REAL do elemento (marca-texto, por exemplo, não é 1).
-    for (const id of this.ghosts) if (!ids.has(id)) this.setAlpha(id, this.nodes.get(id)?.el.opacity ?? 1);
+    for (const id of this.ghosts) {
+      const el = this.nodes.get(id)?.el;
+      // Traço: a opacidade vive no filtro de grupo do próprio nó, então o alpha do contêiner volta a 1.
+      if (!ids.has(id)) this.setAlpha(id, el && el.type !== "stroke" ? el.opacity : 1);
+    }
     for (const id of ids) this.setAlpha(id, 0.18);
     this.ghosts = new Set(ids);
   }

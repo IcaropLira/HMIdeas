@@ -1,11 +1,13 @@
 import { useEffect, useRef } from "react";
 import { applyColor, elementColor } from "../core/actions";
-import { getBrush } from "../core/brushes";
+import { brushDyn, getBrush } from "../core/brushes";
+import { OneEuro, stabilizerOptions } from "../core/oneEuro";
 import { panBy, screenToWorld, zoomAt } from "../core/camera";
 import { elementHit } from "../core/geometry";
-import { bindableAt, makeBinding, solveArrow } from "../core/binding";
+import { bindableAt, clearBindingsTo, makeBinding, solveArrow } from "../core/binding";
+import { eraseStep } from "../core/erase";
 import { makeLinear, snapAngle } from "../core/linear";
-import { ArrowBinding, ArrowHead, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
+import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
 import { Box, Pt, boxFromDrag, makeShape, outlinePath } from "../core/shapes";
 import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
@@ -14,7 +16,7 @@ import { Renderer } from "../render/Renderer";
 import { InkStyle } from "../render/strokeDraw";
 import { createSelectController } from "../tools/selectTool";
 
-interface Smoothed { x: number; y: number; p: number }
+interface Smoothed { x: number; y: number; p: number; t: number }
 type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text";
 
 const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
@@ -38,8 +40,10 @@ export function CanvasView() {
     // --- estado do gesto atual ---
     let mode: Mode = "ink";
     let points: InkPoint[] = [];
-    let sm: Smoothed = { x: 0, y: 0, p: 0.5 }; // posição suavizada (tela)
-    let raw: Smoothed = { x: 0, y: 0, p: 0.5 }; // última amostra real (tela)
+    let filtX: OneEuro | null = null; // estabilizador (filtro adaptativo: quase sem atraso em traço rápido)
+    let filtY: OneEuro | null = null;
+    let smP = 0.5; // pressão levemente suavizada
+    let raw: Smoothed = { x: 0, y: 0, p: 0.5, t: 0 }; // última amostra real (tela)
     let style = {
       color: "#000", width: 2, sens: 1, smoothing: 0, taper: 0, brush: "pen", opacity: 1,
       lineStyle: "solid" as ShapeElement["strokeStyle"], fill: null as string | null, rounded: true,
@@ -47,6 +51,10 @@ export function CanvasView() {
     };
     let erased = new Set<string>();
     let lastErase: Pt | null = null;
+    // borracha de pixel: documento de antes do gesto (um único passo de desfazer) e lista em andamento
+    let eraseMode: "stroke" | "pixel" = "stroke";
+    let eraseBase: HirakuDoc | null = null;
+    let eraseEls: HirakuElement[] | null = null;
     let shapeType: ShapeType = "rect";
     let shapeStart: Pt = { x: 0, y: 0 };
     let shapeBox: Box | null = null;
@@ -68,13 +76,25 @@ export function CanvasView() {
       return { x: w.x, y: w.y, p };
     };
 
-    /** Estabilização: média móvel exponencial; pressão levemente suavizada para tirar tremida. */
+    /**
+     * Estabilização com filtro One Euro: segura o tremido da mão devagar e quase não atrasa quando a mão
+     * corre (sem a ponta "puxada por uma linha" atrás do cursor). Nível 0 = a ponta cola no cursor.
+     */
+    const startFilters = (s: Sample) => {
+      const b = getBrush(style.brush);
+      const level = (style.smoothing / 0.9) * 0.8 + b.streamline * 0.4;
+      const o = stabilizerOptions(level);
+      filtX = o ? new OneEuro(o) : null;
+      filtY = o ? new OneEuro(o) : null;
+      filtX?.filter(s.x, s.time);
+      filtY?.filter(s.y, s.time);
+      smP = s.pressure;
+    };
     const smoothStep = (t: Smoothed): InkPoint => {
-      // A suavização extra deve estabilizar tremidos sem deixar a ponta muito atrás do cursor.
-      // O contorno final já é suavizado pelo perfect-freehand; aqui usamos um filtro de baixa latência.
-      const alpha = 1 - Math.max(0, Math.min(0.9, style.smoothing)) * 0.45;
-      sm = { x: sm.x + (t.x - sm.x) * alpha, y: sm.y + (t.y - sm.y) * alpha, p: sm.p + (t.p - sm.p) * 0.65 };
-      return worldPoint(sm.x, sm.y, sm.p);
+      const x = filtX ? filtX.filter(t.x, t.t) : t.x;
+      const y = filtY ? filtY.filter(t.y, t.t) : t.y;
+      smP += (t.p - smP) * 0.6;
+      return worldPoint(x, y, smP);
     };
 
     /** Só aceita o ponto se andou ao menos ~0.3px de tela (evita milhares de pontos idênticos). */
@@ -90,7 +110,11 @@ export function CanvasView() {
     /** Estilo da tinta: a largura guardada no traço já inclui o multiplicador do brush; opacidade = brush × usuário. */
     const inkStyle = (): InkStyle => {
       const b = getBrush(style.brush);
-      return { color: style.color, width: style.width * b.size, sens: style.sens, taper: style.taper, brush: b.id, opacity: b.opacity * style.opacity };
+      return {
+        color: style.color, width: style.width * b.size, sens: style.sens,
+        taper: b.taper ?? style.taper, // já resolvido: o traço guarda o afilamento efetivo
+        brush: b.id, opacity: b.opacity * style.opacity, dyn: brushDyn(b),
+      };
     };
 
     /** Conta-gotas: pega a cor do elemento mais acima sob o toque (ou a do papel, se não houver nenhum). */
@@ -118,24 +142,47 @@ export function CanvasView() {
         rounded: style.rounded,
       });
 
+    /** Raio da borracha em px de tela; com caneta e "pressão" ligada, a pressão muda o tamanho (0.4× a 1.6×). */
+    const eraserRadiusPx = (s: Sample) => {
+      const t = useTool.getState();
+      const k = t.eraserPressure && s.pointerType === "pen" ? 0.4 + 1.2 * s.pressure : 1;
+      return (t.eraserSize / 2) * k;
+    };
+
     const eraseTo = (s: Sample) => {
       const cam = useView.getState().camera;
-      const radiusPx = useTool.getState().eraserSize / 2;
+      const radiusPx = eraserRadiusPx(s);
       const r = radiusPx / cam.zoom;
       const to = screenToWorld(cam, s.x, s.y);
       const from = lastErase ?? to;
       // Interpola entre amostras: arrastar rápido não "pula" elementos.
       const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / (r * 0.5)));
-      const elements = selectActivePage(useDoc.getState()).elements;
-      for (let i = 1; i <= steps; i++) {
-        const x = from.x + ((to.x - from.x) * i) / steps;
-        const y = from.y + ((to.y - from.y) * i) / steps;
-        for (const el of elements) {
-          if (!erased.has(el.id) && elementHit(el, x, y, r)) erased.add(el.id);
+      if (eraseMode === "pixel") {
+        const base = eraseEls ?? selectActivePage(useDoc.getState()).elements;
+        let els = base;
+        const gone = new Set<string>();
+        for (let i = 1; i <= steps; i++) {
+          const res = eraseStep(els, from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps, r);
+          els = res.elements;
+          res.removedIds.forEach((id) => gone.add(id));
         }
+        if (els !== base) {
+          // Setas ligadas a uma forma apagada soltam a ponta, como na borracha de traço.
+          eraseEls = gone.size ? clearBindingsTo(els, gone) : els;
+          useDoc.getState().previewElements(eraseEls);
+        }
+      } else {
+        const elements = selectActivePage(useDoc.getState()).elements;
+        for (let i = 1; i <= steps; i++) {
+          const x = from.x + ((to.x - from.x) * i) / steps;
+          const y = from.y + ((to.y - from.y) * i) / steps;
+          for (const el of elements) {
+            if (!erased.has(el.id) && elementHit(el, x, y, r)) erased.add(el.id);
+          }
+        }
+        renderer.setGhosts(erased);
       }
       lastErase = to;
-      renderer.setGhosts(erased);
       renderer.drawEraserCursor(s.x, s.y, radiusPx);
     };
 
@@ -197,6 +244,9 @@ export function CanvasView() {
               mode = "erase";
               erased = new Set();
               lastErase = null;
+              eraseMode = t.eraserMode;
+              eraseBase = useDoc.getState().doc;
+              eraseEls = null;
               eraseTo(s);
             } else if (t.tool === "text") {
               // Clique num texto edita; clique no vazio cria um novo.
@@ -232,15 +282,15 @@ export function CanvasView() {
               shapeBox = null;
             } else {
               mode = "ink";
-              sm = { x: s.x, y: s.y, p: s.pressure };
-              raw = { ...sm };
-              points = [worldPoint(sm.x, sm.y, sm.p)];
+              startFilters(s);
+              raw = { x: s.x, y: s.y, p: s.pressure, t: s.time };
+              points = [worldPoint(s.x, s.y, s.pressure)];
               renderer.beginLive(inkStyle());
               renderer.updateLive(points);
             }
           },
 
-          drawMove(samples) {
+          drawMove(samples, predicted) {
             if (mode === "text") return;
             if (mode === "select") {
               selectCtl.move(samples);
@@ -282,14 +332,18 @@ export function CanvasView() {
             }
             let added = false;
             for (const s of samples) {
-              raw = { x: s.x, y: s.y, p: s.pressure };
+              raw = { x: s.x, y: s.y, p: s.pressure, t: s.time };
               const pt = smoothStep(raw);
               if (accept(pt)) {
                 points.push(pt);
                 added = true;
               }
             }
-            if (added) renderer.updateLive(points); // uma vez por evento, não por amostra
+            if (added || predicted?.length) {
+              // Previsão da caneta: só o traço ao vivo a enxerga (nunca entra em `points`).
+              const ahead = predicted?.length ? predicted.map((q) => worldPoint(q.x, q.y, smP)) : undefined;
+              renderer.updateLive(points, ahead); // uma vez por evento, não por amostra
+            }
           },
 
           drawEnd(endSample) {
@@ -299,9 +353,15 @@ export function CanvasView() {
               return;
             }
             if (mode === "erase") {
-              useDoc.getState().removeElements([...erased]);
+              if (eraseMode === "pixel") {
+                if (eraseBase) useDoc.getState().endPreview(eraseBase); // um único passo de desfazer
+              } else {
+                useDoc.getState().removeElements([...erased]);
+              }
               erased = new Set();
               lastErase = null;
+              eraseBase = null;
+              eraseEls = null;
               renderer.setGhosts(erased);
               return;
             }
@@ -326,10 +386,11 @@ export function CanvasView() {
             // Incluí-lo evita que o traço termine atrás do cursor ou com uma ponta artificial.
             if (endSample) {
               const finalPressure = endSample.pointerType === "pen" && endSample.pressure === 0.5 ? raw.p : endSample.pressure;
-              raw = { x: endSample.x, y: endSample.y, p: finalPressure };
+              raw = { x: endSample.x, y: endSample.y, p: finalPressure, t: endSample.time };
               const filtered = smoothStep(raw);
               if (accept(filtered)) points.push(filtered);
-              const exactEnd = worldPoint(raw.x, raw.y, raw.p);
+              // O traço termina EXATAMENTE onde a caneta soltou (sem rabicho nem ponta atrás do cursor).
+              const exactEnd = worldPoint(raw.x, raw.y, smP);
               if (accept(exactEnd)) points.push(exactEnd);
             }
             if (points.length) {
@@ -344,6 +405,7 @@ export function CanvasView() {
                 taper: ink.taper,
                 brush: ink.brush,
                 opacity: ink.opacity,
+                dyn: ink.dyn,
               });
             }
             // Primeiro grava no documento (o sync desenha o traço final), depois limpa o ao vivo.
@@ -358,8 +420,11 @@ export function CanvasView() {
               return;
             }
             if (mode === "erase") {
+              if (eraseMode === "pixel" && eraseBase) useDoc.getState().cancelPreview(eraseBase);
               erased = new Set();
               lastErase = null;
+              eraseBase = null;
+              eraseEls = null;
               renderer.setGhosts(erased);
             } else if (mode === "shape" || mode === "linear") {
               renderer.previewElement(null);

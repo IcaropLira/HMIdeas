@@ -20,7 +20,8 @@ export interface Sample {
 
 export interface InputHandlers {
   drawStart(s: Sample): void;
-  drawMove(samples: Sample[]): void;
+  /** `predicted`: pontos que o navegador PREVÊ à frente da caneta (só para o traço ao vivo; nunca são gravados). */
+  drawMove(samples: Sample[], predicted?: Sample[]): void;
   drawEnd(sample: Sample): void;
   drawCancel(): void;
   pan(dx: number, dy: number): void;
@@ -174,7 +175,9 @@ export class InputController {
       // Eventos "coalesced" = todos os pontos entre frames → traço de caneta mais fiel.
       const list = e.getCoalescedEvents?.() ?? [];
       const events = list.length ? list : [e];
-      this.h.drawMove(events.map((ev) => this.sample(ev)));
+      // Previsão só para caneta: tira ~1 frame de latência visual. Mouse/dedo ficam exatos.
+      const ahead = e.pointerType === "pen" ? (e.getPredictedEvents?.() ?? []).slice(0, 2) : [];
+      this.h.drawMove(events.map((ev) => this.sample(ev)), ahead.map((ev) => this.sample(ev)));
       return;
     }
     if (this.mode === "pan" && e.pointerId === this.panPointerId) {

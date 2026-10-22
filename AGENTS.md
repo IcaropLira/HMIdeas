@@ -34,7 +34,7 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
    Toda função precisa funcionar por **toque e caneta** (sem depender de hover ou teclado).
    Alvos de toque ≥ 44px.
 6. **Latência da tinta.** O traço/forma em andamento vive numa camada "live" separada: a cada evento refaz-se
-   só o contorno DELE (perfect-freehand, custo ∝ pontos do traço atual). Nunca redesenhe a página inteira por
+   só a malha DELE (core/strokeMesh.ts, custo linear nos pontos do traço atual; strokes enormes usam `decimateForPreview` só na prévia). Nunca redesenhe a página inteira por
    evento de ponteiro. Se strokes muito longos ficarem lentos, quebrar em trechos.
 7. **Formato de arquivo versionado** (`.hiraku`, JSON, campo `version`). Mudou o modelo? Suba a versão
    e escreva migração em `core/serialize.ts`.
@@ -62,7 +62,7 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [ ] Borracha de pixel (exige cortar traços em pedaços)
 
 ### Depois do M0 (sempre em pares: Excalidraw + GoodNotes)
-- [x] M1a: Retângulo/elipse/losango (contorno sólido/tracejado/pontilhado, preenchimento, cantos, Shift/Alt) + **traço com perfect-freehand e afilamento nas pontas**
+- [x] M1a: Retângulo/elipse/losango (contorno sólido/tracejado/pontilhado, preenchimento, cantos, Shift/Alt) + **traço com afilamento nas pontas** (hoje malha própria, ver “Brushes”)
 - [ ] M1a: validar no Linux/Android/iPad; elipses grandes usam polígono (re-tesselar por zoom se aparecerem facetas)
 - [x] M1b: Seleção/transformação (clique, Shift, caixa, mover, redimensionar com Shift/Alt, girar com snap de 15°) + **laço** (modos "só dentro" / "tocando"), Delete, Ctrl+A/C/X/V/D, setas, recolorir seleção, barra de ações para toque
 - [ ] M1b: validar no tablet (dedo seleciona com a ferramenta Selecionar; 2 dedos = pan/zoom)
@@ -82,8 +82,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 
 ## Brushes (pincéis)
 
-- **`core/brushes.ts`** só DESCREVE cada brush (puro); **`core/ink.ts`** calcula o contorno (puro, testável em Node);
-  `render/strokeDraw.ts` pinta no Pixi. Novo brush = nova entrada no registro, sem tocar no resto.
+- **`core/brushes.ts`** só DESCREVE cada brush (puro); **`core/strokeMesh.ts`** (via `core/ink.ts`) calcula a malha do traço
+  (puro, testável em Node); `render/strokeDraw.ts` pinta no Pixi. Novo brush = nova entrada no registro, sem tocar no resto.
 - O traço guarda `brush` (id), `color`, `width`, `sens`, `taper` e `opacity`. **`width` e `opacity` guardados já são os EFETIVOS**
   (espessura do controle × `size` do brush; opacidade do controle × a do brush), para seleção, hit-test, escala e miniatura
   continuarem funcionando sem conhecer brushes. Brush desconhecido cai na caneta (`getBrush`).
@@ -91,6 +91,18 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   porque é aditivo (mesmo critério das migrações leves anteriores).
 - Cor: `core/color.ts` (puro). `applyColor` é o único ponto que muda a cor ativa: `commit:false` durante arrastes
   (não enche o histórico), `commit:true` ao soltar (recolore seleção/texto, entra nos recentes).
+
+### Motor de traço (0006)
+- O traço NÃO é mais um polígono de contorno (perfect-freehand + earcut): cruzar o próprio traço quebrava a triangulação
+  (miolo preenchido no marca-texto, travamentos). Agora é uma **fita de triângulos** (trapézio por trecho + leques redondos nas
+  curvas e pontas): custo linear, sem triangulação, ao vivo = gravado. Pontas redondas por padrão; afilamento nunca vira agulha.
+- Brush translúcido/`multiply` usa o Mesh como **máscara de stencil** de um retângulo (opacidade de grupo; filtros do Pixi perdem
+  a cor com multiply). Opaco + normal pinta o Mesh direto.
+- O traço guarda `dyn` (fotografia da dinâmica do brush) e `taper` já resolvido: editar/apagar um brush não muda o que já foi feito.
+  `openStart/openEnd` marcam pontas cortadas pela borracha de pixel (retas, sem afilar).
+- Entrada: filtro One Euro (`core/oneEuro.ts`) no lugar da média móvel (sem "ponta puxada"); previsão de pontos (`getPredictedEvents`) só para caneta, só na prévia.
+- Brushes personalizáveis no painel (duplicar → editar), salvos em localStorage e carregados na partida (`initCustomBrushes`).
+- Borracha: modo **traço inteiro** ou **pixel** (`core/erase.ts` corta o traço; gesto = um passo de desfazer via `previewElements/endPreview`).
 
 ## Como rodar
 

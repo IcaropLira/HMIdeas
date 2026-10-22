@@ -1,56 +1,50 @@
-// Contorno da tinta. Puro: só perfect-freehand, sem Pixi nem React (testável em Node).
+// Tinta: junta o traço do modelo com a malha (core/strokeMesh.ts). Puro: sem Pixi nem React.
 // O MESMO cálculo serve ao traço ao vivo, ao gravado, à miniatura e à pré-visualização do brush.
-// O comportamento de cada brush vem de core/brushes.ts; aqui só se aplica.
-import { getStroke } from "perfect-freehand";
 import { getBrush } from "./brushes";
-import { InkPoint } from "./model";
+import { StrokeElement } from "./model";
+import { InkStyle, buildStrokeMesh, dynOf, meshToSvgPath } from "./strokeMesh";
 
-export interface InkStyle {
-  color: string;
-  /** Largura JÁ multiplicada pelo `size` do brush (é o que fica guardado em StrokeElement.width). */
-  width: number;
-  sens: number;
-  taper: number;
-  brush: string;
-  /** Opacidade final (brush × controle do usuário). */
-  opacity: number;
+export type { InkStyle, StrokeMesh } from "./strokeMesh";
+export { MAX_WIDTH_FACTOR, buildStrokeMesh, dynOf, meshToSvgPath } from "./strokeMesh";
+
+/**
+ * Estilo de tinta de um traço gravado. Traços antigos (sem `dyn`) valem o que o brush registrado diz,
+ * inclusive o afilamento fixo do brush, que antes não era gravado no traço.
+ */
+export function styleOf(el: StrokeElement): InkStyle {
+  const b = getBrush(el.brush);
+  return {
+    color: el.color,
+    width: el.width,
+    sens: el.sens,
+    taper: el.dyn ? el.taper : (b.taper ?? el.taper),
+    brush: b.id,
+    opacity: el.opacity,
+    dyn: el.dyn ?? dynOf({ brush: b.id }),
+    openStart: el.openStart,
+    openEnd: el.openEnd,
+  };
 }
 
-/** Contorno do traço como lista plana [x0, y0, x1, y1, ...]. */
-export function strokeOutline(points: InkPoint[], st: InkStyle, last: boolean): number[] {
-  const b = getBrush(st.brush);
-  // Protege o renderizador contra amostras inválidas vindas de tablets/drivers instáveis.
-  // Também elimina pontos repetidos: eles podem produzir contornos degenerados em gestos curtos.
-  const clean: InkPoint[] = [];
-  for (const p of points) {
-    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.p)) continue;
-    const next = { x: p.x, y: p.y, p: Math.max(0, Math.min(1, p.p)) };
-    const prev = clean[clean.length - 1];
-    if (!prev || Math.hypot(next.x - prev.x, next.y - prev.y) > 0.001) clean.push(next);
-  }
-  if (!clean.length) return [];
+/** Caminho SVG (preenchimento "nonzero") do traço; vazio se não há o que desenhar. */
+export function strokeSvgPath(points: StrokeElement["points"], st: InkStyle, dx = 0, dy = 0): string {
+  const mesh = buildStrokeMesh(points, st);
+  return mesh ? meshToSvgPath(mesh, dx, dy) : "";
+}
 
-  // Caneta real varia a pressão; mouse/dedo ficam sempre em 0.5.
-  const simulate = !clean.some((p) => p.p !== 0.5);
-  const taper = Math.max(0, b.taper ?? st.taper) * st.width * 6;
-  const outline = getStroke(
-    clean.map((p) => [p.x, p.y, p.p]),
-    {
-      size: Math.max(0.1, st.width),
-      thinning: (simulate ? b.simThinning : b.thinning) * Math.max(0, st.sens),
-      smoothing: b.smoothing,
-      streamline: b.streamline,
-      simulatePressure: simulate,
-      start: { taper, cap: b.round },
-      end: { taper, cap: b.round },
-      last,
-    },
-  );
-  const flat: number[] = [];
-  for (const [x, y] of outline) {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
-    flat.push(x, y);
-  }
-  // Pixi não deve receber um polígono com menos de três vértices.
-  return flat.length >= 6 ? flat : [];
+/**
+ * Nível de detalhe do traço AO VIVO: strokes enormes (milhares de pontos) são refeitos a cada quadro, então
+ * a prévia usa 1 ponto a cada 2^k (k cresce devagar com o tamanho) e mantém sempre o primeiro, o último e os
+ * pontos recentes inteiros. O traço gravado usa todos os pontos.
+ */
+export function decimateForPreview<T>(points: T[], target = 1200, recent = 24): T[] {
+  const n = points.length;
+  if (n <= target) return points;
+  let stride = 1;
+  while (n / stride > target) stride *= 2;
+  const out: T[] = [];
+  const headEnd = n - recent;
+  for (let i = 0; i < headEnd; i += stride) out.push(points[i]);
+  for (let i = Math.max(0, headEnd); i < n; i++) out.push(points[i]);
+  return out;
 }

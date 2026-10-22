@@ -20,6 +20,13 @@ interface DocState {
   /** Substitui elementos existentes (mesmo id) por novas versões, num único passo de histórico. */
   updateElements: (els: HirakuElement[]) => void;
   removeElements: (ids: ID[]) => void;
+  /**
+   * Edição transitória da página ativa (borracha de pixel): troca a lista de elementos SEM entrar no histórico.
+   * O gesto termina com `endPreview(base)` (um único passo de desfazer) ou `cancelPreview(base)`.
+   */
+  previewElements: (els: HirakuElement[]) => void;
+  endPreview: (base: HirakuDoc) => void;
+  cancelPreview: (base: HirakuDoc) => void;
   setPaper: (patch: Partial<Pick<Page, "paper" | "background">>) => void;
 
   // páginas (alterações do documento → entram no desfazer), exceto setActivePage
@@ -82,6 +89,15 @@ export const useDoc = create<DocState>((set, get) => {
       const drop = new Set(ids);
       commit(mapActivePage((p) => ({ ...p, elements: clearBindingsTo(p.elements.filter((e) => !drop.has(e.id)), drop) })));
     },
+
+    previewElements: (els) => set({ doc: mapActivePage((p) => ({ ...p, elements: els })) }),
+
+    endPreview: (base) => {
+      const { doc, past } = get();
+      if (doc !== base) set({ past: [...past, base].slice(-HISTORY_LIMIT), future: [] });
+    },
+
+    cancelPreview: (base) => set({ doc: base }),
 
     setPaper: (patch) => {
       const page = selectActivePage(get());
@@ -192,6 +208,10 @@ interface ToolState {
   width: number;
   /** Diâmetro da borracha em pixels de tela. */
   eraserSize: number;
+  /** "stroke": apaga o traço inteiro (Excalidraw). "pixel": corta só o trecho tocado (Photoshop). */
+  eraserMode: "stroke" | "pixel";
+  /** Com caneta, a pressão aumenta/diminui o tamanho da borracha. */
+  eraserPressure: boolean;
   /** 0..1: quanto a pressão afeta a espessura. */
   pressureSens: number;
   /** 0..0.9: quanto o traço "segue atrasado" para ficar mais liso. */
@@ -238,6 +258,8 @@ export const useTool = create<ToolState>()(
       color: "#1B2233",
       width: 3,
       eraserSize: 28,
+      eraserMode: "stroke",
+      eraserPressure: true,
       pressureSens: 0.8,
       smoothing: 0.35,
       taper: 0,
@@ -273,6 +295,8 @@ export const useTool = create<ToolState>()(
         color: s.color,
         width: s.width,
         eraserSize: s.eraserSize,
+        eraserMode: s.eraserMode,
+        eraserPressure: s.eraserPressure,
         pressureSens: s.pressureSens,
         smoothing: s.smoothing,
         taper: s.taper,

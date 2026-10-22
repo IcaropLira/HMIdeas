@@ -32,6 +32,14 @@ describe("intercâmbio de presets de pincel", () => {
     unregisterBrush(added[0].id);
   });
 
+  it("aceita preset v1 antigo (sem campos novos) e valida os novos", () => {
+    const old: Record<string, unknown> = { ...preset };
+    delete old.minSize; delete old.taperStart; delete old.pressureCurve;
+    expect(parseBrushPack(JSON.stringify({ version: 1, format: BRUSH_PRESET_FORMAT, brush: old }))).toHaveLength(1);
+    expect(() => parseBrushPack(JSON.stringify({ version: 1, format: BRUSH_PRESET_FORMAT, brush: { ...preset, minSize: 3 } }))).toThrow("Preset inválido");
+    expect(() => parseBrushPack(JSON.stringify({ version: 1, format: BRUSH_PRESET_FORMAT, brush: { ...preset, pressureCurve: 0 } }))).toThrow("Preset inválido");
+  });
+
   it("ignora entradas locais corrompidas e mantém apenas presets válidos", () => {
     expect(loadCustomBrushes(JSON.stringify([preset, { id: "bad" }]))[0]).toMatchObject(preset);
     expect(loadCustomBrushes("isso não é JSON")).toEqual([]);

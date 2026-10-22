@@ -3,7 +3,7 @@
 **Hiraku Manager Ideas**: quadro branco e caderno de anotações com caneta, parte da família Hiraku.
 Tauri 2 + React + zustand + PixiJS.
 
-Estado atual: **v0.2.0** — canvas infinito, caneta com pressão e afilamento (perfect-freehand) e vários pincéis (caneta, esferográfica, nanquim, marcador, marca-texto, pincel), seletor de cor completo e conta-gotas, formas, linhas e setas conectadas, texto, borracha, seleção/laço, várias páginas com miniaturas, papéis, desfazer/refazer, salvar/abrir `.hiraku`.
+Estado atual: **v0.2.0** — canvas infinito, caneta com pressão, motor de traço próprio (sem glitches ao cruzar o traço), pincéis personalizáveis (caneta, escrita, esferográfica, nanquim, marcador, marca-texto, pincel), borracha de traço ou de pixel, seletor de cor completo e conta-gotas, formas, linhas e setas conectadas, texto, borracha, seleção/laço, várias páginas com miniaturas, papéis, desfazer/refazer, salvar/abrir `.hiraku`.
 
 Veja `AGENTS.md` para decisões, arquitetura e roadmap.
 

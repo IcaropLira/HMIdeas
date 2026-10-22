@@ -1,59 +1,81 @@
-// Desenho do traço de tinta no Pixi. O contorno vem de core/ink.ts (puro); aqui só se pinta.
+// Desenho do traço de tinta no Pixi. A malha vem de core/strokeMesh.ts (pura); aqui só se pinta.
 // O MESMO código desenha o traço ao vivo e o gravado → nada "salta" ao soltar a caneta.
-import { Graphics } from "pixi.js";
-import { Brush, getBrush } from "../core/brushes";
-import { InkStyle, strokeOutline } from "../core/ink";
+//
+// Cada traço é um Container com UM Mesh de triângulos (sem triangulação de polígono, sem earcut).
+//  • Traço opaco e normal: o Mesh é pintado direto (o caminho rápido, o das canetas).
+//  • Traço translúcido ou com mistura (marca-texto): o Mesh vira MÁSCARA de stencil de um retângulo da cor
+//    do traço. Resultado: a opacidade/mistura vale para o traço INTEIRO (a união dos triângulos), então
+//    cruzar o próprio traço não escurece nem forma manchas, e o multiply funciona (filtros perdem a cor
+//    com multiply no Pixi, e sem MSAA ficam serrilhados).
+import { Container, Graphics, Mesh, MeshGeometry, Texture } from "pixi.js";
+import { InkStyle, StrokeMesh, buildStrokeMesh, dynOf, styleOf } from "../core/ink";
 import { InkPoint, StrokeElement } from "../core/model";
 
 export type { InkStyle };
-export { strokeOutline };
 
-/** Desenha (ou redesenha) um traço em `g`. `last = false` enquanto a caneta ainda está no papel. */
-export function drawInk(g: Graphics, points: InkPoint[], st: InkStyle, last: boolean) {
-  if (!points.length) return;
+export class InkNode extends Container {
+  private geo = new MeshGeometry({
+    positions: new Float32Array(6),
+    uvs: new Float32Array(6),
+    indices: new Uint32Array(3),
+  });
+  private mesh = new Mesh({ geometry: this.geo, texture: Texture.WHITE });
+  private fill = new Graphics();
+  private masked = false;
 
-  const brush = getBrush(st.brush);
-  const effectiveTaper = brush.taper ?? st.taper;
-  const constantPressure = points.every((p) => Math.abs(p.p - points[0].p) < 0.015);
-
-  // Mouse/dedo não têm pressão real. Para a Caneta/Esferográfica, desenhar um caminho
-  // central com joins/caps arredondados evita a triangulação de um polígono que se cruza
-  // quando o usuário faz círculos rápidos. A pressão variável da stylus continua usando
-  // o contorno do perfect-freehand abaixo.
-  if ((brush.id === "pen" || brush.id === "ballpoint") && constantPressure && Math.abs(points[0].p - 0.5) < 0.015 && effectiveTaper <= 0) {
-    if (points.length === 1) {
-      g.circle(points[0].x, points[0].y, Math.max(0.05, st.width / 2)).fill({ color: st.color });
-      return;
-    }
-
-    g.moveTo(points[0].x, points[0].y);
-    if (points.length === 2) {
-      g.lineTo(points[1].x, points[1].y);
-    } else {
-      for (let i = 1; i < points.length - 1; i++) {
-        const midX = (points[i].x + points[i + 1].x) / 2;
-        const midY = (points[i].y + points[i + 1].y) / 2;
-        g.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
-      }
-      const end = points[points.length - 1];
-      g.lineTo(end.x, end.y);
-    }
-    g.stroke({ width: Math.max(0.1, st.width), color: st.color, cap: "round", join: "round" });
-    return;
+  constructor() {
+    super();
+    this.geo.batchMode = "no-batch";
+    this.addChild(this.mesh, this.fill);
+    this.fill.visible = false;
+    this.mesh.visible = false;
   }
 
-  const flat = strokeOutline(points, st, last);
-  if (flat.length >= 6) g.poly(flat).fill({ color: st.color });
+  /** Recalcula a malha. Custo linear nos pontos do traço (não da página). */
+  setStroke(points: InkPoint[], st: InkStyle) {
+    const m: StrokeMesh | null = buildStrokeMesh(points, st);
+    const blend = dynOf(st).blend;
+    this.masked = st.opacity < 0.999 || blend !== "normal";
+    this.mesh.tint = st.color;
+
+    if (!m || m.indices.length < 3) {
+      this.mesh.visible = false;
+      this.fill.visible = false;
+      this.mask = null;
+      return;
+    }
+    this.geo.positions = m.positions;
+    this.geo.uvs = new Float32Array(m.positions.length); // textura branca: o uv não importa
+    this.geo.indices = m.indices;
+    this.mesh.position.set(m.ox, m.oy);
+    this.mesh.visible = true;
+
+    if (this.masked) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      const p = m.positions;
+      for (let i = 0; i < p.length; i += 2) {
+        if (p[i] < x0) x0 = p[i];
+        if (p[i] > x1) x1 = p[i];
+        if (p[i + 1] < y0) y0 = p[i + 1];
+        if (p[i + 1] > y1) y1 = p[i + 1];
+      }
+      this.fill.clear().rect(x0 + m.ox - 1, y0 + m.oy - 1, x1 - x0 + 2, y1 - y0 + 2).fill({ color: st.color });
+      this.fill.alpha = st.opacity;
+      this.fill.blendMode = blend;
+      this.fill.visible = true;
+      this.mask = this.mesh; // o próprio Mesh recorta o retângulo (e não é pintado)
+    } else {
+      this.fill.visible = false;
+      this.mask = null;
+    }
+  }
+
+  /** Alpha de "fantasma" (borracha): multiplica o do traço sem perder a opacidade real. */
+  setGhost(alpha: number | null) {
+    this.alpha = alpha ?? 1;
+  }
 }
 
-/** Opacidade e modo de mistura do brush num nó (traço gravado ou camada ao vivo). */
-export function applyBrushLook(g: Graphics, brush: Brush, opacity: number) {
-  g.alpha = opacity;
-  g.blendMode = brush.blend;
-}
-
-export function drawStrokeElement(g: Graphics, el: StrokeElement) {
-  const brush = getBrush(el.brush);
-  drawInk(g, el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper, brush: brush.id, opacity: el.opacity }, true);
-  applyBrushLook(g, brush, el.opacity);
+export function drawStrokeElement(node: InkNode, el: StrokeElement) {
+  node.setStroke(el.points, styleOf(el));
 }

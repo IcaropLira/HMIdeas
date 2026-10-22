@@ -48,7 +48,8 @@ html, body, #root {
   background: var(--chrome);
   border: 1px solid var(--line);
   border-radius: 16px;
-  backdrop-filter: blur(10px);
+  /* Sem backdrop-filter: borrar o que está por baixo força o navegador a reler o canvas WebGL a cada
+     quadro (lento no WebKitGTK/Android). O fundo já é quase opaco. */
   box-shadow: 0 6px 24px rgba(27, 34, 51, 0.12);
 }
 
@@ -168,7 +169,8 @@ html, body, #root {
   background: var(--chrome);
   border: 1px solid var(--line);
   border-radius: 14px;
-  backdrop-filter: blur(10px);
+  /* Sem backdrop-filter: borrar o que está por baixo força o navegador a reler o canvas WebGL a cada
+     quadro (lento no WebKitGTK/Android). O fundo já é quase opaco. */
   box-shadow: 0 6px 24px rgba(27, 34, 51, 0.12);
 }
 
@@ -198,7 +200,8 @@ body[data-sidebar="open"] { --side: 256px; }
   background: var(--chrome);
   border: 1px solid var(--line);
   border-radius: 14px;
-  backdrop-filter: blur(10px);
+  /* Sem backdrop-filter: borrar o que está por baixo força o navegador a reler o canvas WebGL a cada
+     quadro (lento no WebKitGTK/Android). O fundo já é quase opaco. */
   box-shadow: 0 6px 24px rgba(27, 34, 51, 0.12);
 }
 .pageno { padding: 0 8px; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink-soft); white-space: nowrap; }
@@ -215,7 +218,8 @@ body[data-sidebar="open"] { --side: 256px; }
   background: var(--chrome);
   border: 1px solid var(--line);
   border-radius: 16px;
-  backdrop-filter: blur(10px);
+  /* Sem backdrop-filter: borrar o que está por baixo força o navegador a reler o canvas WebGL a cada
+     quadro (lento no WebKitGTK/Android). O fundo já é quase opaco. */
   box-shadow: 0 6px 24px rgba(27, 34, 51, 0.12);
   overflow: hidden;
 }
@@ -352,3 +356,12 @@ body[data-sidebar="open"] { --side: 256px; }
 
 .brush-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .brush-actions .chip { min-height: 32px; padding: 5px 9px; font-size: 12px; }
+
+/* Editor de pincel e opções da borracha */
+.brushpanel { max-height: min(78vh, 640px); overflow-y: auto; }
+.editor { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+.editor summary { cursor: pointer; font-size: 14px; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.editor-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.field { display: grid; gap: 4px; font-size: 14px; }
+.field input { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.chip.danger { color: #C8372D; border-color: #E8B9B5; }

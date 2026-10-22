@@ -32,7 +32,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
-type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color";
+type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser";
 
 export function Toolbar() {
   const t = useTool();
@@ -110,6 +110,25 @@ export function Toolbar() {
         )}
 
         {panel === "brush" && <BrushPanel />}
+
+        {panel === "eraser" && (
+          <div className="panel" role="dialog" aria-label="Borracha">
+            <div className="row" role="radiogroup" aria-label="Modo da borracha">
+              <button role="radio" aria-checked={t.eraserMode === "stroke"} className={t.eraserMode === "stroke" ? "chip on" : "chip"} onClick={() => t.set({ eraserMode: "stroke" })}>Traço inteiro</button>
+              <button role="radio" aria-checked={t.eraserMode === "pixel"} className={t.eraserMode === "pixel" ? "chip on" : "chip"} onClick={() => t.set({ eraserMode: "pixel" })}>Só o trecho (pixel)</button>
+            </div>
+            <label className="slider">
+              <span>Tamanho</span>
+              <input type="range" min={10} max={80} step={2} value={t.eraserSize} onChange={(e) => t.set({ eraserSize: +e.target.value })} />
+              <output>{t.eraserSize}px</output>
+            </label>
+            <div className="row" role="radiogroup" aria-label="Pressão da caneta">
+              <button role="radio" aria-checked={t.eraserPressure} className={t.eraserPressure ? "chip on" : "chip"} onClick={() => t.set({ eraserPressure: true })}>Pressão muda o tamanho</button>
+              <button role="radio" aria-checked={!t.eraserPressure} className={!t.eraserPressure ? "chip on" : "chip"} onClick={() => t.set({ eraserPressure: false })}>Tamanho fixo</button>
+            </div>
+            <p className="hint">Traço inteiro (como no Excalidraw) apaga o desenho todo que o anel tocar. “Só o trecho” (como no Photoshop) corta o traço onde o anel passa e deixa o resto; um gesto = um passo de desfazer. A ponta-borracha da caneta usa o mesmo modo. Formas e textos são apagados inteiros nos dois modos.</p>
+          </div>
+        )}
 
         {panel === "color" && (
           <ColorPicker
@@ -261,6 +280,11 @@ export function Toolbar() {
             </button>
             {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
             {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
+            {erasing && (
+              <button className={panel === "eraser" ? "btn on" : "btn"} onClick={() => toggle("eraser")} aria-expanded={panel === "eraser"} aria-label="Opções da borracha" title="Opções da borracha">
+                <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+              </button>
+            )}
             {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
           </div>
 

@@ -4,9 +4,9 @@ import { parseHex } from "./color";
 import { normalizeDoc } from "./model";
 
 describe("registro de brushes", () => {
-  it("tem os 6 de contorno, ids únicos, e a caneta primeiro", () => {
+  it("tem os 7 de contorno, ids únicos, e a caneta primeiro", () => {
     const ids = listBrushes().map((b) => b.id);
-    expect(ids.slice(0, 6)).toEqual(["pen", "ballpoint", "ink", "marker", "highlighter", "brushpen"]);
+    expect(ids.slice(0, 7)).toEqual(["pen", "writer", "ballpoint", "ink", "marker", "highlighter", "brushpen"]);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids[0]).toBe(DEFAULT_BRUSH_ID);
   });

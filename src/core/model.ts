@@ -11,6 +11,28 @@ export interface InkPoint {
   p: number;
 }
 
+/**
+ * "Fotografia" da dinâmica do brush no momento em que o traço foi feito. Fica guardada no traço para que
+ * editar (ou apagar) um brush depois não mude o que já foi desenhado.
+ */
+export interface StrokeDyn {
+  /** Resposta à pressão da caneta (0 = largura constante). */
+  thinning: number;
+  /** Resposta à velocidade para mouse/dedo, que não têm pressão (0 = largura constante). */
+  simThinning: number;
+  /** Fração da largura que sobra com pressão zero / velocidade máxima (0..1). */
+  minSize: number;
+  /** Suavização geométrica do caminho (0..1). */
+  smoothing: number;
+  /** Pontas arredondadas (true) ou retas (false). */
+  round: boolean;
+  /** Quanto do afilamento vale para o INÍCIO do traço (0..1; o fim usa 1). */
+  taperStart: number;
+  /** Curva da pressão: p^gamma (1 = linear; >1 exige mais força para engrossar). */
+  gamma: number;
+  blend: "normal" | "multiply";
+}
+
 export interface StrokeElement {
   id: ID;
   type: "stroke";
@@ -26,6 +48,11 @@ export interface StrokeElement {
   brush: string;
   /** Opacidade final do traço (brush × controle de opacidade). */
   opacity: number;
+  /** Dinâmica do brush no momento do traço. Arquivos antigos não têm: usam o brush registrado. */
+  dyn?: StrokeDyn;
+  /** Pedaços criados pela borracha de pixel: a ponta cortada fica reta, sem afilar. */
+  openStart?: boolean;
+  openEnd?: boolean;
 }
 
 export type ShapeType = "rect" | "ellipse" | "diamond";

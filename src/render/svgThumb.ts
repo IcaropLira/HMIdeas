@@ -4,7 +4,7 @@ import { HirakuElement, Page, isLinear } from "../core/model";
 import { linearPath } from "../core/linear";
 import { Bounds, elementBounds } from "../core/selection";
 import { shapePath } from "../core/shapes";
-import { strokeOutline } from "../core/ink";
+import { cleanPoints } from "../core/strokeMesh";
 
 export interface ThumbPath {
   d: string;
@@ -34,10 +34,22 @@ export function thumbPath(el: HirakuElement): ThumbPath {
   if (hit) return hit;
   let tp: ThumbPath;
   if (el.type === "stroke") {
+    // Miniatura: linha central com a largura do traço (barata mesmo com milhares de pontos).
+    const pts = cleanPoints(el.points);
+    const keep: number[] = [];
+    const minStep = Math.max(el.width * 0.4, 0.5);
+    let lx = Infinity, ly = Infinity;
+    pts.forEach((p, i) => {
+      if (i === 0 || i === pts.length - 1 || Math.hypot(p.x - lx, p.y - ly) >= minStep) {
+        keep.push(p.x, p.y);
+        lx = p.x; ly = p.y;
+      }
+    });
+    if (keep.length === 2) keep.push(keep[0] + 0.01, keep[1]); // toque sem arrastar vira um ponto
     tp = {
-      d: pathFrom(strokeOutline(el.points, { color: el.color, width: el.width, sens: el.sens, taper: el.taper, brush: el.brush, opacity: el.opacity }, true)),
-      fill: safeColor(el.color, "#1B2233"),
-      stroke: null, sw: 0, dash: null, b: elementBounds(el), alpha: el.opacity,
+      d: keep.length >= 4 ? pathFrom(keep, false) : "",
+      fill: "none",
+      stroke: safeColor(el.color, "#1B2233"), sw: el.width, dash: null, b: elementBounds(el), alpha: el.opacity,
     };
   } else if (el.type === "text") {
     const lines = el.text.split("\n");

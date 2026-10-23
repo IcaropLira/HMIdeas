@@ -60,6 +60,11 @@ html, body, #root {
   max-width: 100%;
   overflow-x: auto;
   padding: 6px 8px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .panel {
@@ -189,6 +194,12 @@ body[data-sidebar="open"] { --side: 256px; }
 @media (max-width: 760px) { body[data-sidebar="open"] { --side: 0px; } }
 
 .topbar, .topleft { z-index: 6; }
+@media (max-width: 760px) {
+  .topbar {
+    top: calc(64px + env(safe-area-inset-top, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+}
 .topleft {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top, 0px));

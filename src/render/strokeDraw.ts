@@ -44,8 +44,8 @@ export class InkNode extends Container {
       this.mask = null;
       return;
     }
-    this.geo.positions = m.positions;
     this.geo.uvs = new Float32Array(m.positions.length); // textura branca: o uv não importa
+    this.geo.positions = m.positions;
     this.geo.indices = m.indices;
     this.mesh.position.set(m.ox, m.oy);
     this.mesh.visible = true;

@@ -61,6 +61,7 @@ export class Renderer {
       canvas,
       resizeTo: host,
       background: DEFAULT_BACKGROUND,
+      preference: "webgl",
       antialias: true,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
@@ -267,9 +268,14 @@ export class Renderer {
         style: { fontFamily: FONT_CSS[el.fontFamily], fontSize: el.fontSize, fill: el.color, align: el.align, lineHeight: el.fontSize * LINE_HEIGHT },
       });
       t.resolution = this.textRes();
-      t.pivot.set(el.w / 2, el.h / 2);
-      t.position.set(el.x + el.w / 2, el.y + el.h / 2);
-      t.rotation = el.angle;
+      if (el.angle === 0) {
+        t.pivot.set(0, 0);
+        t.position.set(el.x, el.y);
+      } else {
+        t.pivot.set(el.w / 2, el.h / 2);
+        t.position.set(el.x + el.w / 2, el.y + el.h / 2);
+        t.rotation = el.angle;
+      }
       node.addChild(t);
       node.alpha = el.opacity;
     } else if (el.type === "stroke") {

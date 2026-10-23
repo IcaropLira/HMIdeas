@@ -365,3 +365,22 @@ body[data-sidebar="open"] { --side: 256px; }
 .field { display: grid; gap: 4px; font-size: 14px; }
 .field input { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .chip.danger { color: #C8372D; border-color: #E8B9B5; }
+
+/* ---- mapa mental / quadros ---- */
+.label-editor {
+  position: absolute; z-index: 30; resize: none; overflow: hidden; box-sizing: border-box;
+  padding: 2px 8px; border: 2px solid #2F4B8F; outline: none; box-shadow: 0 2px 12px rgba(27, 34, 51, .25);
+}
+.mappanel { max-height: min(78vh, 640px); overflow-y: auto; }
+.mappanel .rowlabel { min-width: 52px; }
+.outline-in { width: 100%; box-sizing: border-box; font: 13px/1.4 ui-monospace, monospace; border: 1px solid #c9ced8; border-radius: 6px; padding: 6px; resize: vertical; }
+
+/* ---- aviso de atualização ---- */
+.update-banner {
+  position: fixed; z-index: 60; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; max-width: min(92vw, 520px);
+  padding: 8px 10px 8px 16px; background: #fff; border-radius: 14px; box-shadow: 0 6px 24px rgba(27, 34, 51, .22);
+}
+.update-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
+.update-text span { color: #5E6B7E; }
+.update-bar { width: 100%; height: 6px; }

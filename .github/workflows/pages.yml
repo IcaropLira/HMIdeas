@@ -1,0 +1,48 @@
+name: Site
+
+# Publica o app como site (PWA instalável) + a página de download no GitHub Pages a cada push na main.
+# Ative uma vez: Settings → Pages → Source: "GitHub Actions".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck && npm test
+      - name: Build do site
+        shell: bash
+        env:
+          VITE_GH_REPO: ${{ github.repository }}
+        run: |
+          repo="${GITHUB_REPOSITORY#*/}"
+          # dono.github.io (repositório de usuário) fica na raiz; os demais em /repositório/
+          if [[ "$repo" == *.github.io ]]; then export VITE_BASE="/"; else export VITE_BASE="/$repo/"; fi
+          # domínio próprio: defina a variável de repositório SITE_BASE=/ (Settings → Variables)
+          if [ -n "${{ vars.SITE_BASE }}" ]; then export VITE_BASE="${{ vars.SITE_BASE }}"; fi
+          npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

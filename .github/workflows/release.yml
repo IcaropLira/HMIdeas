@@ -1,7 +1,8 @@
 name: Release
 
-# Envie uma tag `v*` (ou rode `npm run release -- x.y.z`) para gerar os instaladores:
-# Linux (DEB, RPM, AppImage), Windows (MSI, NSIS) e macOS (DMG universal).
+# Publique uma versão com:  npm run release -- 0.3.0  →  git push && git push origin v0.3.0
+# Gera: Windows (EXE + MSI), Linux (AppImage, DEB, RPM), macOS (DMG) e Android (APK), mais o `latest.json`
+# que os apps instalados usam para se atualizar sozinhos. Veja a seção "Publicar e atualizar" do README.
 on:
   push:
     tags: ["v*"]
@@ -10,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  desktop:
     strategy:
       fail-fast: false
       matrix:
@@ -24,6 +25,16 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Chave de assinatura das atualizações
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Falta o secret TAURI_SIGNING_PRIVATE_KEY. Rode 'npm run updater:keys' e cadastre a chave (README → Publicar e atualizar)."
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -43,19 +54,103 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev build-essential
 
-      - name: Aplicar a versão da tag
+      - name: Versão da tag e endereço do atualizador
         shell: bash
-        run: node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
+        run: |
+          node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
+          node scripts/set-repo.mjs "$GITHUB_REPOSITORY"
 
       - run: npm install --no-audit --no-fund
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_GH_REPO: ${{ github.repository }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "HM Ideas ${{ github.ref_name }}"
-          releaseBody: "Instaladores gerados a partir da tag."
+          releaseBody: "Baixe o instalador do seu sistema abaixo (ou na página de download do site). Quem já tem o app instalado recebe esta versão sozinho."
           releaseDraft: false
           prerelease: false
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+  android:
+    needs: desktop
+    runs-on: ubuntu-22.04
+    env:
+      NDK_VERSION: "27.0.12077973"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: NDK
+        shell: bash
+        run: |
+          sdkmanager "ndk;${NDK_VERSION}" "platforms;android-34" "build-tools;34.0.0"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Versão da tag
+        shell: bash
+        run: node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Projeto Android e build do APK
+        shell: bash
+        env:
+          VITE_GH_REPO: ${{ github.repository }}
+        run: |
+          npx tauri android init --ci
+          npx tauri android build --apk --ci
+
+      - name: Assinar o APK
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          IN="$(find src-tauri/gen/android -name '*universal*release*.apk' | head -n1)"
+          [ -n "$IN" ] || { echo "::error::APK não encontrado"; exit 1; }
+          VERSION="${GITHUB_REF_NAME#v}"
+          OUT="HM-Ideas_${VERSION}.apk"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > release.jks
+          else
+            echo "::warning::Sem ANDROID_KEYSTORE_*: assinando com uma chave temporária. Esse APK NÃO atualiza por cima de versões anteriores; cadastre a keystore (npm run android:keystore)."
+            KS_PASS="temporaria-$RANDOM$RANDOM"; KS_ALIAS="tmp"
+            keytool -genkeypair -keystore release.jks -alias tmp -keyalg RSA -keysize 2048 -validity 3650 -storepass "$KS_PASS" -keypass "$KS_PASS" -dname "CN=HM Ideas"
+          fi
+          "$BT/zipalign" -f -p 4 "$IN" aligned.apk
+          "$BT/apksigner" sign --ks release.jks --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --out "$OUT" aligned.apk
+          "$BT/apksigner" verify "$OUT"
+          echo "APK_FILE=$OUT" >> "$GITHUB_ENV"
+
+      - name: Anexar o APK à release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "$APK_FILE" --clobber

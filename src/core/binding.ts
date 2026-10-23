@@ -2,14 +2,14 @@
 // Cada ponta de seta guarda a forma-alvo + um ponto de foco (u, v) normalizado dentro dela.
 // A posição real da ponta é CALCULADA: onde o raio "vizinho da seta → foco" cruza o contorno da forma.
 import { elementHit } from "./geometry";
-import { ArrowBinding, HirakuElement, ID, LinearElement, SHAPE_TYPES, ShapeElement, TextElement, newId } from "./model";
+import { ArrowBinding, HirakuElement, ID, LinearElement, NodeElement, SHAPE_TYPES, ShapeElement, TextElement, newId } from "./model";
 import { Pt, outlinePath, pointInPolygon } from "./shapes";
 
 /** Folga entre a ponta da seta e o contorno da forma (unidades do mundo). */
 const BIND_GAP = 4;
 
-export type Bindable = ShapeElement | TextElement;
-export const isBindable = (e: HirakuElement): e is Bindable => e.type === "text" || (SHAPE_TYPES as string[]).includes(e.type);
+export type Bindable = ShapeElement | TextElement | NodeElement;
+export const isBindable = (e: HirakuElement): e is Bindable => e.type === "text" || e.type === "node" || (SHAPE_TYPES as string[]).includes(e.type);
 
 function anchor(shape: Bindable, b: ArrowBinding): Pt {
   const c = Math.cos(shape.angle), s = Math.sin(shape.angle);
@@ -158,8 +158,12 @@ export function detachForeign(els: HirakuElement[]): HirakuElement[] {
 export function reidentify(els: HirakuElement[]): HirakuElement[] {
   const map = new Map(els.map((e) => [e.id, newId()]));
   const remap = (b: ArrowBinding | null | undefined) => (b && map.has(b.elementId) ? { ...b, elementId: map.get(b.elementId)! } : null);
+  const ref = (i: ID | null | undefined) => (i && map.has(i) ? map.get(i)! : null);
   return els.map((e) => {
     const id = map.get(e.id)!;
-    return e.type === "arrow" ? { ...e, id, startBinding: remap(e.startBinding), endBinding: remap(e.endBinding) } : { ...e, id };
+    // frameId e parentId apontam para elementos copiados juntos; senão, cortam (a cópia vira independente)
+    const base = { ...e, id, frameId: ref(e.frameId) } as HirakuElement;
+    if (e.type === "node") return { ...base, parentId: ref(e.parentId) } as HirakuElement;
+    return e.type === "arrow" ? { ...base, startBinding: remap(e.startBinding), endBinding: remap(e.endBinding) } as HirakuElement : base;
   });
 }

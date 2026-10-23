@@ -2,19 +2,29 @@
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
 import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
 import { Camera, defaultCamera } from "../core/camera";
-import { DEFAULT_BACKGROUND, HirakuElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
 import { decimateForPreview } from "../core/ink";
+import { paintFrame, paintNode } from "./mindDraw";
 import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
 
 const LINE = "#1B2233";
 const INDIGO = "#2F4B8F";
 
 /** Graphics para traços/formas/linhas; Container (com um Text dentro) para textos. */
-interface Node { g: Container; el: HirakuElement }
+interface Node {
+  g: Container;
+  el: HirakuElement;
+  /** Versão em pré-visualização (arrastar um ramo): o desenho dos filhos usa esta em vez de `el`. */
+  view?: HirakuElement;
+  /** Dependências do desenho (pai, raiz, nº de filhos): mudou → repinta. */
+  dep?: unknown[];
+}
+
+const sameDep = (a?: unknown[], b?: unknown[]) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
 
 const drawEl = (g: Graphics, el: HirakuElement) => {
   if (isLinear(el)) drawLinearElement(g, el);
@@ -25,6 +35,7 @@ export class Renderer {
   private app = new Application();
   private paperLayer = new Graphics();
   private world = new Container();
+  private frames = new Container(); // quadros ficam SEMPRE abaixo do resto
   private committed = new Container();
   private live = new Graphics();
   private liveInk = new InkNode();
@@ -55,7 +66,7 @@ export class Renderer {
       autoDensity: true,
       powerPreference: "high-performance",
     });
-    this.world.addChild(this.committed, this.live, this.liveInk);
+    this.world.addChild(this.frames, this.committed, this.live, this.liveInk);
     this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
@@ -147,19 +158,34 @@ export class Renderer {
   /** Reconcilia os nós do Pixi com a lista de elementos. Elementos são imutáveis: referência nova = redesenhar. */
   syncPage(elements: HirakuElement[]) {
     const alive = new Set<string>();
+    // contexto de mapa: pai, raiz e nº de filhos (só calculado se houver nós)
+    const byId = new Map<string, HirakuElement>();
+    const kids = new Map<string, number>();
+    let hasNodes = false;
+    for (const el of elements) {
+      byId.set(el.id, el);
+      if (el.type === "node") {
+        hasNodes = true;
+        if (el.parentId) kids.set(el.parentId, (kids.get(el.parentId) ?? 0) + 1);
+      }
+    }
     for (const el of elements) {
       alive.add(el.id);
-      const n = this.nodes.get(el.id);
+      let n = this.nodes.get(el.id);
+      const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
       if (!n) {
-        const g = el.type === "text" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
-        this.paint(g, el);
-        this.committed.addChild(g);
-        this.nodes.set(el.id, { g, el });
-      } else if (n.el !== el) {
+        const g = el.type === "text" || el.type === "node" || el.type === "frame" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+        n = { g, el, dep };
+        this.nodes.set(el.id, n);
+        (el.type === "frame" ? this.frames : this.committed).addChild(g);
+        this.paint(g, el, n);
+      } else if (n.el !== el || !sameDep(n.dep, dep)) {
         n.g.setFromMatrix(new Matrix()); // descarta qualquer pré-visualização por matriz
         n.g.alpha = 1;
-        this.paint(n.g, el);
         n.el = el;
+        n.view = undefined;
+        n.dep = dep;
+        this.paint(n.g, el, n);
       }
     }
     for (const [id, n] of this.nodes) {
@@ -169,6 +195,48 @@ export class Renderer {
         this.ghosts.delete(id);
       }
     }
+  }
+
+  private nodeDep(el: NodeElement, byId: Map<string, HirakuElement>, kids: Map<string, number>): unknown[] {
+    const parent = el.parentId ? byId.get(el.parentId) : undefined;
+    let root: HirakuElement = parent?.type === "node" ? parent : el;
+    for (let i = 0; i < 64 && root.type === "node" && root.parentId; i++) {
+      const up = byId.get(root.parentId);
+      if (!up || up.type !== "node") break;
+      root = up;
+    }
+    return [parent, root, kids.get(el.id) ?? 0];
+  }
+
+  /** Pai/raiz/filhos de um nó de mapa para o desenho, preferindo as versões em pré-visualização. */
+  private nodeCtx(el: NodeElement) {
+    const look = (id?: string | null) => {
+      const n = id ? this.nodes.get(id) : undefined;
+      const e = n ? n.view ?? n.el : undefined;
+      return e && e.type === "node" ? e : null;
+    };
+    const parent = look(el.parentId);
+    let root: NodeElement = parent ?? el;
+    for (let i = 0; i < 64 && root.parentId; i++) {
+      const up = look(root.parentId);
+      if (!up) break;
+      root = up;
+    }
+    let kids = 0;
+    if (el.collapsed) for (const n of this.nodes.values()) if (n.el.type === "node" && this.isDescendant(n.el, el.id)) kids++;
+    return { parent, root: root === el && !parent ? el : root, kids, res: this.textRes() };
+  }
+
+  private isDescendant(n: NodeElement, ancestor: string): boolean {
+    let cur: NodeElement | null = n;
+    for (let i = 0; i < 64 && cur; i++) {
+      const pid: string | null | undefined = cur.parentId;
+      if (!pid) return false;
+      if (pid === ancestor) return true;
+      const up: Node | undefined = this.nodes.get(pid);
+      cur = up && up.el.type === "node" ? up.el : null;
+    }
+    return false;
   }
 
   /** Pré-visualização barata: move/gira/escala o nó sem redesenhar (null restaura). */
@@ -182,12 +250,17 @@ export class Renderer {
     const n = this.nodes.get(id);
     if (!n) return;
     n.g.setFromMatrix(new Matrix());
-    this.paint(n.g, el ?? n.el);
+    n.view = el ?? undefined;
+    this.paint(n.g, el ?? n.el, n);
   }
 
   /** Desenha o elemento no nó (Graphics) ou monta o Text (Container). */
-  private paint(node: Container, el: HirakuElement) {
-    if (el.type === "text") {
+  private paint(node: Container, el: HirakuElement, _n?: Node) {
+    if (el.type === "node") {
+      paintNode(node, el, this.nodeCtx(el));
+    } else if (el.type === "frame") {
+      paintFrame(node, el, this.textRes());
+    } else if (el.type === "text") {
       for (const ch of node.removeChildren()) ch.destroy();
       const t = new Text({
         text: el.text,
@@ -218,6 +291,10 @@ export class Renderer {
     this.resTimer = setTimeout(() => {
       const r = this.textRes();
       for (const n of this.nodes.values()) {
+        if (n.el.type === "node" || n.el.type === "frame") {
+          for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
+          continue;
+        }
         const t = n.el.type === "text" ? (n.g.children[0] as Text | undefined) : undefined;
         if (t && Math.abs(t.resolution - r) / r > 0.12) t.resolution = r;
       }

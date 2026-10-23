@@ -35,6 +35,8 @@ export interface StrokeDyn {
 
 export interface StrokeElement {
   id: ID;
+  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
+  frameId?: ID | null;
   type: "stroke";
   points: InkPoint[];
   color: string;
@@ -61,6 +63,8 @@ export type LineStyle = "solid" | "dashed" | "dotted";
 
 export interface ShapeElement {
   id: ID;
+  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
+  frameId?: ID | null;
   type: ShapeType;
   /** Caixa em coordenadas do mundo (x, y = canto superior esquerdo). */
   x: number;
@@ -100,6 +104,8 @@ export interface ArrowBinding {
 /** Linha ou seta com 2+ pontos (retos ou suavizados). */
 export interface LinearElement {
   id: ID;
+  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
+  frameId?: ID | null;
   type: LinearType;
   points: { x: number; y: number }[];
   stroke: string;
@@ -122,6 +128,8 @@ export type TextAlign = "left" | "center" | "right";
 /** Texto de bloco único (sem quebra automática): w/h são medidos ao confirmar a edição. */
 export interface TextElement {
   id: ID;
+  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
+  frameId?: ID | null;
   type: "text";
   x: number;
   y: number;
@@ -137,12 +145,111 @@ export interface TextElement {
   opacity: number;
 }
 
+
+// ---------- mapa mental e quadros ----------
+
+export type NodeShape = "pill" | "rounded" | "rect" | "ellipse" | "underline" | "none";
+export const NODE_SHAPES: { id: NodeShape; label: string }[] = [
+  { id: "pill", label: "Pílula" },
+  { id: "rounded", label: "Arredondado" },
+  { id: "rect", label: "Retângulo" },
+  { id: "ellipse", label: "Elipse" },
+  { id: "underline", label: "Sublinhado" },
+  { id: "none", label: "Só texto" },
+];
+
+export type MapLayout = "both" | "right" | "left" | "down";
+export const MAP_LAYOUTS: { id: MapLayout; label: string }[] = [
+  { id: "both", label: "Dos dois lados" },
+  { id: "right", label: "Para a direita" },
+  { id: "left", label: "Para a esquerda" },
+  { id: "down", label: "Para baixo" },
+];
+
+export type BranchStyle = "curve" | "elbow" | "straight";
+export const BRANCH_STYLES: { id: BranchStyle; label: string }[] = [
+  { id: "curve", label: "Curva" },
+  { id: "elbow", label: "Em cotovelo" },
+  { id: "straight", label: "Reta" },
+];
+
+/**
+ * Nó de mapa mental. É uma caixa (x, y, w, h) como as formas, então seleção, mover, setas ligadas e
+ * miniaturas funcionam sem caso especial. A árvore vem de `parentId`; posições e `hidden` são DERIVADOS
+ * por core/mindmap.ts (layout automático) e ficam gravados para o desenho ser rápido.
+ */
+export interface NodeElement {
+  id: ID;
+  type: "node";
+  frameId?: ID | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Sempre 0 (nós não giram); existe para serem "ligáveis" como as formas. */
+  angle: number;
+  /** Largura do contorno (e da ligação com o pai, na raiz). */
+  strokeWidth: number;
+  text: string;
+  fontSize: number;
+  fontFamily: FontFamily;
+  /** Cor do texto. */
+  color: string;
+  shape: NodeShape;
+  fill: string | null;
+  stroke: string | null;
+  /** Cor do ramo que liga ESTE nó ao pai. */
+  branchColor: string;
+  /** Marcador (emoji/símbolo) mostrado antes do texto; null = nenhum. */
+  icon: string | null;
+  /** Tarefa concluída: texto riscado e esmaecido. */
+  done: boolean;
+  /** Pai na árvore; null/ausente = raiz do mapa. Pai inexistente também vale como raiz. */
+  parentId?: ID | null;
+  /** Filhos escondidos. */
+  collapsed: boolean;
+  /** Em mapas "dos dois lados": lado fixo deste ramo (só filhos diretos da raiz). */
+  side: "auto" | "left" | "right";
+  /** Só na raiz: direção do mapa e estilo dos ramos. */
+  layout: MapLayout;
+  branchStyle: BranchStyle;
+  /** Derivado: dentro de um ramo recolhido. */
+  hidden?: boolean;
+  opacity: number;
+}
+
+/** Quadro (como o do Figma/Miro): contém outros elementos — inclusive outros quadros. */
+export interface FrameElement {
+  id: ID;
+  type: "frame";
+  /** Quadro pai (quadros aninhados). */
+  frameId?: ID | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  angle: number;
+  strokeWidth: number;
+  title: string;
+  /** Cor do contorno, do título e do véu de fundo. */
+  color: string;
+  /** Opacidade do véu de fundo (0..0.5). */
+  tint: number;
+  rounded: boolean;
+  opacity: number;
+}
+
 // M2+ adiciona: image
-export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement;
+export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement;
+
+/** Elementos "de caixa" com contorno próprio: formas, nós e quadros. */
+export type BoxElement = ShapeElement | NodeElement | FrameElement;
 
 /** Guardas de tipo: `type` de forma/linha é uma união de literais, então só `===` não separa as duas no TS. */
 export const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
 export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES as string[]).includes(el.type);
+export const isNode = (el: HirakuElement): el is NodeElement => el.type === "node";
+export const isFrame = (el: HirakuElement): el is FrameElement => el.type === "frame";
 
 export type PaperKind = "blank" | "ruled" | "grid" | "dots";
 
@@ -206,13 +313,60 @@ const cleanText = (e: any): TextElement => {
   };
 };
 
-const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text"];
+const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame"];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const validElement = (e: any): boolean =>
   !!e &&
   KNOWN_TYPES.includes(e.type) &&
   (!(e.type === "line" || e.type === "arrow") || (Array.isArray(e.points) && e.points.length >= 2)) &&
-  (e.type !== "text" || typeof e.text === "string");
+  (e.type !== "text" || typeof e.text === "string") &&
+  (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
+  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h)));
+
+const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
+const hex = (v: unknown, d: string) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : d);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cleanNode = (e: any): NodeElement => ({
+  ...e,
+  w: Math.max(10, num(e.w, 80)),
+  h: Math.max(10, num(e.h, 36)),
+  angle: 0,
+  strokeWidth: num(e.strokeWidth, 1.5),
+  fontSize: Math.max(6, Math.min(200, num(e.fontSize, 18))),
+  fontFamily: FONT_IDS.includes(e.fontFamily) ? e.fontFamily : "sans",
+  color: hex(e.color, "#1B2233"),
+  shape: NODE_SHAPES.some((x) => x.id === e.shape) ? e.shape : "pill",
+  fill: e.fill === null ? null : hex(e.fill, "#FFFFFF"),
+  stroke: e.stroke === null || e.stroke === undefined ? null : hex(e.stroke, "#1B2233"),
+  branchColor: hex(e.branchColor, "#2F4B8F"),
+  icon: typeof e.icon === "string" && e.icon ? e.icon.slice(0, 8) : null,
+  done: e.done === true,
+  parentId: typeof e.parentId === "string" ? e.parentId : null,
+  frameId: typeof e.frameId === "string" ? e.frameId : null,
+  collapsed: e.collapsed === true,
+  side: e.side === "left" || e.side === "right" ? e.side : "auto",
+  layout: MAP_LAYOUTS.some((x) => x.id === e.layout) ? e.layout : "both",
+  branchStyle: BRANCH_STYLES.some((x) => x.id === e.branchStyle) ? e.branchStyle : "curve",
+  hidden: e.hidden === true,
+  opacity: num(e.opacity, 1),
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cleanFrame = (e: any): FrameElement => ({
+  ...e,
+  w: Math.max(10, num(e.w, 200)),
+  h: Math.max(10, num(e.h, 150)),
+  angle: 0,
+  strokeWidth: num(e.strokeWidth, 1.5),
+  title: str(e.title, "Quadro").slice(0, 120),
+  color: hex(e.color, "#2F4B8F"),
+  tint: Math.max(0, Math.min(0.5, num(e.tint, 0.06))),
+  rounded: e.rounded !== false,
+  frameId: typeof e.frameId === "string" ? e.frameId : null,
+  opacity: num(e.opacity, 1),
+});
 
 /** Valida e completa campos novos de arquivos antigos (migração leve, ainda versão 1). */
 export function normalizeDoc(raw: unknown): HirakuDoc {
@@ -244,7 +398,11 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                 ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
                 : e.type === "text"
                   ? cleanText(e)
-                  : e,
+                  : e.type === "node"
+                    ? cleanNode(e)
+                    : e.type === "frame"
+                      ? cleanFrame(e)
+                      : e,
           )
         : [],
     })),

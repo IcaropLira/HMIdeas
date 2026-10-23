@@ -1,0 +1,2797 @@
+From 20450426ec86e65935b8eb3d36b2cf1ef38fcc15 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 23 Oct 2026 02:19:17 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20site=20(PWA)=20com=20p=C3=A1gina=20de?=
+ =?UTF-8?q?=20download,=20atualiza=C3=A7=C3=A3o=20autom=C3=A1tica=20e=20bu?=
+ =?UTF-8?q?ilds=20para=20Windows/Linux/macOS/Android?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- download.html lê a última release e destaca o instalador do sistema do visitante
+- Tauri updater assinado (desktop); aviso de versão nova + abrir download (Android/DEB/RPM); PWA em modo prompt
+- autosave em IndexedDB para atualizar sem perder o desenho
+- workflows: pages.yml (site) e release.yml (Windows/Linux/macOS + APK assinado + latest.json)
+- scripts: updater:keys, android:keystore, set-repo
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DyTugtFy1D5Qket24Ka7aE
+---
+ .github/workflows/pages.yml         |   48 ++
+ .github/workflows/release.yml       |  107 ++-
+ AGENTS.md                           |    9 +
+ README.md                           |   44 +-
+ download.html                       |   76 ++
+ package-lock.json                   |   30 +
+ package.json                        |    8 +-
+ scripts/android-keystore.mjs        |   32 +
+ scripts/set-repo.mjs                |   15 +
+ scripts/updater-keys.mjs            |   33 +
+ src-tauri/Cargo.lock                | 1047 ++++++++++++++++++++++++++-
+ src-tauri/Cargo.toml                |    6 +
+ src-tauri/capabilities/default.json |    4 +-
+ src-tauri/capabilities/desktop.json |    8 +
+ src-tauri/src/lib.rs                |   10 +-
+ src-tauri/tauri.conf.json           |   14 +-
+ src/App.tsx                         |    6 +
+ src/components/Toolbar.tsx          |    4 +
+ src/components/UpdateBanner.tsx     |   33 +
+ src/core/autosave.ts                |   85 +++
+ src/core/repo.test.ts               |   34 +
+ src/core/repo.ts                    |   75 ++
+ src/core/updater.ts                 |  131 ++++
+ src/site/download.ts                |   48 ++
+ src/styles.css                      |   10 +
+ src/vite-env.d.ts                   |    5 +
+ vite.config.ts                      |   53 +-
+ 27 files changed, 1926 insertions(+), 49 deletions(-)
+ create mode 100644 .github/workflows/pages.yml
+ create mode 100644 download.html
+ create mode 100644 scripts/android-keystore.mjs
+ create mode 100644 scripts/set-repo.mjs
+ create mode 100644 scripts/updater-keys.mjs
+ create mode 100644 src-tauri/capabilities/desktop.json
+ create mode 100644 src/components/UpdateBanner.tsx
+ create mode 100644 src/core/autosave.ts
+ create mode 100644 src/core/repo.test.ts
+ create mode 100644 src/core/repo.ts
+ create mode 100644 src/core/updater.ts
+ create mode 100644 src/site/download.ts
+ create mode 100644 src/vite-env.d.ts
+
+diff --git a/.github/workflows/pages.yml b/.github/workflows/pages.yml
+new file mode 100644
+index 0000000..b31bfeb
+--- /dev/null
++++ b/.github/workflows/pages.yml
+@@ -0,0 +1,48 @@
++name: Site
++
++# Publica o app como site (PWA instalável) + a página de download no GitHub Pages a cada push na main.
++# Ative uma vez: Settings → Pages → Source: "GitHub Actions".
++on:
++  push:
++    branches: [main]
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  deploy:
++    runs-on: ubuntu-22.04
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 20
++      - run: npm install --no-audit --no-fund
++      - run: npm run typecheck && npm test
++      - name: Build do site
++        shell: bash
++        env:
++          VITE_GH_REPO: ${{ github.repository }}
++        run: |
++          repo="${GITHUB_REPOSITORY#*/}"
++          # dono.github.io (repositório de usuário) fica na raiz; os demais em /repositório/
++          if [[ "$repo" == *.github.io ]]; then export VITE_BASE="/"; else export VITE_BASE="/$repo/"; fi
++          # domínio próprio: defina a variável de repositório SITE_BASE=/ (Settings → Variables)
++          if [ -n "${{ vars.SITE_BASE }}" ]; then export VITE_BASE="${{ vars.SITE_BASE }}"; fi
++          npm run build
++      - uses: actions/configure-pages@v5
++      - uses: actions/upload-pages-artifact@v3
++        with:
++          path: dist
++      - id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 469737a..bda17f3 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -1,7 +1,8 @@
+ name: Release
+ 
+-# Envie uma tag `v*` (ou rode `npm run release -- x.y.z`) para gerar os instaladores:
+-# Linux (DEB, RPM, AppImage), Windows (MSI, NSIS) e macOS (DMG universal).
++# Publique uma versão com:  npm run release -- 0.3.0  →  git push && git push origin v0.3.0
++# Gera: Windows (EXE + MSI), Linux (AppImage, DEB, RPM), macOS (DMG) e Android (APK), mais o `latest.json`
++# que os apps instalados usam para se atualizar sozinhos. Veja a seção "Publicar e atualizar" do README.
+ on:
+   push:
+     tags: ["v*"]
+@@ -10,7 +11,7 @@ permissions:
+   contents: write
+ 
+ jobs:
+-  release:
++  desktop:
+     strategy:
+       fail-fast: false
+       matrix:
+@@ -25,6 +26,16 @@ jobs:
+     steps:
+       - uses: actions/checkout@v4
+ 
++      - name: Chave de assinatura das atualizações
++        shell: bash
++        env:
++          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
++        run: |
++          if [ -z "$KEY" ]; then
++            echo "::error::Falta o secret TAURI_SIGNING_PRIVATE_KEY. Rode 'npm run updater:keys' e cadastre a chave (README → Publicar e atualizar)."
++            exit 1
++          fi
++
+       - uses: actions/setup-node@v4
+         with:
+           node-version: 20
+@@ -43,19 +54,103 @@ jobs:
+           sudo apt-get update
+           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev build-essential
+ 
+-      - name: Aplicar a versão da tag
++      - name: Versão da tag e endereço do atualizador
+         shell: bash
+-        run: node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
++        run: |
++          node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
++          node scripts/set-repo.mjs "$GITHUB_REPOSITORY"
+ 
+       - run: npm install --no-audit --no-fund
+ 
+       - uses: tauri-apps/tauri-action@v0
+         env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
++          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
++          VITE_GH_REPO: ${{ github.repository }}
+         with:
+           tagName: ${{ github.ref_name }}
+           releaseName: "HM Ideas ${{ github.ref_name }}"
+-          releaseBody: "Instaladores gerados a partir da tag."
++          releaseBody: "Baixe o instalador do seu sistema abaixo (ou na página de download do site). Quem já tem o app instalado recebe esta versão sozinho."
+           releaseDraft: false
+           prerelease: false
++          uploadUpdaterJson: true
+           args: ${{ matrix.args }}
++
++  android:
++    needs: desktop
++    runs-on: ubuntu-22.04
++    env:
++      NDK_VERSION: "27.0.12077973"
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 20
++
++      - uses: actions/setup-java@v4
++        with:
++          distribution: temurin
++          java-version: 17
++
++      - uses: android-actions/setup-android@v3
++
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
++
++      - uses: swatinem/rust-cache@v2
++        with:
++          workspaces: "./src-tauri -> target"
++
++      - name: NDK
++        shell: bash
++        run: |
++          sdkmanager "ndk;${NDK_VERSION}" "platforms;android-34" "build-tools;34.0.0"
++          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
++
++      - name: Versão da tag
++        shell: bash
++        run: node scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
++
++      - run: npm install --no-audit --no-fund
++
++      - name: Projeto Android e build do APK
++        shell: bash
++        env:
++          VITE_GH_REPO: ${{ github.repository }}
++        run: |
++          npx tauri android init --ci
++          npx tauri android build --apk --ci
++
++      - name: Assinar o APK
++        shell: bash
++        env:
++          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
++          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
++          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
++        run: |
++          set -euo pipefail
++          BT="$ANDROID_HOME/build-tools/34.0.0"
++          IN="$(find src-tauri/gen/android -name '*universal*release*.apk' | head -n1)"
++          [ -n "$IN" ] || { echo "::error::APK não encontrado"; exit 1; }
++          VERSION="${GITHUB_REF_NAME#v}"
++          OUT="HM-Ideas_${VERSION}.apk"
++          if [ -n "$KS_B64" ]; then
++            echo "$KS_B64" | base64 -d > release.jks
++          else
++            echo "::warning::Sem ANDROID_KEYSTORE_*: assinando com uma chave temporária. Esse APK NÃO atualiza por cima de versões anteriores; cadastre a keystore (npm run android:keystore)."
++            KS_PASS="temporaria-$RANDOM$RANDOM"; KS_ALIAS="tmp"
++            keytool -genkeypair -keystore release.jks -alias tmp -keyalg RSA -keysize 2048 -validity 3650 -storepass "$KS_PASS" -keypass "$KS_PASS" -dname "CN=HM Ideas"
++          fi
++          "$BT/zipalign" -f -p 4 "$IN" aligned.apk
++          "$BT/apksigner" sign --ks release.jks --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --out "$OUT" aligned.apk
++          "$BT/apksigner" verify "$OUT"
++          echo "APK_FILE=$OUT" >> "$GITHUB_ENV"
++
++      - name: Anexar o APK à release
++        shell: bash
++        env:
++          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++        run: gh release upload "$GITHUB_REF_NAME" "$APK_FILE" --clobber
+diff --git a/AGENTS.md b/AGENTS.md
+index 37e6c36..29925c2 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -117,6 +117,15 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
+ - A borracha (traço/pixel) ignora nós e quadros. Atalhos: Tab filho, Enter irmão, Shift+Enter irmão acima, F2 editar, C recolher, setas navegam,
+   K ligar, Ctrl+G / Ctrl+Shift+G quadro, M/F ferramentas, Shift+1 / Shift+2 ver tudo / seleção. Painel "Mapa & quadros" na barra.
+ 
++### Site, downloads e atualização automática (0008)
++- Web: Vite `base` vem de `VITE_BASE` (workflow `pages.yml`); PWA em modo **prompt** (nunca recarrega sozinho). `download.html` é a segunda
++  página do build; `core/repo.ts` descobre o repositório (`VITE_GH_REPO` ou o endereço `dono.github.io/repo`) e classifica os arquivos da release.
++- Desktop: plugins Tauri `updater` + `process` (só desktop; capability `desktop.json`), pacotes assinados (`createUpdaterArtifacts`),
++  endpoint `.../releases/latest/download/latest.json` ajustado no CI por `scripts/set-repo.mjs`. A chave PÚBLICA está no `tauri.conf.json`;
++  a privada nunca entra no git (`npm run updater:keys`).
++- Android/DEB/RPM: `core/updater.ts` compara a versão com a última release e abre o download (`plugin-opener`). APK assinado no CI com a keystore dos secrets.
++- `core/autosave.ts` (IndexedDB) restaura a sessão: é o que torna seguro atualizar/recarregar. Não substitui o arquivo `.hiraku`.
++
+ ## Como rodar
+ 
+ ```bash
+diff --git a/README.md b/README.md
+index 95a9ea5..8d5da2d 100644
+--- a/README.md
++++ b/README.md
+@@ -27,6 +27,48 @@ O script:
+ 
+ Para desfazer um patch já aplicado: `git revert <commit>`.
+ 
++## Publicar e atualizar (site, Windows, Linux, Android, macOS)
++
++Tudo roda no GitHub Actions; você só precisa fazer a configuração abaixo **uma vez**.
++
++**1. Site (PWA) + página de download** — `Settings → Pages → Source: GitHub Actions`. A cada push na `main` o workflow **Site**
++publica o app em `https://dono.github.io/repositorio/` e a página de download em `.../download.html` (ela lê a última release e
++destaca o instalador do sistema de quem abriu). O site é instalável (Chrome/Edge/Android/iPad) e funciona offline. Domínio próprio:
++crie a variável de repositório `SITE_BASE` = `/`.
++
++**2. Chave das atualizações do desktop** (uma vez):
++
++```bash
++npm run updater:keys     # gera ~/.tauri/hm-ideas.key e grava a chave PÚBLICA no tauri.conf.json (faça commit)
++```
++Cadastre em `Settings → Secrets and variables → Actions`: `TAURI_SIGNING_PRIVATE_KEY` (conteúdo do arquivo) e, se pôs senha,
++`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Sem essa chave o app recusa qualquer atualização (é a proteção contra pacote falso).
++
++**3. Chave do APK (Android)** (uma vez, e use SEMPRE a mesma — o Android só atualiza por cima se a assinatura for igual):
++
++```bash
++npm run android:keystore # imprime os 3 secrets: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
++```
++
++**4. Publicar uma versão**:
++
++```bash
++npm run release -- 0.3.0
++git push && git push origin v0.3.0
++```
++O workflow **Release** gera Windows (EXE + MSI), Linux (AppImage, DEB, RPM), macOS (DMG) e Android (APK), publica na release e cria o
++`latest.json`. A página de download já mostra os arquivos novos.
++
++**Como cada um se atualiza**
++- Windows / macOS / Linux AppImage: o app verifica ao abrir e a cada 6 h; mostra “Nova versão” → **Atualizar** baixa o pacote
++  assinado, instala e reinicia. O botão `vX.Y.Z` no topo verifica na hora.
++- Linux DEB/RPM e Android: o app avisa e abre o download da versão nova (instale por cima).
++- Site/PWA: o aviso pede um clique para recarregar. O desenho é guardado automaticamente no navegador (IndexedDB) e restaurado ao abrir,
++  então atualizar não perde nada. (“Salvar” continua gerando o arquivo `.hiraku`.)
++
++Avisos honestos: sem certificado pago, o Windows (SmartScreen) e o macOS (Gatekeeper) mostram um alerta no primeiro uso; a
++atualização automática funciona mesmo assim. iPhone/iPad só têm a versão web (PWA).
++
+ ## Releases (instaladores)
+ 
+ ```bash
+@@ -35,7 +77,7 @@ git push && git push origin v0.3.0
+ ```
+ O workflow **Release** gera Linux (DEB, RPM, AppImage), Windows (MSI, NSIS) e macOS (DMG universal) e publica no GitHub Releases.
+ O macOS é compilado na nuvem, então você não precisa de um Mac para ter o app para Apple.
+-O atualizador silencioso dentro do app (Tauri Updater) exige uma chave de assinatura nos *secrets* do GitHub e entra numa etapa futura.
++O atualizador automático está descrito em “Publicar e atualizar”, acima.
+ 
+ ## Pré-requisitos (Linux)
+ 
+diff --git a/download.html b/download.html
+new file mode 100644
+index 0000000..ccf0ab1
+--- /dev/null
++++ b/download.html
+@@ -0,0 +1,76 @@
++<!doctype html>
++<html lang="pt-BR">
++  <head>
++    <meta charset="UTF-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <meta name="theme-color" content="#EDF0F4" />
++    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
++    <title>Baixar o HM Ideas</title>
++    <meta name="description" content="HM Ideas para Windows, Linux, Android e macOS — ou direto no navegador." />
++    <style>
++      :root { --bg:#EDF0F4; --card:#fff; --ink:#1B2233; --mute:#5E6B7E; --brand:#2F4B8F; --line:#D5DBE5; color-scheme: light dark; }
++      @media (prefers-color-scheme: dark) { :root { --bg:#12151C; --card:#1B2030; --ink:#E8ECF4; --mute:#9AA6BA; --brand:#8FA8F0; --line:#2B3246; } }
++      * { box-sizing: border-box; }
++      body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
++      main { max-width: 880px; margin: 0 auto; padding: 40px 16px 64px; }
++      header { display:flex; align-items:center; gap:14px; margin-bottom: 8px; }
++      header img { width:48px; height:48px; border-radius:12px; }
++      h1 { font-size: 28px; margin:0; }
++      .sub { color:var(--mute); margin: 4px 0 28px; }
++      .hero { background:var(--card); border-radius:20px; padding:24px; box-shadow:0 4px 24px rgba(27,34,51,.08); display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; }
++      .hero h2 { margin:0 0 4px; font-size:20px; }
++      .hero p { margin:0; color:var(--mute); font-size:14px; }
++      .cta { display:inline-block; background:var(--brand); color:#fff; text-decoration:none; font-weight:600; padding:14px 22px; border-radius:14px; }
++      @media (prefers-color-scheme: dark) { .cta { color:#12151C; } }
++      .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-top:20px; }
++      .card { background:var(--card); border-radius:16px; padding:18px; border:2px solid transparent; }
++      .card.me { border-color: var(--brand); }
++      .card h3 { margin:0 0 10px; font-size:17px; }
++      .card a.dl { display:flex; justify-content:space-between; gap:8px; padding:9px 12px; margin-top:8px; border:1px solid var(--line); border-radius:10px; color:var(--ink); text-decoration:none; font-size:14px; }
++      .card a.dl:hover { border-color: var(--brand); }
++      .card a.dl small { color:var(--mute); white-space:nowrap; }
++      .card p { margin:8px 0 0; font-size:13px; color:var(--mute); }
++      .empty { color:var(--mute); font-size:14px; margin:6px 0 0; }
++      details { margin-top:22px; background:var(--card); border-radius:14px; padding:14px 18px; }
++      summary { cursor:pointer; font-weight:600; }
++      details p, details li { color:var(--mute); font-size:14px; }
++      footer { margin-top:28px; color:var(--mute); font-size:13px; }
++      a { color: var(--brand); }
++    </style>
++  </head>
++  <body>
++    <main>
++      <header>
++        <img src="/pwa-192.png" alt="" />
++        <div>
++          <h1>HM Ideas</h1>
++        </div>
++      </header>
++      <p class="sub">Quadro branco, mapas mentais e caderno de anotações com caneta. Use no navegador ou instale no seu aparelho — o app se atualiza sozinho.</p>
++
++      <section class="hero" aria-live="polite">
++        <div>
++          <h2 id="hero-title">Procurando a versão mais recente…</h2>
++          <p id="hero-sub"></p>
++        </div>
++        <a class="cta" id="hero-cta" href="./">Abrir no navegador</a>
++      </section>
++
++      <section class="grid" id="grid" aria-label="Todos os downloads"></section>
++
++      <details>
++        <summary>Como instalar</summary>
++        <ul>
++          <li><b>Windows:</b> abra o instalador (.exe). Se o SmartScreen avisar, “Mais informações” → “Executar assim mesmo” (o app ainda não tem certificado pago).</li>
++          <li><b>Linux:</b> AppImage: <code>chmod +x HM*.AppImage</code> e execute — atualiza sozinho. .deb/.rpm: instale pelo gerenciador de pacotes; o app avisa quando houver versão nova.</li>
++          <li><b>Android:</b> baixe o APK e permita “instalar apps desconhecidos” para o navegador. O app avisa quando houver versão nova.</li>
++          <li><b>iPhone / iPad:</b> abra o app no navegador (Safari) → Compartilhar → “Adicionar à Tela de Início”.</li>
++          <li><b>Qualquer sistema:</b> a versão web também é instalável (Chrome/Edge: ícone de instalar na barra de endereço) e funciona offline.</li>
++        </ul>
++      </details>
++
++      <footer id="footer"></footer>
++    </main>
++    <script type="module" src="/src/site/download.ts"></script>
++  </body>
++</html>
+diff --git a/package-lock.json b/package-lock.json
+index c8f2d81..1477b11 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -9,6 +9,9 @@
+       "version": "0.2.0",
+       "dependencies": {
+         "@tauri-apps/api": "^2.0.0",
++        "@tauri-apps/plugin-opener": "^2.7.2",
++        "@tauri-apps/plugin-process": "^2.4.0",
++        "@tauri-apps/plugin-updater": "^2.14.0",
+         "pixi.js": "^8.6.0",
+         "react": "^18.3.1",
+         "react-dom": "^18.3.1",
+@@ -2857,6 +2860,33 @@
+         "node": ">= 10"
+       }
+     },
++    "node_modules/@tauri-apps/plugin-opener": {
++      "version": "2.7.2",
++      "resolved": "https://registry.npmjs.org/@tauri-apps/plugin-opener/-/plugin-opener-2.7.2.tgz",
++      "integrity": "sha512-LyybP1VSzTMQiaFYcsbAse47KpivlyXdLZMQzGLEnkgQacGESnpjAfFoQ6h5sqWgAdZDH9szYjPzHMpv0Sz+TQ==",
++      "license": "MIT OR Apache-2.0",
++      "dependencies": {
++        "@tauri-apps/api": "^2.12.0"
++      }
++    },
++    "node_modules/@tauri-apps/plugin-process": {
++      "version": "2.4.0",
++      "resolved": "https://registry.npmjs.org/@tauri-apps/plugin-process/-/plugin-process-2.4.0.tgz",
++      "integrity": "sha512-GddrmsSLAYrLa/yTXlXK/YRDzUgYeeOnUXTbiyvJWkmI424RmDPD3FVLeqcon7rv6O6ZfhBilcrHWnSo7o6hIQ==",
++      "license": "MIT OR Apache-2.0",
++      "dependencies": {
++        "@tauri-apps/api": "^2.12.0"
++      }
++    },
++    "node_modules/@tauri-apps/plugin-updater": {
++      "version": "2.14.0",
++      "resolved": "https://registry.npmjs.org/@tauri-apps/plugin-updater/-/plugin-updater-2.14.0.tgz",
++      "integrity": "sha512-gdylJ9tger4hkyOn24QZd6MNOKVo2Eh53iw5th2Qj1vKTR/+u4PIwJWuiis5hohYvobn6iOvlnALfrqIPSzh7Q==",
++      "license": "MIT OR Apache-2.0",
++      "dependencies": {
++        "@tauri-apps/api": "^2.12.0"
++      }
++    },
+     "node_modules/@trickfilm400/rollup-plugin-off-main-thread": {
+       "version": "3.0.0-pre1",
+       "resolved": "https://registry.npmjs.org/@trickfilm400/rollup-plugin-off-main-thread/-/rollup-plugin-off-main-thread-3.0.0-pre1.tgz",
+diff --git a/package.json b/package.json
+index d559b28..d47667e 100644
+--- a/package.json
++++ b/package.json
+@@ -13,10 +13,16 @@
+     "icons": "tauri icon app-icon.png",
+     "patch": "node scripts/apply-patch.mjs",
+     "release": "node scripts/release.mjs",
+-    "set-version": "node scripts/set-version.mjs"
++    "set-version": "node scripts/set-version.mjs",
++    "updater:keys": "node scripts/updater-keys.mjs",
++    "android:keystore": "node scripts/android-keystore.mjs",
++    "set-repo": "node scripts/set-repo.mjs"
+   },
+   "dependencies": {
+     "@tauri-apps/api": "^2.0.0",
++    "@tauri-apps/plugin-opener": "^2.7.2",
++    "@tauri-apps/plugin-process": "^2.4.0",
++    "@tauri-apps/plugin-updater": "^2.14.0",
+     "pixi.js": "^8.6.0",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1",
+diff --git a/scripts/android-keystore.mjs b/scripts/android-keystore.mjs
+new file mode 100644
+index 0000000..3a2c0cf
+--- /dev/null
++++ b/scripts/android-keystore.mjs
+@@ -0,0 +1,32 @@
++#!/usr/bin/env node
++// Gera a chave que ASSINA o APK. Use SEMPRE a mesma: o Android só atualiza por cima um app assinado pela mesma chave.
++//   npm run android:keystore
++// Requer o `keytool` (vem com o JDK). O arquivo fica em ~/.tauri/hm-ideas.jks (NUNCA vai para o git).
++import { spawnSync } from "node:child_process";
++import { existsSync, mkdirSync, readFileSync } from "node:fs";
++import { randomBytes } from "node:crypto";
++import { homedir } from "node:os";
++import { join } from "node:path";
++
++const dir = join(homedir(), ".tauri");
++const jks = join(dir, "hm-ideas.jks");
++mkdirSync(dir, { recursive: true });
++if (existsSync(jks)) { console.error(`✖ Já existe ${jks}. Apague só se quiser TROCAR a chave (aí o Android exige desinstalar o app antigo).`); process.exit(1); }
++
++const pass = randomBytes(18).toString("base64url");
++const r = spawnSync("keytool", ["-genkeypair", "-v", "-keystore", jks, "-alias", "hmideas", "-keyalg", "RSA", "-keysize", "2048", "-validity", "36500",
++  "-storepass", pass, "-keypass", pass, "-dname", "CN=HM Ideas, O=HM Ideas, C=BR"], { stdio: "inherit" });
++if (r.status !== 0) { console.error("✖ keytool falhou (instale um JDK)."); process.exit(1); }
++
++console.log(`
++✔ Keystore: ${jks}
++
++No GitHub: Settings → Secrets and variables → Actions → New repository secret
++  ANDROID_KEYSTORE_BASE64    = (o texto abaixo, tudo numa linha)
++  ANDROID_KEYSTORE_PASSWORD  = ${pass}
++  ANDROID_KEY_ALIAS          = hmideas
++
++ANDROID_KEYSTORE_BASE64:
++${readFileSync(jks).toString("base64")}
++
++Guarde o arquivo e a senha em lugar seguro.`);
+diff --git a/scripts/set-repo.mjs b/scripts/set-repo.mjs
+new file mode 100644
+index 0000000..9282689
+--- /dev/null
++++ b/scripts/set-repo.mjs
+@@ -0,0 +1,15 @@
++#!/usr/bin/env node
++// Aponta o atualizador do app para o seu repositório do GitHub (onde ficam as releases).
++//   node scripts/set-repo.mjs dono/repositorio      (o workflow de release faz isso sozinho)
++import { readFileSync, writeFileSync } from "node:fs";
++
++const repo = process.argv[2] ?? process.env.GITHUB_REPOSITORY ?? "";
++if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
++  console.error("Uso: node scripts/set-repo.mjs <dono>/<repositório>");
++  process.exit(1);
++}
++const path = "src-tauri/tauri.conf.json";
++const conf = JSON.parse(readFileSync(path, "utf8"));
++conf.plugins.updater.endpoints = [`https://github.com/${repo}/releases/latest/download/latest.json`];
++writeFileSync(path, JSON.stringify(conf, null, 2) + "\n");
++console.log(`Atualizador aponta para github.com/${repo}`);
+diff --git a/scripts/updater-keys.mjs b/scripts/updater-keys.mjs
+new file mode 100644
+index 0000000..6c3af44
+--- /dev/null
++++ b/scripts/updater-keys.mjs
+@@ -0,0 +1,33 @@
++#!/usr/bin/env node
++// Gera a chave que ASSINA as atualizações (sem ela, o app recusa qualquer atualização).
++//   npm run updater:keys
++// A chave privada fica em ~/.tauri/hm-ideas.key (NUNCA vai para o git); a pública entra no tauri.conf.json.
++// Depois, cadastre a privada nos Secrets do repositório: TAURI_SIGNING_PRIVATE_KEY (e ..._PASSWORD se pôs senha).
++import { spawnSync } from "node:child_process";
++import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
++
++const dir = join(homedir(), ".tauri");
++const key = join(dir, "hm-ideas.key");
++mkdirSync(dir, { recursive: true });
++if (existsSync(key)) {
++  console.error(`✖ Já existe ${key}. Apague-a só se quiser TROCAR a chave (apps já instalados deixarão de aceitar atualizações).`);
++  process.exit(1);
++}
++const r = spawnSync("npx", ["tauri", "signer", "generate", "-w", key], { stdio: "inherit", shell: process.platform === "win32" });
++if (r.status !== 0) process.exit(r.status ?? 1);
++
++const pub = readFileSync(key + ".pub", "utf8").trim();
++const path = "src-tauri/tauri.conf.json";
++const conf = JSON.parse(readFileSync(path, "utf8"));
++conf.plugins.updater.pubkey = pub;
++writeFileSync(path, JSON.stringify(conf, null, 2) + "\n");
++console.log(`
++✔ Chave pública gravada em ${path} (faça commit).
++✔ Chave privada: ${key}
++
++Agora, no GitHub: Settings → Secrets and variables → Actions → New repository secret
++  TAURI_SIGNING_PRIVATE_KEY            = conteúdo do arquivo ${key}
++  TAURI_SIGNING_PRIVATE_KEY_PASSWORD   = a senha (se você definiu uma)
++Guarde uma cópia da chave privada em lugar seguro: se perder, os apps instalados não aceitam mais atualizações.`);
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 4711235..aafd539 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -47,6 +47,146 @@ version = "1.0.104"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+ 
++[[package]]
++name = "arbitrary"
++version = "1.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
++dependencies = [
++ "derive_arbitrary",
++]
++
++[[package]]
++name = "async-broadcast"
++version = "0.7.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "435a87a52755b8f27fcf321ac4f04b2802e337c8c4872923137471ec39c37532"
++dependencies = [
++ "event-listener",
++ "event-listener-strategy",
++ "futures-core",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-channel"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
++dependencies = [
++ "concurrent-queue",
++ "event-listener-strategy",
++ "futures-core",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-executor"
++version = "1.14.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
++dependencies = [
++ "async-task",
++ "concurrent-queue",
++ "fastrand",
++ "futures-lite",
++ "pin-project-lite",
++ "slab",
++]
++
++[[package]]
++name = "async-io"
++version = "2.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "456b8a8feb6f42d237746d4b3e9a178494627745c3c56c6ea55d92ba50d026fc"
++dependencies = [
++ "autocfg",
++ "cfg-if",
++ "concurrent-queue",
++ "futures-io",
++ "futures-lite",
++ "parking",
++ "polling",
++ "rustix",
++ "slab",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "async-lock"
++version = "3.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
++dependencies = [
++ "event-listener",
++ "event-listener-strategy",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-process"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fc50921ec0055cdd8a16de48773bfeec5c972598674347252c0399676be7da75"
++dependencies = [
++ "async-channel",
++ "async-io",
++ "async-lock",
++ "async-signal",
++ "async-task",
++ "blocking",
++ "cfg-if",
++ "event-listener",
++ "futures-lite",
++ "rustix",
++]
++
++[[package]]
++name = "async-recursion"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4f8abc12baad266b1c8cec146854c195b5864b4221d4b2ca7296a7ae82d9e451"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.9",
++]
++
++[[package]]
++name = "async-signal"
++version = "0.2.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "52b5aaafa020cf5053a01f2a60e8ff5dccf550f0f77ec54a4e47285ac2bab485"
++dependencies = [
++ "async-io",
++ "async-lock",
++ "atomic-waker",
++ "cfg-if",
++ "futures-core",
++ "futures-io",
++ "rustix",
++ "signal-hook-registry",
++ "slab",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "async-task"
++version = "4.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
++
++[[package]]
++name = "async-trait"
++version = "0.1.92"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.9",
++]
++
+ [[package]]
+ name = "atk"
+ version = "0.18.2"
+@@ -148,6 +288,19 @@ dependencies = [
+  "objc2",
+ ]
+ 
++[[package]]
++name = "blocking"
++version = "1.7.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a70e4329df6cb94385eed412ec92375c3cdd8a6e502493d1229b6414e4036dfa"
++dependencies = [
++ "async-channel",
++ "async-task",
++ "futures-io",
++ "futures-lite",
++ "piper",
++]
++
+ [[package]]
+ name = "brotli"
+ version = "9.0.0"
+@@ -338,6 +491,15 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "concurrent-queue"
++version = "2.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
++dependencies = [
++ "crossbeam-utils",
++]
++
+ [[package]]
+ name = "cookie"
+ version = "0.18.2"
+@@ -348,6 +510,16 @@ dependencies = [
+  "version_check",
+ ]
+ 
++[[package]]
++name = "core-foundation"
++version = "0.9.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
++dependencies = [
++ "core-foundation-sys",
++ "libc",
++]
++
+ [[package]]
+ name = "core-foundation"
+ version = "0.10.1"
+@@ -371,7 +543,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "064badf302c3194842cf2c5d61f56cc88e54a759313879cdf03abdd27d0c3b97"
+ dependencies = [
+  "bitflags 2.13.2",
+- "core-foundation",
++ "core-foundation 0.10.1",
+  "core-graphics-types",
+  "foreign-types",
+  "libc",
+@@ -384,7 +556,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3d44a101f213f6c4cdc1853d4b78aef6db6bdfa3468798cc1d9912f4735013eb"
+ dependencies = [
+  "bitflags 2.13.2",
+- "core-foundation",
++ "core-foundation 0.10.1",
+  "libc",
+ ]
+ 
+@@ -545,6 +717,17 @@ dependencies = [
+  "serde_core",
+ ]
+ 
++[[package]]
++name = "derive_arbitrary"
++version = "1.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.9",
++]
++
+ [[package]]
+ name = "derive_more"
+ version = "2.1.1"
+@@ -714,6 +897,33 @@ version = "1.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
+ 
++[[package]]
++name = "endi"
++version = "1.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
++
++[[package]]
++name = "enumflags2"
++version = "0.7.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
++dependencies = [
++ "enumflags2_derive",
++ "serde",
++]
++
++[[package]]
++name = "enumflags2_derive"
++version = "0.7.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "equivalent"
+ version = "1.0.3"
+@@ -731,6 +941,36 @@ dependencies = [
+  "typeid",
+ ]
+ 
++[[package]]
++name = "errno"
++version = "0.3.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
++dependencies = [
++ "libc",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "event-listener"
++version = "5.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
++dependencies = [
++ "parking",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "event-listener-strategy"
++version = "0.5.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
++dependencies = [
++ "event-listener",
++ "pin-project-lite",
++]
++
+ [[package]]
+ name = "fastrand"
+ version = "2.5.0"
+@@ -756,6 +996,16 @@ dependencies = [
+  "rustc_version",
+ ]
+ 
++[[package]]
++name = "filetime"
++version = "0.2.29"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
++dependencies = [
++ "cfg-if",
++ "libc",
++]
++
+ [[package]]
+ name = "find-msvc-tools"
+ version = "0.1.15"
+@@ -853,6 +1103,19 @@ version = "0.3.34"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
+ 
++[[package]]
++name = "futures-lite"
++version = "2.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
++dependencies = [
++ "fastrand",
++ "futures-core",
++ "futures-io",
++ "parking",
++ "pin-project-lite",
++]
++
+ [[package]]
+ name = "futures-macro"
+ version = "0.3.34"
+@@ -1001,6 +1264,17 @@ dependencies = [
+  "version_check",
+ ]
+ 
++[[package]]
++name = "getrandom"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
++dependencies = [
++ "cfg-if",
++ "libc",
++ "wasi",
++]
++
+ [[package]]
+ name = "getrandom"
+ version = "0.3.4"
+@@ -1196,6 +1470,12 @@ version = "0.5.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+ 
++[[package]]
++name = "hermit-abi"
++version = "0.5.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
++
+ [[package]]
+ name = "hex"
+ version = "0.4.3"
+@@ -1210,6 +1490,9 @@ dependencies = [
+  "serde_json",
+  "tauri",
+  "tauri-build",
++ "tauri-plugin-opener",
++ "tauri-plugin-process",
++ "tauri-plugin-updater",
+ ]
+ 
+ [[package]]
+@@ -1280,6 +1563,21 @@ dependencies = [
+  "want",
+ ]
+ 
++[[package]]
++name = "hyper-rustls"
++version = "0.27.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
++dependencies = [
++ "http",
++ "hyper",
++ "hyper-util",
++ "rustls",
++ "tokio",
++ "tokio-rustls",
++ "tower-service",
++]
++
+ [[package]]
+ name = "hyper-util"
+ version = "0.1.21"
+@@ -1299,9 +1597,11 @@ dependencies = [
+  "percent-encoding",
+  "pin-project-lite",
+  "socket2",
++ "system-configuration",
+  "tokio",
+  "tower-service",
+  "tracing",
++ "windows-registry",
+ ]
+ 
+ [[package]]
+@@ -1486,6 +1786,25 @@ version = "2.12.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
+ 
++[[package]]
++name = "is-docker"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
++dependencies = [
++ "once_cell",
++]
++
++[[package]]
++name = "is-wsl"
++version = "0.4.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
++dependencies = [
++ "is-docker",
++ "once_cell",
++]
++
+ [[package]]
+ name = "itoa"
+ version = "1.0.18"
+@@ -1585,6 +1904,36 @@ dependencies = [
+  "windows-sys 0.45.0",
+ ]
+ 
++[[package]]
++name = "jni"
++version = "0.22.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
++dependencies = [
++ "cfg-if",
++ "combine",
++ "jni-macros",
++ "jni-sys 0.4.1",
++ "log",
++ "simd_cesu8",
++ "thiserror 2.0.21",
++ "walkdir",
++ "windows-link",
++]
++
++[[package]]
++name = "jni-macros"
++version = "0.22.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "rustc_version",
++ "simd_cesu8",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "jni-sys"
+ version = "0.3.1"
+@@ -1714,6 +2063,12 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "linux-raw-sys"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
++
+ [[package]]
+ name = "litemap"
+ version = "0.8.3"
+@@ -1767,6 +2122,12 @@ version = "0.3.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+ 
++[[package]]
++name = "minisign-verify"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "871285dc19d8d0ebe0eef3d0e99a205f2a71363b122632cbbfa4a6c370a960ce"
++
+ [[package]]
+ name = "miniz_oxide"
+ version = "0.8.9"
+@@ -2016,6 +2377,7 @@ checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
+ dependencies = [
+  "bitflags 2.13.2",
+  "block2",
++ "libc",
+  "objc2",
+  "objc2-core-foundation",
+ ]
+@@ -2031,6 +2393,18 @@ dependencies = [
+  "objc2-core-foundation",
+ ]
+ 
++[[package]]
++name = "objc2-osa-kit"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f112d1746737b0da274ef79a23aac283376f335f4095a083a267a082f21db0c0"
++dependencies = [
++ "bitflags 2.13.2",
++ "objc2",
++ "objc2-app-kit",
++ "objc2-foundation",
++]
++
+ [[package]]
+ name = "objc2-quartz-core"
+ version = "0.3.2"
+@@ -2094,6 +2468,23 @@ version = "1.21.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+ 
++[[package]]
++name = "open"
++version = "5.4.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8d8c8b8e725ad26404d6896eb2f064294a0a7b4f1d9120210d85544684c4ca95"
++dependencies = [
++ "dunce",
++ "is-wsl",
++ "libc",
++]
++
++[[package]]
++name = "openssl-probe"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
++
+ [[package]]
+ name = "option-ext"
+ version = "0.2.0"
+@@ -2101,7 +2492,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+ 
+ [[package]]
+-name = "pango"
++name = "ordered-stream"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
++dependencies = [
++ "futures-core",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "osakit"
++version = "0.3.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "732c71caeaa72c065bb69d7ea08717bd3f4863a4f451402fc9513e29dbd5261b"
++dependencies = [
++ "objc2",
++ "objc2-foundation",
++ "objc2-osa-kit",
++ "serde",
++ "serde_json",
++ "thiserror 2.0.21",
++]
++
++[[package]]
++name = "pango"
+ version = "0.18.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7ca27ec1eb0457ab26f3036ea52229edbdb74dee1edd29063f5b9b010e7ebee4"
+@@ -2125,6 +2540,12 @@ dependencies = [
+  "system-deps",
+ ]
+ 
++[[package]]
++name = "parking"
++version = "2.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
++
+ [[package]]
+ name = "parking_lot"
+ version = "0.12.5"
+@@ -2213,6 +2634,17 @@ version = "0.2.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+ 
++[[package]]
++name = "piper"
++version = "0.2.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1"
++dependencies = [
++ "atomic-waker",
++ "fastrand",
++ "futures-io",
++]
++
+ [[package]]
+ name = "pkg-config"
+ version = "0.3.34"
+@@ -2258,6 +2690,20 @@ dependencies = [
+  "miniz_oxide 0.8.9",
+ ]
+ 
++[[package]]
++name = "polling"
++version = "3.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5d0e4f59085d47d8241c88ead0f274e8a0cb551f3625263c05eb8dd897c34218"
++dependencies = [
++ "cfg-if",
++ "concurrent-queue",
++ "hermit-abi",
++ "pin-project-lite",
++ "rustix",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "portable-atomic"
+ version = "1.15.0"
+@@ -2474,15 +2920,20 @@ dependencies = [
+  "http-body",
+  "http-body-util",
+  "hyper",
++ "hyper-rustls",
+  "hyper-util",
+  "js-sys",
+  "log",
+  "percent-encoding",
+  "pin-project-lite",
++ "rustls",
++ "rustls-pki-types",
++ "rustls-platform-verifier",
+  "serde",
+  "serde_json",
+  "sync_wrapper",
+  "tokio",
++ "tokio-rustls",
+  "tokio-util",
+  "tower",
+  "tower-http",
+@@ -2494,6 +2945,20 @@ dependencies = [
+  "web-sys",
+ ]
+ 
++[[package]]
++name = "ring"
++version = "0.17.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
++dependencies = [
++ "cc",
++ "cfg-if",
++ "getrandom 0.2.17",
++ "libc",
++ "untrusted",
++ "windows-sys 0.52.0",
++]
++
+ [[package]]
+ name = "rustc-hash"
+ version = "2.1.3"
+@@ -2509,6 +2974,92 @@ dependencies = [
+  "semver",
+ ]
+ 
++[[package]]
++name = "rustix"
++version = "1.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
++dependencies = [
++ "bitflags 2.13.2",
++ "errno",
++ "libc",
++ "linux-raw-sys",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "rustls"
++version = "0.23.46"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
++dependencies = [
++ "once_cell",
++ "ring",
++ "rustls-pki-types",
++ "rustls-webpki",
++ "subtle",
++ "zeroize",
++]
++
++[[package]]
++name = "rustls-native-certs"
++version = "0.8.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4a073f5dc7469f984c52ad2752b63b0807745133b6de880b7b64c1ac4c48aec4"
++dependencies = [
++ "openssl-probe",
++ "rustls-pki-types",
++ "schannel",
++ "security-framework",
++]
++
++[[package]]
++name = "rustls-pki-types"
++version = "1.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
++dependencies = [
++ "zeroize",
++]
++
++[[package]]
++name = "rustls-platform-verifier"
++version = "0.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1167586491e2b18b8bfbb293e8180ec17c201c4f076d7cb3070ca964e7598f98"
++dependencies = [
++ "core-foundation 0.10.1",
++ "core-foundation-sys",
++ "jni 0.22.4",
++ "log",
++ "once_cell",
++ "rustls",
++ "rustls-native-certs",
++ "rustls-platform-verifier-android",
++ "rustls-webpki",
++ "security-framework",
++ "security-framework-sys",
++ "webpki-root-certs",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "rustls-platform-verifier-android"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
++
++[[package]]
++name = "rustls-webpki"
++version = "0.103.16"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
++dependencies = [
++ "ring",
++ "rustls-pki-types",
++ "untrusted",
++]
++
+ [[package]]
+ name = "rustversion"
+ version = "1.0.23"
+@@ -2524,6 +3075,15 @@ dependencies = [
+  "winapi-util",
+ ]
+ 
++[[package]]
++name = "schannel"
++version = "0.1.30"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9cb23c424d8ee841bb4d813677ca237e2a610067d594fec130f87d6093495ab5"
++dependencies = [
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "schemars"
+ version = "0.8.22"
+@@ -2581,6 +3141,29 @@ version = "1.2.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+ 
++[[package]]
++name = "security-framework"
++version = "3.7.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
++dependencies = [
++ "bitflags 2.13.2",
++ "core-foundation 0.10.1",
++ "core-foundation-sys",
++ "libc",
++ "security-framework-sys",
++]
++
++[[package]]
++name = "security-framework-sys"
++version = "2.17.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
++dependencies = [
++ "core-foundation-sys",
++ "libc",
++]
++
+ [[package]]
+ name = "selectors"
+ version = "0.38.0"
+@@ -2786,12 +3369,38 @@ version = "2.0.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+ 
++[[package]]
++name = "signal-hook-registry"
++version = "1.4.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
++dependencies = [
++ "errno",
++ "libc",
++]
++
+ [[package]]
+ name = "simd-adler32"
+ version = "0.3.10"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
+ 
++[[package]]
++name = "simd_cesu8"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "11031e251abf8611c80f460e19dbdeb54a66db918e49c65a7065b46ac7aec520"
++dependencies = [
++ "rustc_version",
++ "simdutf8",
++]
++
++[[package]]
++name = "simdutf8"
++version = "0.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
++
+ [[package]]
+ name = "siphasher"
+ version = "1.0.4"
+@@ -2910,6 +3519,12 @@ version = "0.11.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+ 
++[[package]]
++name = "subtle"
++version = "2.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
++
+ [[package]]
+ name = "swift-rs"
+ version = "1.0.9"
+@@ -2973,6 +3588,27 @@ dependencies = [
+  "syn 3.0.9",
+ ]
+ 
++[[package]]
++name = "system-configuration"
++version = "0.7.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b"
++dependencies = [
++ "bitflags 2.13.2",
++ "core-foundation 0.9.4",
++ "system-configuration-sys",
++]
++
++[[package]]
++name = "system-configuration-sys"
++version = "0.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
++dependencies = [
++ "core-foundation-sys",
++ "libc",
++]
++
+ [[package]]
+ name = "system-deps"
+ version = "6.2.2"
+@@ -2994,7 +3630,7 @@ checksum = "f37f381f4e048e6cdf038b5705f8cf14ad108279d46eb968140a7b291aba9400"
+ dependencies = [
+  "bitflags 2.13.2",
+  "block2",
+- "core-foundation",
++ "core-foundation 0.10.1",
+  "core-graphics",
+  "crossbeam-channel",
+  "dbus",
+@@ -3004,7 +3640,7 @@ dependencies = [
+  "gdkwayland-sys",
+  "gdkx11-sys",
+  "gtk",
+- "jni",
++ "jni 0.21.1",
+  "libc",
+  "log",
+  "ndk",
+@@ -3037,6 +3673,17 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "tar"
++version = "0.4.46"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
++dependencies = [
++ "filetime",
++ "libc",
++ "xattr",
++]
++
+ [[package]]
+ name = "target-lexicon"
+ version = "0.12.16"
+@@ -3060,7 +3707,7 @@ dependencies = [
+  "gtk",
+  "heck 0.5.0",
+  "http",
+- "jni",
++ "jni 0.21.1",
+  "libc",
+  "log",
+  "mime",
+@@ -3158,6 +3805,88 @@ dependencies = [
+  "tauri-utils",
+ ]
+ 
++[[package]]
++name = "tauri-plugin"
++version = "2.7.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67fb21a77e8f94e8beb3325e583102488659365af0a3948b7ea244c5b779c291"
++dependencies = [
++ "anyhow",
++ "glob",
++ "plist",
++ "schemars 0.8.22",
++ "serde",
++ "serde_json",
++ "tauri-utils",
++ "walkdir",
++]
++
++[[package]]
++name = "tauri-plugin-opener"
++version = "2.7.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "53810be1b4fed22bb6ac3f4cab5a2b80d9391d1af436bda145607532bc0bb219"
++dependencies = [
++ "dunce",
++ "glob",
++ "objc2-app-kit",
++ "objc2-foundation",
++ "open",
++ "schemars 0.8.22",
++ "serde",
++ "serde_json",
++ "tauri",
++ "tauri-plugin",
++ "thiserror 2.0.21",
++ "url",
++ "windows",
++ "zbus",
++]
++
++[[package]]
++name = "tauri-plugin-process"
++version = "2.4.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "74ae3d8549ae564c0397377373e262f340908eb23a5b9fbe03f2a00007dc0038"
++dependencies = [
++ "tauri",
++ "tauri-plugin",
++]
++
++[[package]]
++name = "tauri-plugin-updater"
++version = "2.14.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7259989d4fe11b2bf51f7d671642249b1837c4ae2da1430dc713ae38f98ceeec"
++dependencies = [
++ "base64 0.22.1",
++ "dirs",
++ "flate2",
++ "futures-util",
++ "http",
++ "infer",
++ "libc",
++ "log",
++ "minisign-verify",
++ "osakit",
++ "percent-encoding",
++ "reqwest",
++ "rustls",
++ "semver",
++ "serde",
++ "serde_json",
++ "tar",
++ "tauri",
++ "tauri-plugin",
++ "tempfile",
++ "thiserror 2.0.21",
++ "time",
++ "tokio",
++ "url",
++ "windows-sys 0.61.2",
++ "zip",
++]
++
+ [[package]]
+ name = "tauri-runtime"
+ version = "2.12.2"
+@@ -3168,7 +3897,7 @@ dependencies = [
+  "dpi",
+  "gtk",
+  "http",
+- "jni",
++ "jni 0.21.1",
+  "objc2",
+  "objc2-ui-kit",
+  "objc2-web-kit",
+@@ -3191,7 +3920,7 @@ checksum = "8d61892587aea2a85245bcaec98c6fe46268874c0a0deae5535fb71ca7b93eae"
+ dependencies = [
+  "gtk",
+  "http",
+- "jni",
++ "jni 0.21.1",
+  "log",
+  "objc2",
+  "objc2-app-kit",
+@@ -3258,6 +3987,19 @@ dependencies = [
+  "toml 1.1.8+spec-1.1.0",
+ ]
+ 
++[[package]]
++name = "tempfile"
++version = "3.27.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
++dependencies = [
++ "fastrand",
++ "getrandom 0.4.3",
++ "once_cell",
++ "rustix",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "tendril"
+ version = "0.5.1"
+@@ -3367,6 +4109,16 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "tokio-rustls"
++version = "0.26.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
++dependencies = [
++ "rustls",
++ "tokio",
++]
++
+ [[package]]
+ name = "tokio-util"
+ version = "0.7.20"
+@@ -3528,9 +4280,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+ dependencies = [
+  "pin-project-lite",
++ "tracing-attributes",
+  "tracing-core",
+ ]
+ 
++[[package]]
++name = "tracing-attributes"
++version = "0.1.31"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "tracing-core"
+ version = "0.1.36"
+@@ -3580,6 +4344,17 @@ version = "1.20.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+ 
++[[package]]
++name = "uds_windows"
++version = "1.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
++dependencies = [
++ "memoffset",
++ "tempfile",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "unicode-ident"
+ version = "1.0.27"
+@@ -3592,6 +4367,12 @@ version = "1.13.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
+ 
++[[package]]
++name = "untrusted"
++version = "0.9.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
++
+ [[package]]
+ name = "url"
+ version = "2.5.8"
+@@ -3846,6 +4627,15 @@ dependencies = [
+  "system-deps",
+ ]
+ 
++[[package]]
++name = "webpki-root-certs"
++version = "1.0.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
++dependencies = [
++ "rustls-pki-types",
++]
++
+ [[package]]
+ name = "webview2-com"
+ version = "0.39.1"
+@@ -4010,6 +4800,17 @@ dependencies = [
+  "windows-link",
+ ]
+ 
++[[package]]
++name = "windows-registry"
++version = "0.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
++dependencies = [
++ "windows-link",
++ "windows-result",
++ "windows-strings",
++]
++
+ [[package]]
+ name = "windows-result"
+ version = "0.4.1"
+@@ -4034,7 +4835,16 @@ version = "0.45.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0"
+ dependencies = [
+- "windows-targets",
++ "windows-targets 0.42.2",
++]
++
++[[package]]
++name = "windows-sys"
++version = "0.52.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
++dependencies = [
++ "windows-targets 0.52.6",
+ ]
+ 
+ [[package]]
+@@ -4052,13 +4862,29 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8e5180c00cd44c9b1c88adb3693291f1cd93605ded80c250a75d472756b4d071"
+ dependencies = [
+- "windows_aarch64_gnullvm",
+- "windows_aarch64_msvc",
+- "windows_i686_gnu",
+- "windows_i686_msvc",
+- "windows_x86_64_gnu",
+- "windows_x86_64_gnullvm",
+- "windows_x86_64_msvc",
++ "windows_aarch64_gnullvm 0.42.2",
++ "windows_aarch64_msvc 0.42.2",
++ "windows_i686_gnu 0.42.2",
++ "windows_i686_msvc 0.42.2",
++ "windows_x86_64_gnu 0.42.2",
++ "windows_x86_64_gnullvm 0.42.2",
++ "windows_x86_64_msvc 0.42.2",
++]
++
++[[package]]
++name = "windows-targets"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9b724f72796e036ab90c1021d4780d4d3d648aca59e491e6b98e725b84e99973"
++dependencies = [
++ "windows_aarch64_gnullvm 0.52.6",
++ "windows_aarch64_msvc 0.52.6",
++ "windows_i686_gnu 0.52.6",
++ "windows_i686_gnullvm",
++ "windows_i686_msvc 0.52.6",
++ "windows_x86_64_gnu 0.52.6",
++ "windows_x86_64_gnullvm 0.52.6",
++ "windows_x86_64_msvc 0.52.6",
+ ]
+ 
+ [[package]]
+@@ -4085,42 +4911,90 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "597a5118570b68bc08d8d59125332c54f1ba9d9adeedeef5b99b02ba2b0698f8"
+ 
++[[package]]
++name = "windows_aarch64_gnullvm"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
++
+ [[package]]
+ name = "windows_aarch64_msvc"
+ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e08e8864a60f06ef0d0ff4ba04124db8b0fb3be5776a5cd47641e942e58c4d43"
+ 
++[[package]]
++name = "windows_aarch64_msvc"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
++
+ [[package]]
+ name = "windows_i686_gnu"
+ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c61d927d8da41da96a81f029489353e68739737d3beca43145c8afec9a31a84f"
+ 
++[[package]]
++name = "windows_i686_gnu"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b"
++
++[[package]]
++name = "windows_i686_gnullvm"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66"
++
+ [[package]]
+ name = "windows_i686_msvc"
+ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "44d840b6ec649f480a41c8d80f9c65108b92d89345dd94027bfe06ac444d1060"
+ 
++[[package]]
++name = "windows_i686_msvc"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
++
+ [[package]]
+ name = "windows_x86_64_gnu"
+ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36"
+ 
++[[package]]
++name = "windows_x86_64_gnu"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
++
+ [[package]]
+ name = "windows_x86_64_gnullvm"
+ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3"
+ 
++[[package]]
++name = "windows_x86_64_gnullvm"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
++
+ [[package]]
+ name = "windows_x86_64_msvc"
+ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0"
+ 
++[[package]]
++name = "windows_x86_64_msvc"
++version = "0.52.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
++
+ [[package]]
+ name = "winnow"
+ version = "0.5.40"
+@@ -4179,7 +5053,7 @@ dependencies = [
+  "gtk",
+  "http",
+  "javascriptcore-rs",
+- "jni",
++ "jni 0.21.1",
+  "libc",
+  "ndk",
+  "objc2",
+@@ -4226,6 +5100,16 @@ dependencies = [
+  "pkg-config",
+ ]
+ 
++[[package]]
++name = "xattr"
++version = "1.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
++dependencies = [
++ "libc",
++ "rustix",
++]
++
+ [[package]]
+ name = "yoke"
+ version = "0.8.3"
+@@ -4249,6 +5133,76 @@ dependencies = [
+  "synstructure",
+ ]
+ 
++[[package]]
++name = "zbus"
++version = "5.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5db4be7c075cb421e4b7ee645541604239bd243ba7c357511f4ff3a74b555907"
++dependencies = [
++ "async-broadcast",
++ "async-executor",
++ "async-io",
++ "async-lock",
++ "async-process",
++ "async-recursion",
++ "async-task",
++ "async-trait",
++ "blocking",
++ "enumflags2",
++ "event-listener",
++ "futures-core",
++ "futures-lite",
++ "hex",
++ "libc",
++ "ordered-stream",
++ "rustix",
++ "serde",
++ "serde_repr",
++ "tracing",
++ "uds_windows",
++ "uuid",
++ "windows-sys 0.61.2",
++ "winnow 1.0.4",
++ "zbus_macros",
++ "zbus_names",
++ "zvariant",
++]
++
++[[package]]
++name = "zbus_macros"
++version = "5.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2990635d09ade6df1868f72f8cac69a876a90981e8bd3c40b1be413f8dc88f40"
++dependencies = [
++ "proc-macro-crate 3.5.0",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.9",
++ "zbus_names",
++ "zvariant",
++ "zvariant_utils",
++]
++
++[[package]]
++name = "zbus_names"
++version = "4.3.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "812a12be4ead7a59e18ea8f047d08add0066b73bc62fc1467066a2472ae088dd"
++dependencies = [
++ "serde",
++ "winnow 1.0.4",
++ "zvariant",
++]
++
++[[package]]
++name = "zcheapstr"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d1afec51604565183aeb5c54c20aeab286120d4e4460f7f76e3e8bb8c0d99473"
++dependencies = [
++ "serde",
++]
++
+ [[package]]
+ name = "zerofrom"
+ version = "0.1.8"
+@@ -4270,6 +5224,12 @@ dependencies = [
+  "synstructure",
+ ]
+ 
++[[package]]
++name = "zeroize"
++version = "1.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
++
+ [[package]]
+ name = "zerotrie"
+ version = "0.2.5"
+@@ -4303,6 +5263,18 @@ dependencies = [
+  "syn 3.0.9",
+ ]
+ 
++[[package]]
++name = "zip"
++version = "4.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
++dependencies = [
++ "arbitrary",
++ "crc32fast",
++ "indexmap 2.14.2",
++ "memchr",
++]
++
+ [[package]]
+ name = "zlib-rs"
+ version = "0.6.8"
+@@ -4314,3 +5286,44 @@ name = "zmij"
+ version = "1.0.23"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
++
++[[package]]
++name = "zvariant"
++version = "5.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "80bf6d6cd6a4b601acb64cfb8284cdc643fcfa75ef26ae3c46ec8aa4e8a1fbb7"
++dependencies = [
++ "endi",
++ "enumflags2",
++ "serde",
++ "winnow 1.0.4",
++ "zcheapstr",
++ "zvariant_derive",
++ "zvariant_utils",
++]
++
++[[package]]
++name = "zvariant_derive"
++version = "5.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ef2672456ba1cb54b5eaec136e63135b3c7495fb938e53b28a62e633496d486d"
++dependencies = [
++ "proc-macro-crate 3.5.0",
++ "proc-macro2",
++ "quote",
++ "syn 3.0.9",
++ "zvariant_utils",
++]
++
++[[package]]
++name = "zvariant_utils"
++version = "4.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bad0294361a320b694a328460dc73add56c306150f5cb6bfafc44446120008a3"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "serde",
++ "syn 3.0.9",
++ "winnow 1.0.4",
++]
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 67c4b2b..a1fc77d 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -15,3 +15,9 @@ tauri-build = { version = "2", features = [] }
+ tauri = { version = "2", features = [] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
++tauri-plugin-opener = "2"
++
++# Atualizador automático e reinício: só desktop (no Android o app avisa e abre a página de download)
++[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
++tauri-plugin-updater = "2"
++tauri-plugin-process = "2"
+diff --git a/src-tauri/capabilities/default.json b/src-tauri/capabilities/default.json
+index e54a0a2..0a267a3 100644
+--- a/src-tauri/capabilities/default.json
++++ b/src-tauri/capabilities/default.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "../gen/schemas/desktop-schema.json",
+   "identifier": "default",
+-  "description": "Permissões padrão da janela principal",
++  "description": "Permissões padrão da janela principal (todas as plataformas)",
+   "windows": ["main"],
+-  "permissions": ["core:default"]
++  "permissions": ["core:default", "opener:default"]
+ }
+diff --git a/src-tauri/capabilities/desktop.json b/src-tauri/capabilities/desktop.json
+new file mode 100644
+index 0000000..dfb6533
+--- /dev/null
++++ b/src-tauri/capabilities/desktop.json
+@@ -0,0 +1,8 @@
++{
++  "$schema": "../gen/schemas/desktop-schema.json",
++  "identifier": "desktop",
++  "description": "Atualizador automático (Windows, Linux e macOS)",
++  "platforms": ["linux", "macOS", "windows"],
++  "windows": ["main"],
++  "permissions": ["updater:default", "process:allow-restart"]
++}
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index e26be42..90c7dc9 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -6,7 +6,15 @@ pub fn run() {
+         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+     }
+ 
+-    tauri::Builder::default()
++    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
++
++    // Atualização automática (assinada) e reinício depois de instalar: só desktop.
++    #[cfg(desktop)]
++    let builder = builder
++        .plugin(tauri_plugin_updater::Builder::new().build())
++        .plugin(tauri_plugin_process::init());
++
++    builder
+         .run(tauri::generate_context!())
+         .expect("erro ao iniciar o HM Ideas");
+ }
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index e89bafa..dc50b41 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -32,6 +32,18 @@
+       "icons/128x128@2x.png",
+       "icons/icon.icns",
+       "icons/icon.ico"
+-    ]
++    ],
++    "createUpdaterArtifacts": true
++  },
++  "plugins": {
++    "updater": {
++      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGMzYzMkVERjVDRkIzQzgKUldUSXM4LzE3VEkycjNqcis1V2dCYzZaejdHaUpUMW92Um5Gdnlic2hFcGdFUlNmV0tyTktVWEsK",
++      "endpoints": [
++        "https://github.com/OWNER/REPO/releases/latest/download/latest.json"
++      ],
++      "windows": {
++        "installMode": "passive"
++      }
++    }
+   }
+ }
+diff --git a/src/App.tsx b/src/App.tsx
+index a483913..888234a 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -2,6 +2,9 @@ import { useEffect } from "react";
+ import { CanvasView } from "./components/CanvasView";
+ import { TextEditor } from "./components/TextEditor";
+ import { LabelEditor } from "./components/LabelEditor";
++import { UpdateBanner } from "./components/UpdateBanner";
++import { initAutosave } from "./core/autosave";
++import { initUpdates } from "./core/updater";
+ import { PageNav, Sidebar, Toast } from "./components/Pages";
+ import { Toolbar } from "./components/Toolbar";
+ import {
+@@ -24,6 +27,8 @@ const TOOL_KEYS: Record<string, ToolId> = {
+ 
+ export default function App() {
+   useEffect(() => initPageViewSync(), []);
++  useEffect(() => initAutosave(), []);
++  useEffect(() => initUpdates(), []);
+ 
+   useEffect(() => {
+     const onKey = (e: KeyboardEvent) => {
+@@ -103,6 +108,7 @@ export default function App() {
+       <TextEditor />
+       <LabelEditor />
+       <Toast />
++      <UpdateBanner />
+     </>
+   );
+ }
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index 7e04422..f1379d4 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -11,6 +11,8 @@ import { useUI } from "../core/ui";
+ import { BrushPanel } from "./BrushPanel";
+ import { ColorPicker } from "./ColorPicker";
+ import { MapPanel } from "./MapPanel";
++import { APP_VERSION } from "../core/repo";
++import { checkForUpdates, isTauri } from "../core/updater";
+ 
+ const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
+ const FILLS: { value: string | null; label: string }[] = [
+@@ -87,6 +89,8 @@ export function Toolbar() {
+         <button className="btn text" onClick={() => useView.getState().setCamera(defaultCamera())} title="Voltar para 100%">
+           {Math.round(zoom * 100)}%
+         </button>
++        {!isTauri() && <a className="btn text" href={`${import.meta.env.BASE_URL}download.html`} title="Instalar para Windows, Linux, Android e macOS">Baixar app</a>}
++        <button className="btn text" onClick={() => void checkForUpdates(true)} title="Verificar atualizações">v{APP_VERSION}</button>
+         <button className="btn text" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar</button>
+         <button className="btn text" onClick={() => fileRef.current?.click()}>Abrir</button>
+         <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
+diff --git a/src/components/UpdateBanner.tsx b/src/components/UpdateBanner.tsx
+new file mode 100644
+index 0000000..9f2e5a3
+--- /dev/null
++++ b/src/components/UpdateBanner.tsx
+@@ -0,0 +1,33 @@
++import { dismissUpdate, installUpdate, useUpdate } from "../core/updater";
++
++/** Aviso de nova versão (desktop, Android e site). */
++export function UpdateBanner() {
++  const u = useUpdate();
++  if (u.dismissed || (u.status !== "available" && u.status !== "downloading" && u.status !== "installing")) return null;
++  const busy = u.status !== "available";
++  const label =
++    u.kind === "link" ? "Baixar" : u.kind === "pwa" ? "Recarregar" : "Atualizar";
++  return (
++    <div className="update-banner" role="status" aria-live="polite">
++      <div className="update-text">
++        <strong>{u.version ? `Nova versão ${u.version}` : "Nova versão disponível"}</strong>
++        <span>
++          {u.status === "downloading"
++            ? `Baixando${u.progress != null ? ` ${Math.round(u.progress * 100)}%` : "…"}`
++            : u.status === "installing"
++              ? "Instalando… o app vai reiniciar."
++              : u.kind === "link"
++                ? "Baixe e instale por cima; seus arquivos ficam como estão."
++                : "Seu desenho é guardado automaticamente."}
++        </span>
++        {u.status === "downloading" && <progress className="update-bar" max={1} value={u.progress ?? undefined} />}
++      </div>
++      {!busy && (
++        <>
++          <button className="btn text" onClick={() => void installUpdate()}>{label}</button>
++          <button className="btn text" onClick={dismissUpdate} aria-label="Lembrar depois">Depois</button>
++        </>
++      )}
++    </div>
++  );
++}
+diff --git a/src/core/autosave.ts b/src/core/autosave.ts
+new file mode 100644
+index 0000000..aa5f70c
+--- /dev/null
++++ b/src/core/autosave.ts
+@@ -0,0 +1,85 @@
++// Cópia automática do documento no navegador (IndexedDB): fechar a aba, falta de energia ou uma atualização do app
++// não perdem o desenho. NÃO é o arquivo do usuário (isso continua sendo "Salvar" → .hiraku); é só uma rede de segurança.
++import { parseDoc, serializeDoc } from "./serialize";
++import { useDoc } from "./store";
++import { useUI } from "./ui";
++
++const DB = "hm-ideas";
++const STORE = "kv";
++const KEY = "autosave";
++
++function open(): Promise<IDBDatabase> {
++  return new Promise((res, rej) => {
++    const r = indexedDB.open(DB, 1);
++    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
++    r.onsuccess = () => res(r.result);
++    r.onerror = () => rej(r.error);
++  });
++}
++
++async function put(text: string): Promise<void> {
++  const db = await open();
++  await new Promise<void>((res, rej) => {
++    const tx = db.transaction(STORE, "readwrite");
++    tx.objectStore(STORE).put(text, KEY);
++    tx.oncomplete = () => res();
++    tx.onerror = () => rej(tx.error);
++  });
++  db.close();
++}
++
++async function get(): Promise<string | null> {
++  const db = await open();
++  const v = await new Promise<string | null>((res, rej) => {
++    const rq = db.transaction(STORE).objectStore(STORE).get(KEY);
++    rq.onsuccess = () => res((rq.result as string | undefined) ?? null);
++    rq.onerror = () => rej(rq.error);
++  });
++  db.close();
++  return v;
++}
++
++/** Restaura a sessão anterior (se houver) e passa a guardar as mudanças. Devolve a função que desliga. */
++export function initAutosave(): () => void {
++  if (typeof indexedDB === "undefined") return () => undefined;
++  let off = false;
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  let unsub: (() => void) | undefined;
++
++  const flush = () => {
++    clearTimeout(timer);
++    void put(serializeDoc(useDoc.getState().doc)).catch(() => undefined);
++  };
++  const onHide = () => { if (document.visibilityState === "hidden") flush(); };
++
++  void (async () => {
++    try {
++      const saved = await get();
++      const s = useDoc.getState();
++      const pristine = s.past.length === 0 && s.doc.pages.every((p) => p.elements.length === 0);
++      if (!off && saved && pristine) {
++        const doc = parseDoc(saved);
++        if (doc.pages.some((p) => p.elements.length > 0)) {
++          s.loadDoc(doc);
++          useUI.getState().showToast("Sua sessão anterior foi restaurada.");
++        }
++      }
++    } catch { /* cópia ilegível: segue com o documento em branco */ }
++    if (off) return;
++    unsub = useDoc.subscribe((s, prev) => {
++      if (s.doc === prev.doc) return;
++      clearTimeout(timer);
++      timer = setTimeout(flush, 1200);
++    });
++    document.addEventListener("visibilitychange", onHide);
++    window.addEventListener("pagehide", flush);
++  })();
++
++  return () => {
++    off = true;
++    clearTimeout(timer);
++    unsub?.();
++    document.removeEventListener("visibilitychange", onHide);
++    window.removeEventListener("pagehide", flush);
++  };
++}
+diff --git a/src/core/repo.test.ts b/src/core/repo.test.ts
+new file mode 100644
+index 0000000..5ec5128
+--- /dev/null
++++ b/src/core/repo.test.ts
+@@ -0,0 +1,34 @@
++import { describe, expect, it } from "vitest";
++import { classifyAssets, compareVersions, releasesRepo } from "./repo";
++
++describe("repositório de releases", () => {
++  it("deduz dono/repo do GitHub Pages", () => {
++    expect(releasesRepo({ hostname: "ana.github.io", pathname: "/hm-ideas/download.html" })).toBe("ana/hm-ideas");
++    expect(releasesRepo({ hostname: "ana.github.io", pathname: "/" })).toBe("ana/ana.github.io");
++    expect(releasesRepo({ hostname: "ana.github.io", pathname: "/download.html" })).toBe("ana/ana.github.io");
++    expect(releasesRepo({ hostname: "localhost", pathname: "/" })).toBeNull();
++  });
++});
++
++describe("versões", () => {
++  it("compara x.y.z", () => {
++    expect(compareVersions("0.3.0", "0.2.9")).toBeGreaterThan(0);
++    expect(compareVersions("v1.0.0", "1.0.0")).toBe(0);
++    expect(compareVersions("0.10.0", "0.9.0")).toBeGreaterThan(0);
++    expect(compareVersions("0.2.0", "0.2.1")).toBeLessThan(0);
++  });
++});
++
++describe("arquivos da release", () => {
++  const mk = (name: string) => ({ name, url: "u/" + name, size: 1 });
++  it("separa por sistema e ignora assinaturas/latest.json", () => {
++    const d = classifyAssets([
++      "HM.Ideas_1.0.0_x64-setup.exe", "HM.Ideas_1.0.0_x64-setup.exe.sig", "HM.Ideas_1.0.0_x64_en-US.msi",
++      "HM.Ideas_1.0.0_amd64.AppImage", "HM.Ideas_1.0.0_amd64.deb", "HM.Ideas-1.0.0-1.x86_64.rpm",
++      "HM.Ideas_1.0.0_universal.dmg", "HM.Ideas.app.tar.gz", "HM-Ideas_1.0.0.apk", "latest.json",
++    ].map(mk));
++    expect(d.map((x) => x.platform).sort()).toEqual(["android", "linux", "linux", "linux", "macos", "windows", "windows"]);
++    expect(d.find((x) => x.kind === "exe")!.primary).toBe(true);
++    expect(d.find((x) => x.kind === "msi")!.primary).toBe(false);
++  });
++});
+diff --git a/src/core/repo.ts b/src/core/repo.ts
+new file mode 100644
+index 0000000..d6f1ca4
+--- /dev/null
++++ b/src/core/repo.ts
+@@ -0,0 +1,75 @@
++// Em qual repositório do GitHub estão as versões (releases)? Usado pela página de download e pelo aviso de atualização.
++// Ordem: variável VITE_GH_REPO (definida no build pelo workflow) → deduzido do endereço do GitHub Pages (dono.github.io/repo).
++
++/** "dono/repositório" ou null se não der para saber. */
++export function releasesRepo(loc: Pick<Location, "hostname" | "pathname"> = window.location): string | null {
++  const env = (import.meta.env.VITE_GH_REPO as string | undefined)?.trim();
++  if (env && /^[\w.-]+\/[\w.-]+$/.test(env)) return env;
++  const m = /^([\w-]+)\.github\.io$/i.exec(loc.hostname);
++  if (!m) return null;
++  const first = loc.pathname.split("/").filter(Boolean)[0];
++  return `${m[1]}/${first && !/\.\w+$/.test(first) ? first : `${m[1]}.github.io`}`;
++}
++
++export const APP_VERSION: string = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
++
++/** Compara versões x.y.z (ignora o sufixo -beta). >0 se a > b. */
++export function compareVersions(a: string, b: string): number {
++  const pa = a.replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
++  const pb = b.replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
++  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
++  return 0;
++}
++
++export interface ReleaseAsset { name: string; url: string; size: number }
++export interface Release { version: string; name: string; date: string; page: string; notes: string; assets: ReleaseAsset[] }
++
++/** Última versão publicada no GitHub (null se não houver nenhuma ou se a rede falhar). */
++export async function fetchLatestRelease(repo: string): Promise<Release | null> {
++  try {
++    const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
++    if (!r.ok) return null;
++    const j = await r.json();
++    return {
++      version: String(j.tag_name ?? "").replace(/^v/, ""),
++      name: String(j.name ?? j.tag_name ?? ""),
++      date: String(j.published_at ?? ""),
++      page: String(j.html_url ?? `https://github.com/${repo}/releases`),
++      notes: String(j.body ?? ""),
++      assets: ((j.assets ?? []) as { name: string; browser_download_url: string; size: number }[]).map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })),
++    };
++  } catch {
++    return null;
++  }
++}
++
++export type Platform = "windows" | "linux" | "macos" | "android";
++export interface Download { platform: Platform; label: string; kind: string; arch: string; asset: ReleaseAsset; primary: boolean }
++
++/** Separa os arquivos da release por sistema; ignora assinaturas, latest.json e pacotes do atualizador. */
++export function classifyAssets(assets: ReleaseAsset[]): Download[] {
++  const out: Download[] = [];
++  for (const a of assets) {
++    const n = a.name.toLowerCase();
++    const arch = /aarch64|arm64/.test(n) ? "ARM64" : /universal/.test(n) ? "Universal" : /x86_64|x64|amd64/.test(n) ? "64 bits" : "";
++    let d: Omit<Download, "asset" | "arch"> | null = null;
++    if (n.endsWith(".exe")) d = { platform: "windows", label: "Instalador (.exe)", kind: "exe", primary: true };
++    else if (n.endsWith(".msi")) d = { platform: "windows", label: "Pacote MSI", kind: "msi", primary: false };
++    else if (n.endsWith(".appimage")) d = { platform: "linux", label: "AppImage (qualquer distro)", kind: "appimage", primary: true };
++    else if (n.endsWith(".deb")) d = { platform: "linux", label: "Debian / Ubuntu (.deb)", kind: "deb", primary: false };
++    else if (n.endsWith(".rpm")) d = { platform: "linux", label: "Fedora / openSUSE (.rpm)", kind: "rpm", primary: false };
++    else if (n.endsWith(".dmg")) d = { platform: "macos", label: "Imagem de disco (.dmg)", kind: "dmg", primary: true };
++    else if (n.endsWith(".apk")) d = { platform: "android", label: "APK (instalar direto)", kind: "apk", primary: true };
++    if (d) out.push({ ...d, arch, asset: a });
++  }
++  return out;
++}
++
++export function detectPlatform(ua = navigator.userAgent): Platform | "ios" | "other" {
++  if (/android/i.test(ua)) return "android";
++  if (/iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return "ios";
++  if (/windows/i.test(ua)) return "windows";
++  if (/mac os x|macintosh/i.test(ua)) return "macos";
++  if (/linux|x11|cros/i.test(ua)) return "linux";
++  return "other";
++}
+diff --git a/src/core/updater.ts b/src/core/updater.ts
+new file mode 100644
+index 0000000..26febbb
+--- /dev/null
++++ b/src/core/updater.ts
+@@ -0,0 +1,131 @@
++// Atualização automática, nos três ambientes:
++//  • Desktop (Tauri): plugin updater do Tauri — baixa o pacote ASSINADO do GitHub Releases, instala e reinicia.
++//  • Android (Tauri): a loja não é usada; o app compara a versão com a última release e oferece baixar o APK novo.
++//  • Site/PWA: o service worker traz a versão nova; o aviso pede um clique para recarregar (nada recarrega sozinho).
++// O desenho é guardado por core/autosave.ts, então atualizar não perde nada.
++import { create } from "zustand";
++import { APP_VERSION, compareVersions, fetchLatestRelease, releasesRepo } from "./repo";
++import { useUI } from "./ui";
++
++export type UpdateKind = "desktop" | "link" | "pwa";
++export interface UpdateState {
++  status: "idle" | "checking" | "available" | "downloading" | "installing" | "error";
++  kind: UpdateKind | null;
++  version: string | null;
++  notes: string;
++  /** 0..1 durante o download (null = desconhecido). */
++  progress: number | null;
++  /** Para kind "link": endereço do download. */
++  url: string | null;
++  error: string | null;
++  dismissed: boolean;
++}
++
++export const useUpdate = create<UpdateState>(() => ({
++  status: "idle", kind: null, version: null, notes: "", progress: null, url: null, error: null, dismissed: false,
++}));
++const set = (p: Partial<UpdateState>) => useUpdate.setState(p);
++
++export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
++const isAndroid = () => /android/i.test(navigator.userAgent);
++
++// referência ao objeto de atualização do plugin (tem downloadAndInstall) e à função do service worker
++let desktopUpdate: { version: string; body?: string | null; downloadAndInstall: (cb?: (e: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => void) => Promise<void> } | null = null;
++let applyPwa: ((reload?: boolean) => Promise<void>) | null = null;
++let swRegistration: ServiceWorkerRegistration | undefined;
++
++/** Procura atualização agora. `manual`: avisa também quando não há nada novo. */
++export async function checkForUpdates(manual = false): Promise<void> {
++  const cur = useUpdate.getState();
++  if (cur.status === "checking" || cur.status === "downloading" || cur.status === "installing") return;
++  const toast = (m: string) => manual && useUI.getState().showToast(m);
++  try {
++    if (isTauri() && !isAndroid()) {
++      set({ status: "checking", error: null });
++      const { check } = await import("@tauri-apps/plugin-updater");
++      const u = await check();
++      if (!u) { set({ status: "idle" }); toast(`Você já está na versão mais recente (${APP_VERSION}).`); return; }
++      desktopUpdate = u as unknown as typeof desktopUpdate;
++      set({ status: "available", kind: "desktop", version: u.version, notes: u.body ?? "", dismissed: false });
++    } else if (isTauri()) {
++      set({ status: "checking", error: null });
++      await checkLink(manual);
++    } else if (swRegistration) {
++      set({ status: "checking" });
++      await swRegistration.update(); // se houver versão nova, o registerSW chama onNeedRefresh
++      if (useUpdate.getState().status === "checking") { set({ status: "idle" }); toast(`Você já está na versão mais recente (${APP_VERSION}).`); }
++    }
++  } catch (e) {
++    set({ status: "idle" });
++    if (manual) useUI.getState().showToast("Não consegui verificar atualizações agora.");
++    console.warn("update check failed", e);
++  }
++}
++
++/** Android / Linux .deb: compara com a última release do GitHub. */
++async function checkLink(manual: boolean) {
++  const repo = releasesRepo();
++  const rel = repo ? await fetchLatestRelease(repo) : null;
++  if (!rel || compareVersions(rel.version, APP_VERSION) <= 0) {
++    set({ status: "idle" });
++    if (manual) useUI.getState().showToast(`Você já está na versão mais recente (${APP_VERSION}).`);
++    return;
++  }
++  const apk = rel.assets.find((a) => a.name.toLowerCase().endsWith(".apk"));
++  set({ status: "available", kind: "link", version: rel.version, notes: rel.notes, url: apk?.url ?? rel.page, dismissed: false });
++}
++
++/** Botão "Atualizar" do aviso. */
++export async function installUpdate(): Promise<void> {
++  const s = useUpdate.getState();
++  try {
++    if (s.kind === "desktop" && desktopUpdate) {
++      set({ status: "downloading", progress: null, error: null });
++      let total = 0, got = 0;
++      await desktopUpdate.downloadAndInstall((e) => {
++        if (e.event === "Started") total = e.data?.contentLength ?? 0;
++        else if (e.event === "Progress") { got += e.data?.chunkLength ?? 0; set({ progress: total ? Math.min(1, got / total) : null }); }
++        else if (e.event === "Finished") set({ status: "installing", progress: 1 });
++      });
++      const { relaunch } = await import("@tauri-apps/plugin-process");
++      await relaunch();
++    } else if (s.kind === "link" && s.url) {
++      const { openUrl } = await import("@tauri-apps/plugin-opener");
++      await openUrl(s.url);
++    } else if (s.kind === "pwa" && applyPwa) {
++      set({ status: "installing" });
++      await applyPwa(true);
++    }
++  } catch (e) {
++    // .deb/.rpm não se atualizam sozinhos: cai para a página de download
++    const repo = releasesRepo();
++    set({ status: "available", kind: "link", url: repo ? `https://github.com/${repo}/releases/latest` : null, error: e instanceof Error ? e.message : String(e) });
++  }
++}
++
++export const dismissUpdate = () => set({ dismissed: true });
++
++const SIX_HOURS = 6 * 3600 * 1000;
++
++/** Liga a verificação automática (ao abrir e a cada 6 h). Devolve a função que desliga. */
++export function initUpdates(): () => void {
++  let timer: ReturnType<typeof setInterval> | undefined;
++  let first: ReturnType<typeof setTimeout> | undefined;
++  let off = false;
++
++  if (isTauri()) {
++    first = setTimeout(() => void checkForUpdates(), 8000); // não disputa com a abertura do app
++    timer = setInterval(() => void checkForUpdates(), SIX_HOURS);
++  } else if ("serviceWorker" in navigator) {
++    void import("virtual:pwa-register").then(({ registerSW }) => {
++      if (off) return;
++      applyPwa = registerSW({
++        immediate: true,
++        onNeedRefresh() { set({ status: "available", kind: "pwa", version: null, dismissed: false }); },
++        onRegisteredSW(_url, reg) { swRegistration = reg; },
++      });
++      timer = setInterval(() => void swRegistration?.update(), SIX_HOURS / 6);
++    }).catch(() => undefined);
++  }
++  return () => { off = true; clearTimeout(first); clearInterval(timer); };
++}
+diff --git a/src/site/download.ts b/src/site/download.ts
+new file mode 100644
+index 0000000..fc8418e
+--- /dev/null
++++ b/src/site/download.ts
+@@ -0,0 +1,48 @@
++// Página de download: lê a última release do GitHub e mostra o instalador certo para o sistema de quem abriu.
++import { Download, Platform, Release, classifyAssets, detectPlatform, fetchLatestRelease, releasesRepo } from "../core/repo";
++
++const $ = (id: string) => document.getElementById(id)!;
++const NAMES: Record<Platform, string> = { windows: "Windows", linux: "Linux", macos: "macOS", android: "Android" };
++const ORDER: Platform[] = ["windows", "linux", "android", "macos"];
++
++const mb = (n: number) => `${(n / 1048576).toFixed(n > 10485760 ? 0 : 1)} MB`;
++const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
++
++function card(p: Platform, items: Download[], me: boolean): string {
++  const rows = items
++    .sort((a, b) => Number(b.primary) - Number(a.primary))
++    .map((d) => `<a class="dl" href="${esc(d.asset.url)}" download><span>${esc(d.label)}${d.arch ? ` · ${esc(d.arch)}` : ""}</span><small>${mb(d.asset.size)}</small></a>`)
++    .join("");
++  return `<article class="card${me ? " me" : ""}"><h3>${NAMES[p]}${me ? " · seu sistema" : ""}</h3>${rows || `<p class="empty">Em breve.</p>`}</article>`;
++}
++
++function render(rel: Release | null, repo: string | null) {
++  const me = detectPlatform();
++  const hero = { title: $("hero-title"), sub: $("hero-sub"), cta: $("hero-cta") as HTMLAnchorElement };
++  const downloads = rel ? classifyAssets(rel.assets) : [];
++  const by = (p: Platform) => downloads.filter((d) => d.platform === p);
++
++  if (!rel || !downloads.length) {
++    hero.title.textContent = "Use agora no navegador";
++    hero.sub.textContent = repo
++      ? "Os instaladores aparecem aqui assim que a primeira versão for publicada."
++      : "Os instaladores aparecem aqui quando o endereço do repositório for configurado.";
++    $("grid").innerHTML = "";
++  } else {
++    const mine = me === "ios" || me === "other" ? null : by(me).sort((a, b) => Number(b.primary) - Number(a.primary))[0] ?? null;
++    hero.title.textContent = mine ? `Baixar para ${NAMES[mine.platform]}` : `Versão ${rel.version}`;
++    hero.sub.textContent = mine
++      ? `Versão ${rel.version} · ${mine.label}${mine.arch ? " · " + mine.arch : ""} · ${mb(mine.asset.size)}`
++      : me === "ios" ? "No iPhone/iPad: abra no Safari e use Compartilhar → Adicionar à Tela de Início." : `Versão ${rel.version} — escolha o seu sistema abaixo.`;
++    if (mine) { hero.cta.textContent = "Baixar"; hero.cta.href = mine.asset.url; }
++    $("grid").innerHTML = ORDER.map((p) => card(p, by(p), p === me)).join("")
++      + `<article class="card"><h3>Navegador</h3><a class="dl" href="./"><span>Abrir o HM Ideas</span><small>sem instalar</small></a><p>Funciona offline depois da primeira visita e se atualiza sozinho.</p></article>`;
++  }
++  $("footer").innerHTML = rel
++    ? `Versão ${esc(rel.version)}${rel.date ? " · " + new Date(rel.date).toLocaleDateString("pt-BR") : ""} · <a href="${esc(rel.page)}">notas da versão e todos os arquivos</a>`
++    : repo ? `<a href="https://github.com/${esc(repo)}/releases">Ver releases no GitHub</a>` : "";
++}
++
++const repo = releasesRepo();
++render(null, repo);
++if (repo) void fetchLatestRelease(repo).then((r) => render(r, repo));
+diff --git a/src/styles.css b/src/styles.css
+index 6bb25c7..56902d4 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -374,3 +374,13 @@ body[data-sidebar="open"] { --side: 256px; }
+ .mappanel { max-height: min(78vh, 640px); overflow-y: auto; }
+ .mappanel .rowlabel { min-width: 52px; }
+ .outline-in { width: 100%; box-sizing: border-box; font: 13px/1.4 ui-monospace, monospace; border: 1px solid #c9ced8; border-radius: 6px; padding: 6px; resize: vertical; }
++
++/* ---- aviso de atualização ---- */
++.update-banner {
++  position: fixed; z-index: 60; top: 14px; left: 50%; transform: translateX(-50%);
++  display: flex; align-items: center; gap: 10px; max-width: min(92vw, 520px);
++  padding: 8px 10px 8px 16px; background: #fff; border-radius: 14px; box-shadow: 0 6px 24px rgba(27, 34, 51, .22);
++}
++.update-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
++.update-text span { color: #5E6B7E; }
++.update-bar { width: 100%; height: 6px; }
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+new file mode 100644
+index 0000000..554581f
+--- /dev/null
++++ b/src/vite-env.d.ts
+@@ -0,0 +1,5 @@
++/// <reference types="vite/client" />
++/// <reference types="vite-plugin-pwa/client" />
++
++/** Versão do app (package.json), injetada pelo Vite. */
++declare const __APP_VERSION__: string;
+diff --git a/vite.config.ts b/vite.config.ts
+index d4e71d4..d61c5dc 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -1,3 +1,5 @@
++import { readFileSync } from "node:fs";
++import { resolve } from "node:path";
+ import { defineConfig } from "vite";
+ import react from "@vitejs/plugin-react";
+ import { VitePWA } from "vite-plugin-pwa";
+@@ -5,29 +7,37 @@ import { VitePWA } from "vite-plugin-pwa";
+ // Definido pelo Tauri em `tauri dev` / `tauri build` (e no Android via TAURI_DEV_HOST).
+ const host = process.env.TAURI_DEV_HOST;
+ const insideTauri = !!process.env.TAURI_ENV_PLATFORM;
++const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+ 
+ export default defineConfig({
++  // Site no GitHub Pages: o workflow define VITE_BASE=/repositorio/. No Tauri e no dev fica "/".
++  base: process.env.VITE_BASE || "/",
++  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+   plugins: [
+     react(),
+-    // PWA só na versão web (para testar no iPad sem Mac). Dentro do Tauri fica desligado.
+-    !insideTauri &&
+-      VitePWA({
+-        registerType: "autoUpdate",
+-        manifest: {
+-          name: "HM Ideas",
+-          short_name: "HM Ideas",
+-          description: "Hiraku Manager Ideas: quadro branco e caderno de anotações com caneta.",
+-          display: "standalone",
+-          orientation: "any",
+-          background_color: "#EDF0F4",
+-          theme_color: "#EDF0F4",
+-          icons: [
+-            { src: "pwa-192.png", sizes: "192x192", type: "image/png" },
+-            { src: "pwa-512.png", sizes: "512x512", type: "image/png" },
+-            { src: "pwa-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+-          ],
+-        },
+-      }),
++    // PWA só na versão web (instalável no iPad/Android/PC). Dentro do Tauri fica desligado (o módulo virtual vira um no-op).
++    // "prompt": a versão nova NUNCA recarrega a página sozinha; o aviso do app pede o clique.
++    VitePWA({
++      disable: insideTauri,
++      registerType: "prompt",
++      injectRegister: false,
++      includeAssets: ["icon.svg"],
++      workbox: { navigateFallbackDenylist: [/download\.html$/] },
++      manifest: {
++        name: "HM Ideas",
++        short_name: "HM Ideas",
++        description: "Hiraku Manager Ideas: quadro branco, mapas mentais e caderno de anotações com caneta.",
++        display: "standalone",
++        orientation: "any",
++        background_color: "#EDF0F4",
++        theme_color: "#EDF0F4",
++        icons: [
++          { src: "pwa-192.png", sizes: "192x192", type: "image/png" },
++          { src: "pwa-512.png", sizes: "512x512", type: "image/png" },
++          { src: "pwa-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
++        ],
++      },
++    }),
+   ],
+   clearScreen: false,
+   server: {
+@@ -37,5 +47,8 @@ export default defineConfig({
+     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+     watch: { ignored: ["**/src-tauri/**"] },
+   },
+-  build: { target: "es2022" },
++  build: {
++    target: "es2022",
++    rollupOptions: { input: { main: resolve(__dirname, "index.html"), download: resolve(__dirname, "download.html") } },
++  },
+ });
+-- 
+2.43.0
+

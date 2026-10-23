@@ -1,4 +1,4 @@
-import { HirakuElement, StrokeElement, isLinear } from "./model";
+import { FrameElement, HirakuElement, StrokeElement, isLinear } from "./model";
 import { linearPath } from "./linear";
 import { outlinePath, pointInPolygon, shapePath } from "./shapes";
 
@@ -46,6 +46,8 @@ export function strokeHit(el: StrokeElement, x: number, y: number, r: number): b
 /** O círculo (x, y, r) toca o elemento? Traço: pelo eixo. Forma: pelo contorno ou, se preenchida, pelo interior. */
 export function elementHit(el: HirakuElement, x: number, y: number, r: number): boolean {
   if (el.type === "stroke") return strokeHit(el, x, y, r);
+  if (el.type === "node") return !el.hidden && pointInPolygon(x, y, shapePath(el)) || (!el.hidden && nearPolygon(shapePath(el), x, y, r));
+  if (el.type === "frame") return frameHit(el, x, y, r);
 
   if (isLinear(el)) {
     const lr = r + el.strokeWidth / 2;
@@ -78,4 +80,31 @@ export function elementHit(el: HirakuElement, x: number, y: number, r: number): 
     if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= reach) return true;
   }
   return el.fill !== null && pointInPolygon(x, y, pts);
+}
+
+function nearPolygon(poly: { x: number; y: number }[], x: number, y: number, r: number): boolean {
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= r) return true;
+  }
+  return false;
+}
+
+/** Altura (mundo) da faixa do título acima do quadro. */
+export const FRAME_TITLE_H = 22;
+
+/** Quadro só é "tocado" pelo contorno ou pela faixa do título; o miolo deixa passar o clique para o que está dentro. */
+function frameHit(el: FrameElement, x: number, y: number, r: number): boolean {
+  const reach = r + 4;
+  const inX = x >= el.x - reach && x <= el.x + el.w + reach;
+  const inY = y >= el.y - reach && y <= el.y + el.h + reach;
+  if (!inX || !inY) {
+    // faixa do título (acima do canto superior esquerdo)
+    const tw = Math.min(el.w, Math.max(60, el.title.length * 8 + 16));
+    return x >= el.x && x <= el.x + tw && y >= el.y - FRAME_TITLE_H - reach && y <= el.y;
+  }
+  const nearEdge = x - el.x <= reach || el.x + el.w - x <= reach || y - el.y <= reach || el.y + el.h - y <= reach;
+  if (nearEdge) return true;
+  const tw = Math.min(el.w, Math.max(60, el.title.length * 8 + 16));
+  return x >= el.x && x <= el.x + tw && y >= el.y - FRAME_TITLE_H && y <= el.y;
 }

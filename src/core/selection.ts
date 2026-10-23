@@ -47,10 +47,16 @@ export function applyXform(el: HirakuElement, x: Xform): HirakuElement {
     const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
     return { ...el, fontSize: size, w: el.w * r, h: el.h * r, x: c.x - (el.w * r) / 2, y: c.y - (el.h * r) / 2, angle: el.angle + x.dAngle };
   }
+  if (el.type === "node") {
+    // Nós só mudam de lugar: tamanho vem do texto e a posição final vem do layout automático.
+    const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
+    return { ...el, x: c.x - el.w / 2, y: c.y - el.h / 2 };
+  }
   const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
   const w = el.w * Math.abs(x.sx);
   const h = el.h * Math.abs(x.sy);
-  return { ...el, x: c.x - w / 2, y: c.y - h / 2, w, h, angle: el.angle + x.dAngle };
+  // Quadros não giram (o conteúdo não acompanharia); formas giram normalmente.
+  return { ...el, x: c.x - w / 2, y: c.y - h / 2, w, h, angle: el.type === "frame" ? 0 : el.angle + x.dAngle };
 }
 
 // ---------- limites ----------
@@ -94,7 +100,7 @@ export function selectionFrame(els: HirakuElement[]): Frame | null {
   // Uma linha/seta sozinha não tem quadro: ela é editada ponto a ponto.
   if (els.length === 1) {
     const e = els[0];
-    if (isLinear(e)) return null;
+    if (isLinear(e) || e.type === "node") return null; // nó sozinho: sem alças (tamanho vem do texto)
     if (e.type !== "stroke") return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
   }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -207,6 +213,8 @@ export function boxSelect(els: HirakuElement[], a: Pt, b: Pt): string[] {
   const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
   return els
     .filter((el) => {
+      if (el.type === "node" && el.hidden) return false;
+      if (el.type === "frame") return false; // quadros se pegam pelo título/contorno, não pela caixa
       const e = elementBounds(el);
       return e.minX >= minX && e.maxX <= maxX && e.minY >= minY && e.maxY <= maxY;
     })
@@ -247,6 +255,7 @@ export function lassoSelect(els: HirakuElement[], poly: Pt[], mode: "inside" | "
   const ids: string[] = [];
 
   for (const el of els) {
+    if ((el.type === "node" && el.hidden) || el.type === "frame") continue;
     const b = elementBounds(el);
     if (mode === "inside") {
       if (b.minX < minX || b.maxX > maxX || b.minY < minY || b.maxY > maxY) continue;

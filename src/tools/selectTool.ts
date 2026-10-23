@@ -14,6 +14,9 @@ import {
 import { Pt, outlinePath } from "../core/shapes";
 import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { beginEditText, beginNewText } from "../core/textEdit";
+import { beginLabel, settleMoved } from "../core/mapActions";
+import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
+import { settleFrames } from "../core/frames";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
@@ -47,7 +50,7 @@ export function createSelectController(renderer: Renderer) {
   ): SelectionUI => ({
     bindHint: hint,
     frame: selectionFrame(els),
-    outlines: els.length > 1 ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
+    outlines: els.length > 1 || (els.length === 1 && els[0].type === "node") ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
     marquee,
     lineEdit: els.length === 1 && isLinear(els[0]) ? { points: els[0].points } : null,
   });
@@ -118,6 +121,21 @@ export function createSelectController(renderer: Renderer) {
       const dbl = !lasso && !!lastTap && now - lastTap.t < 380 && Math.hypot(s.x - lastTap.x, s.y - lastTap.y) < 8;
       lastTap = { t: now, x: s.x, y: s.y };
 
+      // -1) bolinha de "recolhido" de um nó: clique expande
+      {
+        const all = page().elements;
+        const ch = childrenMap(all);
+        for (const n of all) {
+          if (n.type !== "node" || !n.collapsed || n.hidden || !(ch.get(n.id)?.length)) continue;
+          const bc = badgeCenter(n, rootOf(all, n.id));
+          if (Math.hypot(P.x - bc.x, P.y - bc.y) <= (touchy ? 16 : 12) / c.zoom) {
+            lastTap = null;
+            useDoc.getState().replaceElements(toggleCollapse(all, n.id, false));
+            return;
+          }
+        }
+      }
+
       // 0) linha/seta sozinha: editar pontos
       const lone = sel.length === 1 && isLinear(sel[0]) ? sel[0] : null;
       if (lone) {
@@ -158,16 +176,20 @@ export function createSelectController(renderer: Renderer) {
       }
 
       const beginMove = (candidate: string | null) => {
-        g = { kind: "move", startP: P, startS: { x: s.x, y: s.y }, orig: selectedEls(), next: [], extra: [], moved: false, candidate };
+        // nós levam o ramo; quadros levam o conteúdo
+        const all = page().elements;
+        const set = withDependents(all, useSel.getState().ids);
+        g = { kind: "move", startP: P, startS: { x: s.x, y: s.y }, orig: all.filter((e) => set.has(e.id)), next: [], extra: [], moved: false, candidate };
       };
 
       // 2) Selecionar: clique num elemento
       if (!lasso) {
         const hit = topHit(P, hitTol);
         if (hit) {
-          if (dbl && hit.type === "text") {
+          if (dbl && (hit.type === "text" || hit.type === "node" || hit.type === "frame")) {
             lastTap = null;
-            beginEditText(hit);
+            if (hit.type === "text") beginEditText(hit);
+            else { useSel.getState().set([hit.id]); beginLabel(hit.id); }
             return;
           }
           const ids = useSel.getState().ids;
@@ -283,7 +305,18 @@ export function createSelectController(renderer: Renderer) {
       if (!done) return;
 
       if (done.kind === "move" || done.kind === "resize" || done.kind === "rotate") {
-        if (done.moved) useDoc.getState().updateElements(detachForeign(done.next));
+        if (done.moved) {
+          const nxt = detachForeign(done.next);
+          const hasFrames = page().elements.some((e) => e.type === "frame");
+          const special = hasFrames || nxt.some((e) => e.type === "node" || e.type === "frame");
+          if (!special || done.kind === "rotate") useDoc.getState().updateElements(nxt);
+          else if (done.kind === "move") useDoc.getState().replaceElements(settleMoved(nxt, nxt.map((e) => e.id)));
+          else {
+            const byId = new Map(nxt.map((e) => [e.id, e]));
+            const all = page().elements.map((e) => byId.get(e.id) ?? e);
+            useDoc.getState().replaceElements(settleFrames(all, all.map((e) => e.id)));
+          }
+        }
         else if (done.kind === "move" && done.candidate) useSel.getState().set([done.candidate]);
       } else if (done.kind === "vertex") {
         if (done.next) useDoc.getState().updateElements([done.next]);

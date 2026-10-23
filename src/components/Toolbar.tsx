@@ -10,6 +10,9 @@ import { FONTS, FONT_SIZES } from "../core/text";
 import { useUI } from "../core/ui";
 import { BrushPanel } from "./BrushPanel";
 import { ColorPicker } from "./ColorPicker";
+import { MapPanel } from "./MapPanel";
+import { APP_VERSION } from "../core/repo";
+import { checkForUpdates, isTauri } from "../core/updater";
 
 const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
 const FILLS: { value: string | null; label: string }[] = [
@@ -32,7 +35,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
-type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser";
+type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map";
 
 export function Toolbar() {
   const t = useTool();
@@ -75,7 +78,7 @@ export function Toolbar() {
   const sizeStep = erasing ? 2 : 0.5;
   const sizeValue = erasing ? t.eraserSize : t.width;
   const toolBtn = (id: ToolId, label: string, icon: ReactNode, hint = label) => (
-    <button className={t.tool === id ? "btn on" : "btn"} onClick={() => t.setTool(id)} aria-label={label} aria-pressed={t.tool === id} title={hint}>
+    <button key={id} className={t.tool === id ? "btn on" : "btn"} onClick={() => t.setTool(id)} aria-label={label} aria-pressed={t.tool === id} title={hint}>
       <Icon>{icon}</Icon>
     </button>
   );
@@ -86,6 +89,8 @@ export function Toolbar() {
         <button className="btn text" onClick={() => useView.getState().setCamera(defaultCamera())} title="Voltar para 100%">
           {Math.round(zoom * 100)}%
         </button>
+        {!isTauri() && <a className="btn text" href={`${import.meta.env.BASE_URL}download.html`} title="Instalar para Windows, Linux, Android e macOS">Baixar app</a>}
+        <button className="btn text" onClick={() => void checkForUpdates(true)} title="Verificar atualizações">v{APP_VERSION}</button>
         <button className="btn text" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar</button>
         <button className="btn text" onClick={() => fileRef.current?.click()}>Abrir</button>
         <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
@@ -110,6 +115,7 @@ export function Toolbar() {
         )}
 
         {panel === "brush" && <BrushPanel />}
+        {panel === "map" && <MapPanel />}
 
         {panel === "eraser" && (
           <div className="panel" role="dialog" aria-label="Borracha">
@@ -264,6 +270,7 @@ export function Toolbar() {
         {selCount > 0 && (
           <div className="toolbar selbar" role="toolbar" aria-label="Ações da seleção">
             <span className="count">{selCount} {selCount === 1 ? "selecionado" : "selecionados"}</span>
+            <button className="btn text" onClick={() => toggle("map")}>Mapa…</button>
             <button className="btn text" onClick={duplicateSelection}>Duplicar</button>
             <button className="btn text danger" onClick={deleteSelection}>Apagar</button>
             <button className="btn text" onClick={() => useSel.getState().clear()}>Desmarcar</button>
@@ -305,6 +312,14 @@ export function Toolbar() {
             {toolBtn("arrow", "Seta", <><path d="M5 19L19 5" /><path d="M10 5h9v9" /></>, "Seta (A ou 5)")}
             {toolBtn("line", "Linha", <path d="M5 19L19 5" />, "Linha (6)")}
             <button className={panel === "shape" ? "btn on" : "btn"} onClick={() => toggle("shape")} aria-expanded={panel === "shape"} aria-label="Estilo das formas" title="Estilo das formas">
+              <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+            </button>
+          </div>
+
+          <div className="group">
+            {toolBtn("mindmap", "Mapa mental", <><circle cx="12" cy="12" r="2.5" /><circle cx="5" cy="6" r="1.8" /><circle cx="5" cy="18" r="1.8" /><circle cx="19" cy="9" r="1.8" /><circle cx="19" cy="16" r="1.8" /><path d="M10 11L6.5 7M10 13l-3.5 4M14.4 11l3-1.4M14.4 13l3 2" /></>, "Mapa mental (M): clique no vazio = novo mapa; clique num nó = filho")}
+            {toolBtn("frame", "Quadro", <><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3" /><rect x="8" y="9" width="8" height="6" rx="1" /></>, "Quadro (F): arraste para criar; o que ficar dentro entra")}
+            <button className={panel === "map" ? "btn on" : "btn"} onClick={() => toggle("map")} aria-expanded={panel === "map"} aria-label="Mapa e quadros" title="Mapa & quadros: layout, formas, códigos de cor, recolher">
               <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
             </button>
           </div>

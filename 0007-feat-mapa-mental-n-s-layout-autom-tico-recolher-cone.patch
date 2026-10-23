@@ -1,0 +1,2875 @@
+From ee02c68cb500a630dd2f745ff4dd47e77140d044 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 23 Oct 2026 02:11:10 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20mapa=20mental=20(n=C3=B3s,=20layout=20a?=
+ =?UTF-8?q?utom=C3=A1tico,=20recolher,=20conectores)=20e=20quadros=20aninh?=
+ =?UTF-8?q?ados?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- nós/quadros como elementos-caixa; árvore por parentId; layout puro em core/mindmap.ts
+- Tab/Enter/F2/C/K/setas, formas, códigos visuais, ramos curva/cotovelo/reta, lista (outline)
+- quadros aninhados com frameId; mover leva o conteúdo; reparentar arrastando
+- testes de layout, árvore, outline e quadros
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DyTugtFy1D5Qket24Ka7aE
+---
+ AGENTS.md                      |  13 +
+ src/App.tsx                    |  41 ++-
+ src/components/CanvasView.tsx  |  43 ++-
+ src/components/LabelEditor.tsx |  81 +++++
+ src/components/MapPanel.tsx    | 126 +++++++
+ src/components/Toolbar.tsx     |  15 +-
+ src/core/actions.ts            |  32 +-
+ src/core/binding.ts            |  12 +-
+ src/core/erase.ts              |   2 +
+ src/core/frames.ts             | 160 +++++++++
+ src/core/geometry.ts           |  31 +-
+ src/core/mapActions.ts         | 359 +++++++++++++++++++
+ src/core/mindmap.test.ts       | 140 ++++++++
+ src/core/mindmap.ts            | 614 +++++++++++++++++++++++++++++++++
+ src/core/model.ts              | 166 ++++++++-
+ src/core/selection.ts          |  13 +-
+ src/core/shapes.ts             |  53 ++-
+ src/core/store.ts              |  21 +-
+ src/render/Renderer.ts         | 103 +++++-
+ src/render/mindDraw.ts         | 118 +++++++
+ src/render/svgThumb.ts         |   8 +
+ src/styles.css                 |   9 +
+ src/tools/selectTool.ts        |  43 ++-
+ 23 files changed, 2139 insertions(+), 64 deletions(-)
+ create mode 100644 src/components/LabelEditor.tsx
+ create mode 100644 src/components/MapPanel.tsx
+ create mode 100644 src/core/frames.ts
+ create mode 100644 src/core/mapActions.ts
+ create mode 100644 src/core/mindmap.test.ts
+ create mode 100644 src/core/mindmap.ts
+ create mode 100644 src/render/mindDraw.ts
+
+diff --git a/AGENTS.md b/AGENTS.md
+index e5a2d0d..37e6c36 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -104,6 +104,19 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
+ - Brushes personalizáveis no painel (duplicar → editar), salvos em localStorage e carregados na partida (`initCustomBrushes`).
+ - Borracha: modo **traço inteiro** ou **pixel** (`core/erase.ts` corta o traço; gesto = um passo de desfazer via `previewElements/endPreview`).
+ 
++### Mapa mental e quadros (0007)
++- Dois tipos novos de elemento, ambos **caixas** (x, y, w, h): `node` (nó do mapa) e `frame` (quadro). Seleção, binding de setas,
++  miniaturas e hit-test reaproveitam o caminho das formas. Arquivo `.hiraku` segue **versão 1** (campos aditivos, saneados em `normalizeDoc`).
++- A **árvore** é `parentId` (pai inexistente = raiz). `core/mindmap.ts` é puro: `relayout` posiciona (raiz fixa; layouts both/right/left/down,
++  sem sobreposição) e deriva `hidden` (ancestral recolhido). Nós guardam x/y/hidden já calculados para o desenho ser barato; ramos NÃO são
++  elementos: o renderer os desenha a partir do pai (`render/mindDraw.ts`). Toda operação grava com `replaceElements` = 1 passo de desfazer.
++- Arrastar um nó: leva o ramo; soltar sobre outro nó **reparenta** (sem ciclos), soltar perto reordena entre irmãos (`settleMoved`).
++- **Conectores livres** = setas normais ligadas a nós (`isBindable` inclui `node`): seguem os nós ao mover/recolher. Atalho K liga 2 selecionados.
++- **Quadros** (`core/frames.ts`): pertencer = `frameId`; aninham; `settleFrames` escolhe o quadro mais interno que contém o centro e nunca
++  um descendente. Mover o quadro leva os membros (`withDependents`). Não recortam o conteúdo. Apagar quadro solta o conteúdo; apagar nó apaga o ramo.
++- A borracha (traço/pixel) ignora nós e quadros. Atalhos: Tab filho, Enter irmão, Shift+Enter irmão acima, F2 editar, C recolher, setas navegam,
++  K ligar, Ctrl+G / Ctrl+Shift+G quadro, M/F ferramentas, Shift+1 / Shift+2 ver tudo / seleção. Painel "Mapa & quadros" na barra.
++
+ ## Como rodar
+ 
+ ```bash
+diff --git a/src/App.tsx b/src/App.tsx
+index a18d500..a483913 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,17 +1,23 @@
+ import { useEffect } from "react";
+ import { CanvasView } from "./components/CanvasView";
+ import { TextEditor } from "./components/TextEditor";
++import { LabelEditor } from "./components/LabelEditor";
+ import { PageNav, Sidebar, Toast } from "./components/Pages";
+ import { Toolbar } from "./components/Toolbar";
+ import {
+   copySelection, cutSelection, deleteSelection, duplicateSelection, editSelectedText,
+   goPage, nudgeSelection, pasteClipboard, selectAll,
+ } from "./core/actions";
++import {
++  addChildToSelection, addSiblingToSelection, collapseMap, connectSelection, editSelectedLabel, fitToSelection,
++  selectNeighbor, toggleCollapseSelection, ungroupSelection, wrapSelectionInFrame,
++} from "./core/mapActions";
++import { selectActivePage } from "./core/store";
+ import { initPageViewSync } from "./core/pageView";
+ import { ToolId, useDoc, useSel, useTool } from "./core/store";
+ 
+ const TOOL_KEYS: Record<string, ToolId> = {
+-  v: "select", l: "lasso", p: "pen", e: "eraser", h: "hand", r: "rect", o: "ellipse", d: "diamond", a: "arrow", t: "text",
++  v: "select", l: "lasso", p: "pen", e: "eraser", h: "hand", r: "rect", o: "ellipse", d: "diamond", a: "arrow", t: "text", m: "mindmap", f: "frame",
+   // numeração igual à do Excalidraw
+   "1": "select", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "0": "eraser",
+ };
+@@ -34,10 +40,38 @@ export default function App() {
+         else if (k === "c") run(copySelection);
+         else if (k === "x") run(cutSelection);
+         else if (k === "v") run(pasteClipboard);
++        else if (k === "g") run(() => (e.shiftKey ? ungroupSelection() : wrapSelectionInFrame()));
++        else if (k === "enter") run(() => addChildToSelection());
+         return;
+       }
+ 
+-      if (k === "delete" || k === "backspace") {
++      const oneNode = (() => {
++        const ids = useSel.getState().ids;
++        if (ids.length !== 1) return false;
++        const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
++        return el?.type === "node";
++      })();
++
++      if (k === "tab" && !e.shiftKey) {
++        if (addChildToSelection()) e.preventDefault();
++      } else if (k === "f2") {
++        if (editSelectedLabel()) e.preventDefault();
++      } else if (k === "enter" && oneNode) {
++        e.preventDefault();
++        addSiblingToSelection(e.shiftKey);
++      } else if (oneNode && !e.shiftKey && k.startsWith("arrow")) {
++        e.preventDefault();
++        selectNeighbor(k === "arrowleft" ? "left" : k === "arrowright" ? "right" : k === "arrowup" ? "up" : "down");
++      } else if (k === "c" && useSel.getState().ids.length) {
++        if (e.shiftKey) collapseMap(true);
++        else toggleCollapseSelection();
++      } else if (k === "k") {
++        connectSelection();
++      } else if (k === "!") {
++        fitToSelection(true);
++      } else if (k === "@") {
++        fitToSelection(false);
++      } else if (k === "delete" || k === "backspace") {
+         e.preventDefault();
+         deleteSelection();
+       } else if (k === "pageup" || k === "pagedown") {
+@@ -51,7 +85,7 @@ export default function App() {
+         const n = e.shiftKey ? 10 : 1;
+         nudgeSelection(k === "arrowleft" ? -n : k === "arrowright" ? n : 0, k === "arrowup" ? -n : k === "arrowdown" ? n : 0);
+       } else if (k === "enter") {
+-        if (editSelectedText()) e.preventDefault(); // Enter edita o texto selecionado
++        if (editSelectedText() || editSelectedLabel()) e.preventDefault(); // Enter edita o texto selecionado
+       } else if (TOOL_KEYS[k]) {
+         useTool.getState().setTool(TOOL_KEYS[k]);
+       }
+@@ -67,6 +101,7 @@ export default function App() {
+       <Sidebar />
+       <Toolbar />
+       <TextEditor />
++      <LabelEditor />
+       <Toast />
+     </>
+   );
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index e891d00..93913bf 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -14,10 +14,11 @@ import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEd
+ import { InputController, Sample } from "../input/InputController";
+ import { Renderer } from "../render/Renderer";
+ import { InkStyle } from "../render/strokeDraw";
++import { addChildTo, createFrameFromBox, createRootAt } from "../core/mapActions";
+ import { createSelectController } from "../tools/selectTool";
+ 
+ interface Smoothed { x: number; y: number; p: number; t: number }
+-type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text";
++type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
+ 
+ const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
+ const isLinearTool = (t: string): t is LinearType => t === "line" || t === "arrow";
+@@ -177,6 +178,7 @@ export function CanvasView() {
+           const x = from.x + ((to.x - from.x) * i) / steps;
+           const y = from.y + ((to.y - from.y) * i) / steps;
+           for (const el of elements) {
++            if (el.type === "node" || el.type === "frame") continue; // estrutura: só Delete apaga
+             if (!erased.has(el.id) && elementHit(el, x, y, r)) erased.add(el.id);
+           }
+         }
+@@ -261,6 +263,23 @@ export function CanvasView() {
+               }
+               if (hit) beginEditText(hit);
+               else beginNewText(P);
++            } else if (t.tool === "mindmap") {
++              // clique num nó = novo filho; clique no vazio = novo mapa
++              mode = "text";
++              const cam = useView.getState().camera;
++              const P = screenToWorld(cam, s.x, s.y);
++              const els = selectActivePage(useDoc.getState()).elements;
++              let hit: string | null = null;
++              for (let i = els.length - 1; i >= 0 && !hit; i--) {
++                const e = els[i];
++                if (e.type === "node" && !e.hidden && elementHit(e, P.x, P.y, 4 / cam.zoom)) hit = e.id;
++              }
++              if (hit) addChildTo(hit);
++              else createRootAt(P);
++            } else if (t.tool === "frame") {
++              mode = "frame";
++              shapeStart = screenToWorld(useView.getState().camera, s.x, s.y);
++              shapeBox = null;
+             } else if (t.tool === "select" || t.tool === "lasso") {
+               mode = "select";
+               selectCtl.start(s, t.tool === "lasso");
+@@ -323,11 +342,15 @@ export function CanvasView() {
+               bindHintUI(endShape ? outlinePath(endShape) : null);
+               return;
+             }
+-            if (mode === "shape") {
++            if (mode === "shape" || mode === "frame") {
+               const s = samples[samples.length - 1];
+               const to = screenToWorld(useView.getState().camera, s.x, s.y);
+-              shapeBox = boxFromDrag(shapeStart, to, s.shift, s.alt);
+-              renderer.previewElement(shapeFrom("preview", shapeBox));
++              shapeBox = boxFromDrag(shapeStart, to, mode === "shape" && s.shift, s.alt);
++              renderer.previewElement(
++                mode === "frame"
++                  ? makeShape("preview", "rect", shapeBox, { stroke: "#5E6B7E", strokeWidth: 2, strokeStyle: "dashed", fill: null, rounded: true })
++                  : shapeFrom("preview", shapeBox),
++              );
+               return;
+             }
+             let added = false;
+@@ -373,6 +396,14 @@ export function CanvasView() {
+               selectCtl.refresh(); // tira o realce da forma-alvo
+               return;
+             }
++            if (mode === "frame") {
++              renderer.previewElement(null);
++              const z = useView.getState().camera.zoom;
++              if (shapeBox && shapeBox.w * z > 30 && shapeBox.h * z > 30) createFrameFromBox(shapeBox);
++              else createFrameFromBox({ x: shapeStart.x - 240, y: shapeStart.y - 160, w: 480, h: 320 }); // clique: quadro padrão
++              shapeBox = null;
++              return;
++            }
+             if (mode === "shape") {
+               const min = 2 / useView.getState().camera.zoom; // clique sem arrastar não cria forma
+               if (shapeBox && (shapeBox.w >= min || shapeBox.h >= min)) {
+@@ -426,7 +457,7 @@ export function CanvasView() {
+               eraseBase = null;
+               eraseEls = null;
+               renderer.setGhosts(erased);
+-            } else if (mode === "shape" || mode === "linear") {
++            } else if (mode === "shape" || mode === "linear" || mode === "frame") {
+               renderer.previewElement(null);
+               shapeBox = null;
+               linEl = null;
+@@ -458,7 +489,7 @@ export function CanvasView() {
+         {
+           getTool: () => useTool.getState().tool,
+           // Com Selecionar, o dedo seleciona/arrasta; pan e zoom ficam com 2 dedos.
+-          getFingerDraws: () => useTool.getState().fingerDraws || useTool.getState().tool === "select",
++          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame"].includes(useTool.getState().tool),
+         },
+       );
+     })();
+diff --git a/src/components/LabelEditor.tsx b/src/components/LabelEditor.tsx
+new file mode 100644
+index 0000000..dfde159
+--- /dev/null
++++ b/src/components/LabelEditor.tsx
+@@ -0,0 +1,81 @@
++import { useEffect, useRef } from "react";
++import { addChildToSelection, addSiblingToSelection, commitLabel, patchLabel, useLabel } from "../core/mapActions";
++import { selectActivePage, useDoc, useView } from "../core/store";
++import { FONT_CSS, LINE_HEIGHT, measureBlock } from "../core/text";
++
++/** <textarea> sobre o nó/quadro em edição. Enter = irmão, Tab = filho, Shift+Enter = quebra de linha, Esc = cancela. */
++export function LabelEditor() {
++  const session = useLabel((s) => s.session);
++  const cam = useView((s) => s.camera);
++  const el = useDoc((s) => (session ? selectActivePage(s).elements.find((e) => e.id === session.id) : undefined));
++  const ref = useRef<HTMLTextAreaElement>(null);
++  const token = session?.token;
++  const born = useRef(0);
++
++  useEffect(() => {
++    if (token === undefined) return;
++    born.current = performance.now();
++    const ta = ref.current;
++    if (ta) { ta.focus(); ta.select(); }
++    // o mousedown que criou o nó ainda pode roubar o foco depois: refoca uma vez logo em seguida
++    const t = setTimeout(() => { if (document.activeElement !== ref.current) { ref.current?.focus(); ref.current?.select(); } }, 40);
++    const onDown = (e: PointerEvent) => {
++      if (ref.current?.contains(e.target as Node)) return;
++      commitLabel(token);
++    };
++    document.addEventListener("pointerdown", onDown, true);
++    return () => { clearTimeout(t); document.removeEventListener("pointerdown", onDown, true); };
++  }, [token]);
++
++  if (!session || !el || (el.type !== "node" && el.type !== "frame")) return null;
++  const z = cam.zoom;
++  const node = el.type === "node";
++  const size = node ? el.fontSize : 14;
++  const family = node ? el.fontFamily : "sans";
++  const m = measureBlock(session.text || " ", family, size);
++  const w = Math.max(node ? el.w : 140, Math.ceil(m.w) + 24) * z;
++  const h = Math.max(node ? el.h : 24, Math.ceil(m.h) + 8) * z;
++  const cx = node ? el.x + el.w / 2 : el.x + 70;
++  const left = (node ? cx : el.x + (w / z) / 2) * z + cam.x - w / 2;
++  const top = node ? (el.y + el.h / 2) * z + cam.y - h / 2 : (el.y - 14) * z + cam.y - h / 2;
++
++  return (
++    <textarea
++      key={session.token}
++      ref={ref}
++      className="label-editor"
++      spellCheck={false}
++      wrap="off"
++      aria-label={node ? "Texto do nó" : "Título do quadro"}
++      value={session.text}
++      onChange={(e) => patchLabel(e.target.value)}
++      onBlur={() => {
++        // blur nos primeiros ms = foco roubado pelo clique que criou o nó: volta o foco em vez de confirmar
++        if (performance.now() - born.current < 250) { setTimeout(() => ref.current?.focus(), 0); return; }
++        commitLabel(session.token);
++      }}
++      onKeyDown={(e) => {
++        if (e.key === "Escape") { e.preventDefault(); commitLabel(session.token); return; }
++        if (e.key === "Enter" && !e.shiftKey) {
++          e.preventDefault();
++          commitLabel(session.token);
++          if (node) addSiblingToSelection();
++        } else if (e.key === "Tab" && node) {
++          e.preventDefault();
++          commitLabel(session.token);
++          addChildToSelection();
++        }
++      }}
++      style={{
++        left, top, width: w, height: h,
++        fontSize: size * z,
++        lineHeight: LINE_HEIGHT,
++        fontFamily: FONT_CSS[family],
++        color: node ? el.color : el.color,
++        background: node && el.fill ? el.fill : "#fff",
++        borderRadius: node && el.shape === "pill" ? h / 2 : 6,
++        textAlign: node ? "center" : "left",
++      }}
++    />
++  );
++}
+diff --git a/src/components/MapPanel.tsx b/src/components/MapPanel.tsx
+new file mode 100644
+index 0000000..0e94889
+--- /dev/null
++++ b/src/components/MapPanel.tsx
+@@ -0,0 +1,126 @@
++import { useState } from "react";
++import { BRANCH_STYLES, MAP_LAYOUTS, NODE_SHAPES, NodeElement } from "../core/model";
++import { FRAME_COLORS } from "../core/frames";
++import {
++  addChildToSelection, addSiblingToSelection, applyPreset, collapseMap, connectSelection, createRootAt,
++  detachSelection, exportOutlineOfSelection, fitFrameSelection, fitToSelection, focusSelection, importOutlineText,
++  recolorFrames, setBranchStyle, setMapLayout, styleSelection, toggleCollapseSelection, toggleDone, ungroupSelection,
++  viewCenter, wrapSelectionInFrame,
++} from "../core/mapActions";
++import { BRANCH_PALETTE, NODE_ICONS, NODE_PRESETS, rootOf } from "../core/mindmap";
++import { selectActivePage, useDoc, useSel } from "../core/store";
++import { useUI } from "../core/ui";
++
++const Chip = ({ on, onClick, children, title }: { on?: boolean; onClick: () => void; children: React.ReactNode; title?: string }) => (
++  <button className={on ? "chip sm on" : "chip sm"} onClick={onClick} title={title}>{children}</button>
++);
++
++/** Painel "Mapa & quadros": criar, layout, formas, códigos visuais, recolher, quadros, lista de texto. */
++export function MapPanel() {
++  const ids = useSel((s) => s.ids);
++  const els = useDoc((s) => selectActivePage(s).elements);
++  const [sub, setSub] = useState(true);
++  const [text, setText] = useState("");
++  const sel = els.filter((e) => ids.includes(e.id));
++  const nodes = sel.filter((e): e is NodeElement => e.type === "node");
++  const frames = sel.filter((e) => e.type === "frame");
++  const n0 = nodes[0];
++  const root = n0 ? rootOf(els, n0.id) : null;
++  const same = <K extends keyof NodeElement>(k: K) => (nodes.length && nodes.every((n) => n[k] === n0[k]) ? n0[k] : undefined);
++
++  return (
++    <div className="panel mappanel" role="dialog" aria-label="Mapa mental e quadros">
++      <div className="row">
++        <span className="rowlabel">Criar</span>
++        <Chip onClick={() => createRootAt(viewCenter())} title="Novo mapa no centro da tela (ou Tab sem seleção)">Novo mapa</Chip>
++        <Chip onClick={() => addChildToSelection()} title="Tab">Filho</Chip>
++        <Chip onClick={() => addSiblingToSelection()} title="Enter">Irmão</Chip>
++        <Chip onClick={wrapSelectionInFrame} title="Ctrl+G">Quadro</Chip>
++        <Chip onClick={() => connectSelection()} title="K: seta ligando 2 nós de qualquer ramo">Ligar 2 nós</Chip>
++      </div>
++
++      {nodes.length > 0 && (
++        <>
++          <div className="row" role="radiogroup" aria-label="Forma do nó">
++            <span className="rowlabel">Forma</span>
++            {NODE_SHAPES.map((s) => <Chip key={s.id} on={same("shape") === s.id} onClick={() => styleSelection({ shape: s.id }, sub)}>{s.label}</Chip>)}
++          </div>
++          <div className="row" aria-label="Códigos visuais">
++            <span className="rowlabel">Código</span>
++            {NODE_PRESETS.map((p) => (
++              <button key={p.id} className="chip sm" title={p.label} style={{ background: p.fill ?? "#fff", borderColor: p.stroke, color: p.color }} onClick={() => applyPreset(p.id, sub)}>
++                {p.label}
++              </button>
++            ))}
++          </div>
++          <div className="row" aria-label="Cor do ramo">
++            <span className="rowlabel">Ramo</span>
++            {BRANCH_PALETTE.map((c) => (
++              <button key={c} className={same("branchColor") === c ? "swatch on" : "swatch"} aria-label={`Cor do ramo ${c}`} style={{ background: c }} onClick={() => styleSelection({ branchColor: c, ...(n0.stroke ? { stroke: c } : {}) }, sub)} />
++            ))}
++          </div>
++          <div className="row" aria-label="Marcador">
++            <span className="rowlabel">Marcar</span>
++            <Chip on={same("icon") === null} onClick={() => styleSelection({ icon: null })}>Nenhum</Chip>
++            {NODE_ICONS.map((i) => <Chip key={i} on={same("icon") === i} onClick={() => styleSelection({ icon: i })}>{i}</Chip>)}
++            <Chip on={!!same("done")} onClick={toggleDone} title="Riscar o texto">Concluído</Chip>
++          </div>
++          <div className="row">
++            <label className="chip sm"><input type="checkbox" checked={sub} onChange={(e) => setSub(e.target.checked)} /> Aplicar ao ramo todo</label>
++          </div>
++          {root && (
++            <>
++              <div className="row" role="radiogroup" aria-label="Layout do mapa">
++                <span className="rowlabel">Layout</span>
++                {MAP_LAYOUTS.map((l) => <Chip key={l.id} on={root.layout === l.id} onClick={() => setMapLayout(l.id)}>{l.label}</Chip>)}
++              </div>
++              <div className="row" role="radiogroup" aria-label="Estilo dos ramos">
++                <span className="rowlabel">Linhas</span>
++                {BRANCH_STYLES.map((b) => <Chip key={b.id} on={root.branchStyle === b.id} onClick={() => setBranchStyle(b.id)}>{b.label}</Chip>)}
++              </div>
++            </>
++          )}
++          <div className="row">
++            <span className="rowlabel">Ramos</span>
++            <Chip onClick={toggleCollapseSelection} title="C">Recolher/expandir</Chip>
++            <Chip onClick={() => collapseMap(true)} title="Shift+C">Recolher tudo</Chip>
++            <Chip onClick={() => collapseMap(true, 2)}>Só 1º nível</Chip>
++            <Chip onClick={() => collapseMap(false)}>Expandir tudo</Chip>
++            <Chip onClick={focusSelection}>Foco neste ramo</Chip>
++            <Chip onClick={detachSelection}>Separar do mapa</Chip>
++          </div>
++          <div className="row">
++            <span className="rowlabel">Lista</span>
++            <Chip onClick={() => {
++              const o = exportOutlineOfSelection();
++              if (o) void navigator.clipboard?.writeText(o).then(() => useUI.getState().showToast("Mapa copiado como lista."), () => useUI.getState().showToast("Não consegui copiar."));
++            }}>Copiar como lista</Chip>
++          </div>
++        </>
++      )}
++
++      {frames.length > 0 && (
++        <div className="row">
++          <span className="rowlabel">Quadro</span>
++          {FRAME_COLORS.map((c) => <button key={c} className="swatch" aria-label={`Cor do quadro ${c}`} style={{ background: c }} onClick={() => recolorFrames(c)} />)}
++          <Chip onClick={fitFrameSelection}>Ajustar ao conteúdo</Chip>
++          <Chip onClick={ungroupSelection} title="Ctrl+Shift+G">Desfazer quadro</Chip>
++          <Chip onClick={() => fitToSelection(false)}>Ir até ele</Chip>
++        </div>
++      )}
++
++      <div className="row">
++        <span className="rowlabel">Vista</span>
++        <Chip onClick={() => fitToSelection(true)} title="Shift+1">Ver tudo</Chip>
++        <Chip onClick={() => fitToSelection(false)} title="Shift+2">Ver seleção</Chip>
++      </div>
++
++      <label className="slider" style={{ display: "block" }}>
++        <span>Criar mapa de uma lista (recuo = nível)</span>
++        <textarea className="outline-in" rows={4} value={text} placeholder={"Tema\n  Ramo A\n    detalhe\n  Ramo B"} onChange={(e) => setText(e.target.value)} />
++      </label>
++      <div className="row"><Chip onClick={() => { if (importOutlineText(text)) setText(""); else useUI.getState().showToast("Escreva uma lista com recuo."); }}>Criar mapa</Chip></div>
++      <p className="hint">Tab = filho, Enter = irmão, Shift+Enter = irmão acima, F2 = editar, C = recolher, setas = navegar, K = ligar 2 nós com seta (arraste também uma seta de um nó a outro). Arraste um nó sobre outro para mudar de pai; o layout se reorganiza sozinho. Arraste a bolinha numerada para expandir.</p>
++    </div>
++  );
++}
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index e4027f6..7e04422 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -10,6 +10,7 @@ import { FONTS, FONT_SIZES } from "../core/text";
+ import { useUI } from "../core/ui";
+ import { BrushPanel } from "./BrushPanel";
+ import { ColorPicker } from "./ColorPicker";
++import { MapPanel } from "./MapPanel";
+ 
+ const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
+ const FILLS: { value: string | null; label: string }[] = [
+@@ -32,7 +33,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
+   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
+ };
+ 
+-type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser";
++type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map";
+ 
+ export function Toolbar() {
+   const t = useTool();
+@@ -75,7 +76,7 @@ export function Toolbar() {
+   const sizeStep = erasing ? 2 : 0.5;
+   const sizeValue = erasing ? t.eraserSize : t.width;
+   const toolBtn = (id: ToolId, label: string, icon: ReactNode, hint = label) => (
+-    <button className={t.tool === id ? "btn on" : "btn"} onClick={() => t.setTool(id)} aria-label={label} aria-pressed={t.tool === id} title={hint}>
++    <button key={id} className={t.tool === id ? "btn on" : "btn"} onClick={() => t.setTool(id)} aria-label={label} aria-pressed={t.tool === id} title={hint}>
+       <Icon>{icon}</Icon>
+     </button>
+   );
+@@ -110,6 +111,7 @@ export function Toolbar() {
+         )}
+ 
+         {panel === "brush" && <BrushPanel />}
++        {panel === "map" && <MapPanel />}
+ 
+         {panel === "eraser" && (
+           <div className="panel" role="dialog" aria-label="Borracha">
+@@ -264,6 +266,7 @@ export function Toolbar() {
+         {selCount > 0 && (
+           <div className="toolbar selbar" role="toolbar" aria-label="Ações da seleção">
+             <span className="count">{selCount} {selCount === 1 ? "selecionado" : "selecionados"}</span>
++            <button className="btn text" onClick={() => toggle("map")}>Mapa…</button>
+             <button className="btn text" onClick={duplicateSelection}>Duplicar</button>
+             <button className="btn text danger" onClick={deleteSelection}>Apagar</button>
+             <button className="btn text" onClick={() => useSel.getState().clear()}>Desmarcar</button>
+@@ -309,6 +312,14 @@ export function Toolbar() {
+             </button>
+           </div>
+ 
++          <div className="group">
++            {toolBtn("mindmap", "Mapa mental", <><circle cx="12" cy="12" r="2.5" /><circle cx="5" cy="6" r="1.8" /><circle cx="5" cy="18" r="1.8" /><circle cx="19" cy="9" r="1.8" /><circle cx="19" cy="16" r="1.8" /><path d="M10 11L6.5 7M10 13l-3.5 4M14.4 11l3-1.4M14.4 13l3 2" /></>, "Mapa mental (M): clique no vazio = novo mapa; clique num nó = filho")}
++            {toolBtn("frame", "Quadro", <><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3" /><rect x="8" y="9" width="8" height="6" rx="1" /></>, "Quadro (F): arraste para criar; o que ficar dentro entra")}
++            <button className={panel === "map" ? "btn on" : "btn"} onClick={() => toggle("map")} aria-expanded={panel === "map"} aria-label="Mapa e quadros" title="Mapa & quadros: layout, formas, códigos de cor, recolher">
++              <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
++            </button>
++          </div>
++
+           <div className="group" role="radiogroup" aria-label="Cor do traço" data-text-ui onMouseDown={(e) => e.preventDefault()}>
+             {COLORS.map((c) => (
+               <button
+diff --git a/src/core/actions.ts b/src/core/actions.ts
+index 91960df..dd64fe6 100644
+--- a/src/core/actions.ts
++++ b/src/core/actions.ts
+@@ -2,6 +2,7 @@
+ import { detachForeign, reidentify } from "./binding";
+ import { parseHex, pushRecent } from "./color";
+ import { HirakuElement, TextElement, isLinear } from "./model";
++import { subtreeIds, tint, withDependents } from "./mindmap";
+ import { applyXform, moveXform } from "./selection";
+ import { selectActivePage, useDoc, useSel, useTool } from "./store";
+ import { beginEditText, useEdit } from "./textEdit";
+@@ -15,6 +16,13 @@ export const selectedElements = (): HirakuElement[] => {
+   return selectActivePage(useDoc.getState()).elements.filter((e) => ids.has(e.id));
+ };
+ 
++/** Seleção + o que anda junto: ramos dos nós e membros dos quadros (copiar/duplicar/mover). */
++export const selectedWithDependents = (): HirakuElement[] => {
++  const all = selectActivePage(useDoc.getState()).elements;
++  const set = withDependents(all, useSel.getState().ids);
++  return all.filter((e) => set.has(e.id));
++};
++
+ const cloneAt = (els: HirakuElement[], dx: number, dy: number): HirakuElement[] =>
+   reidentify(els.map((e) => applyXform(e, moveXform(dx, dy))));
+ 
+@@ -23,14 +31,18 @@ export function selectAll() {
+ }
+ 
+ export function deleteSelection() {
+-  const ids = useSel.getState().ids;
+-  if (!ids.length) return;
+-  useDoc.getState().removeElements(ids);
++  const sel = useSel.getState().ids;
++  if (!sel.length) return;
++  // apagar um nó apaga o ramo inteiro; apagar um quadro solta o conteúdo
++  const all = selectActivePage(useDoc.getState()).elements;
++  const ids = new Set(sel);
++  for (const e of all) if (e.type === "node" && ids.has(e.id)) subtreeIds(all, e.id).forEach((i) => ids.add(i));
++  useDoc.getState().removeElements([...ids]);
+   useSel.getState().clear();
+ }
+ 
+ export function duplicateSelection() {
+-  const els = selectedElements();
++  const els = selectedWithDependents();
+   if (!els.length) return;
+   const copies = cloneAt(els, 16, 16);
+   useDoc.getState().addElements(copies);
+@@ -38,7 +50,7 @@ export function duplicateSelection() {
+ }
+ 
+ export function copySelection() {
+-  const els = selectedElements();
++  const els = selectedWithDependents();
+   if (!els.length) return;
+   clipboard = els;
+   pasteCount = 0;
+@@ -58,7 +70,7 @@ export function pasteClipboard() {
+ }
+ 
+ export function nudgeSelection(dx: number, dy: number) {
+-  const els = selectedElements();
++  const els = selectedWithDependents();
+   if (!els.length) return;
+   const x = moveXform(dx, dy);
+   useDoc.getState().updateElements(detachForeign(els.map((e) => applyXform(e, x))));
+@@ -67,7 +79,11 @@ export function nudgeSelection(dx: number, dy: number) {
+ export function recolorSelection(color: string) {
+   const els = selectedElements();
+   if (!els.length) return;
+-  useDoc.getState().updateElements(els.map((e) => (e.type === "stroke" || e.type === "text" ? { ...e, color } : { ...e, stroke: color })));
++  useDoc.getState().updateElements(els.map((e) => {
++    if (e.type === "stroke" || e.type === "text" || e.type === "frame") return { ...e, color };
++    if (e.type === "node") return { ...e, stroke: e.stroke ? color : e.stroke, fill: e.fill ? tint(color, 0.85) : e.fill, branchColor: color };
++    return { ...e, stroke: color };
++  }));
+ }
+ 
+ /**
+@@ -92,6 +108,8 @@ export function applyColor(color: string, opts: { commit?: boolean; remember?: b
+ /** Cor "principal" de um elemento, para o conta-gotas (forma preenchida → preenchimento). */
+ export function elementColor(el: HirakuElement): string {
+   if (el.type === "stroke" || el.type === "text") return el.color;
++  if (el.type === "node") return el.stroke ?? el.branchColor;
++  if (el.type === "frame") return el.color;
+   if (isLinear(el)) return el.stroke;
+   return el.fill ?? el.stroke;
+ }
+diff --git a/src/core/binding.ts b/src/core/binding.ts
+index de59312..c89ab05 100644
+--- a/src/core/binding.ts
++++ b/src/core/binding.ts
+@@ -2,14 +2,14 @@
+ // Cada ponta de seta guarda a forma-alvo + um ponto de foco (u, v) normalizado dentro dela.
+ // A posição real da ponta é CALCULADA: onde o raio "vizinho da seta → foco" cruza o contorno da forma.
+ import { elementHit } from "./geometry";
+-import { ArrowBinding, HirakuElement, ID, LinearElement, SHAPE_TYPES, ShapeElement, TextElement, newId } from "./model";
++import { ArrowBinding, HirakuElement, ID, LinearElement, NodeElement, SHAPE_TYPES, ShapeElement, TextElement, newId } from "./model";
+ import { Pt, outlinePath, pointInPolygon } from "./shapes";
+ 
+ /** Folga entre a ponta da seta e o contorno da forma (unidades do mundo). */
+ const BIND_GAP = 4;
+ 
+-export type Bindable = ShapeElement | TextElement;
+-export const isBindable = (e: HirakuElement): e is Bindable => e.type === "text" || (SHAPE_TYPES as string[]).includes(e.type);
++export type Bindable = ShapeElement | TextElement | NodeElement;
++export const isBindable = (e: HirakuElement): e is Bindable => e.type === "text" || e.type === "node" || (SHAPE_TYPES as string[]).includes(e.type);
+ 
+ function anchor(shape: Bindable, b: ArrowBinding): Pt {
+   const c = Math.cos(shape.angle), s = Math.sin(shape.angle);
+@@ -158,8 +158,12 @@ export function detachForeign(els: HirakuElement[]): HirakuElement[] {
+ export function reidentify(els: HirakuElement[]): HirakuElement[] {
+   const map = new Map(els.map((e) => [e.id, newId()]));
+   const remap = (b: ArrowBinding | null | undefined) => (b && map.has(b.elementId) ? { ...b, elementId: map.get(b.elementId)! } : null);
++  const ref = (i: ID | null | undefined) => (i && map.has(i) ? map.get(i)! : null);
+   return els.map((e) => {
+     const id = map.get(e.id)!;
+-    return e.type === "arrow" ? { ...e, id, startBinding: remap(e.startBinding), endBinding: remap(e.endBinding) } : { ...e, id };
++    // frameId e parentId apontam para elementos copiados juntos; senão, cortam (a cópia vira independente)
++    const base = { ...e, id, frameId: ref(e.frameId) } as HirakuElement;
++    if (e.type === "node") return { ...base, parentId: ref(e.parentId) } as HirakuElement;
++    return e.type === "arrow" ? { ...base, startBinding: remap(e.startBinding), endBinding: remap(e.endBinding) } as HirakuElement : base;
+   });
+ }
+diff --git a/src/core/erase.ts b/src/core/erase.ts
+index 7d8d63f..cb2d805 100644
+--- a/src/core/erase.ts
++++ b/src/core/erase.ts
+@@ -109,6 +109,8 @@ export function eraseStep(elements: HirakuElement[], cx: number, cy: number, rad
+         out.push(...res);
+         if (!res.length) removedIds.add(el.id);
+       }
++    } else if (el.type === "node" || el.type === "frame") {
++      out.push(el); // nós e quadros têm estrutura: a borracha não os apaga (use Delete)
+     } else if (elementHit(el, cx, cy, radius)) {
+       changed = true;
+       removedIds.add(el.id);
+diff --git a/src/core/frames.ts b/src/core/frames.ts
+new file mode 100644
+index 0000000..5f06c34
+--- /dev/null
++++ b/src/core/frames.ts
+@@ -0,0 +1,160 @@
++// Quadros: contêineres aninháveis. Pertencer a um quadro = `frameId`. Puro (recebe/devolve listas).
++// Um quadro NÃO recorta o conteúdo: é uma moldura com título e um véu de cor; mover o quadro leva os membros.
++import { FrameElement, HirakuElement, ID, newId } from "./model";
++import { elementBounds } from "./selection";
++import { withDependents, nodesOf, rootOf } from "./mindmap";
++
++export const FRAME_COLORS = ["#5E6B7E", "#2F4B8F", "#2F7D5B", "#D98A1F", "#C8372D", "#7B4FB5"];
++export const FRAME_PAD = 28;
++
++export const isFrameEl = (e: HirakuElement): e is FrameElement => e.type === "frame";
++export const framesOf = (els: HirakuElement[]): FrameElement[] => els.filter(isFrameEl);
++
++export function makeFrame(id: ID, x: number, y: number, w: number, h: number, title = "Quadro", color = FRAME_COLORS[0]): FrameElement {
++  return { id, type: "frame", frameId: null, x, y, w, h, angle: 0, strokeWidth: 2, title, color, tint: 0.06, rounded: true, opacity: 1 };
++}
++
++/** Ids dos quadros ancestrais (do pai direto até o mais externo). */
++export function frameChain(els: HirakuElement[], id: ID): ID[] {
++  const byId = new Map(els.map((e) => [e.id, e]));
++  const out: ID[] = [];
++  let cur = byId.get(id)?.frameId ?? null;
++  while (cur && !out.includes(cur)) {
++    out.push(cur);
++    cur = byId.get(cur)?.frameId ?? null;
++  }
++  return out;
++}
++
++/** Todos os membros (diretos e de quadros internos) de um quadro. */
++export function frameMembers(els: HirakuElement[], frameId: ID): HirakuElement[] {
++  const set = withDependents(els, [frameId]);
++  set.delete(frameId);
++  return els.filter((e) => set.has(e.id));
++}
++
++const contains = (f: FrameElement, cx: number, cy: number) => cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h;
++
++/**
++ * Reatribui `frameId` dos elementos `ids` (e dos que andam junto com eles) conforme o quadro MAIS INTERNO que
++ * contém o centro. Quadros nunca entram em si mesmos nem nos próprios descendentes. Nós de uma árvore
++ * herdam o quadro da raiz do mapa. Devolve a mesma lista se nada mudou.
++ */
++export function settleFrames(els: HirakuElement[], ids: Iterable<ID>): HirakuElement[] {
++  const frames = framesOf(els);
++  const moved = new Set(ids);
++  if (!moved.size) return els;
++  const byId = new Map(els.map((e) => [e.id, e]));
++  const assigned = new Map<ID, ID | null>();
++
++  const pick = (e: HirakuElement): ID | null => {
++    const b = elementBounds(e);
++    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
++    const banned = e.type === "frame" ? withDependents(els, [e.id]) : null;
++    let best: FrameElement | null = null;
++    for (const f of frames) {
++      if (f.id === e.id || banned?.has(f.id)) continue;
++      if (!contains(f, cx, cy)) continue;
++      if (!best || f.w * f.h < best.w * best.h) best = f;
++    }
++    return best ? best.id : null;
++  };
++
++  // raízes do que se moveu: elementos cujo "pai" (nó-pai) não está no conjunto movido decidem por si
++  for (const id of moved) {
++    const e = byId.get(id);
++    if (!e) continue;
++    if (e.type === "node") {
++      const root = rootOf(els, id);
++      if (root && root.id !== id) {
++        if (moved.has(root.id)) continue; // a raiz decide por todos
++        assigned.set(id, byId.get(root.id)!.frameId ?? null);
++        continue;
++      }
++    }
++    assigned.set(id, pick(e));
++  }
++  // descendentes de nós herdam a decisão da raiz
++  for (const id of moved) {
++    const e = byId.get(id);
++    if (e?.type !== "node" || assigned.has(id)) continue;
++    const root = rootOf(els, id);
++    if (root && assigned.has(root.id)) assigned.set(id, assigned.get(root.id)!);
++  }
++  // nós-filhos de quem não se moveu mas cuja raiz (que se moveu) decidiu
++  for (const n of nodesOf(els)) {
++    const root = rootOf(els, n.id);
++    if (root && root.id !== n.id && moved.has(root.id) && !assigned.has(n.id)) assigned.set(n.id, assigned.get(root.id)!);
++  }
++
++  let out: HirakuElement[] | null = null;
++  els.forEach((e, i) => {
++    if (!assigned.has(e.id)) return;
++    const f = assigned.get(e.id) ?? null;
++    if ((e.frameId ?? null) === f) return;
++    out ??= els.slice();
++    out[i] = { ...e, frameId: f } as HirakuElement;
++  });
++  return out ?? els;
++}
++
++/** Cria um quadro em volta dos elementos `ids` (com folga) e os coloca dentro dele. */
++export function wrapInFrame(els: HirakuElement[], ids: ID[], title = "Quadro"): { elements: HirakuElement[]; id: ID } | null {
++  const sel = els.filter((e) => ids.includes(e.id));
++  if (!sel.length) return null;
++  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
++  for (const e of sel) {
++    const b = elementBounds(e);
++    minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY);
++    maxX = Math.max(maxX, b.maxX); maxY = Math.max(maxY, b.maxY);
++  }
++  const id = newId();
++  // o quadro novo herda o quadro dos elementos (se todos estão no mesmo)
++  const parents = new Set(sel.map((e) => e.frameId ?? null));
++  const outer = parents.size === 1 ? [...parents][0] : null;
++  const frame = makeFrame(id, minX - FRAME_PAD, minY - FRAME_PAD - 8, maxX - minX + FRAME_PAD * 2, maxY - minY + FRAME_PAD * 2 + 8, title);
++  frame.frameId = outer;
++  const members = new Set(withDependents(els, ids));
++  // membros diretos: os selecionados (os dependentes já seguem por frameId/parentId); quadros internos ficam dentro deles
++  const direct = new Set(sel.filter((e) => !(e.type === "node" && e.parentId && members.has(e.parentId) && ids.includes(e.parentId))).map((e) => e.id));
++  const mapped = els.map((e) => (direct.has(e.id) && !(e.type === "node" && e.parentId && direct.has(e.parentId)) ? ({ ...e, frameId: id } as HirakuElement) : e));
++  // nós filhos herdam o quadro da raiz
++  const final = settleKeep(mapped, id);
++  return { elements: [frame, ...final], id };
++}
++
++/** Faz todos os nós cuja raiz está no quadro `fid` ficarem também nele. */
++function settleKeep(els: HirakuElement[], fid: ID): HirakuElement[] {
++  const inFrame = new Set(els.filter((e) => e.frameId === fid).map((e) => e.id));
++  return els.map((e) => {
++    if (e.type !== "node" || e.frameId === fid) return e;
++    const r = rootOf(els, e.id);
++    return r && inFrame.has(r.id) ? ({ ...e, frameId: fid } as HirakuElement) : e;
++  });
++}
++
++/** Desfaz o quadro: os membros sobem para o quadro pai (ou ficam soltos). */
++export function ungroupFrame(els: HirakuElement[], id: ID): HirakuElement[] {
++  const f = els.find((e) => e.id === id);
++  if (!f || f.type !== "frame") return els;
++  const up = f.frameId ?? null;
++  return els.filter((e) => e.id !== id).map((e) => (e.frameId === id ? ({ ...e, frameId: up } as HirakuElement) : e));
++}
++
++/** Ajusta o quadro ao conteúdo (membros diretos + folga). */
++export function fitFrameToContent(els: HirakuElement[], id: ID): HirakuElement[] {
++  const f = els.find((e) => e.id === id);
++  if (!f || f.type !== "frame") return els;
++  const mem = frameMembers(els, id);
++  if (!mem.length) return els;
++  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
++  for (const e of mem) {
++    const b = elementBounds(e);
++    minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY);
++    maxX = Math.max(maxX, b.maxX); maxY = Math.max(maxY, b.maxY);
++  }
++  return els.map((e) => (e.id === id ? { ...f, x: minX - FRAME_PAD, y: minY - FRAME_PAD - 8, w: maxX - minX + FRAME_PAD * 2, h: maxY - minY + FRAME_PAD * 2 + 8 } : e));
++}
++
++/** Profundidade de aninhamento (0 = quadro de topo). */
++export const frameDepth = (els: HirakuElement[], id: ID) => frameChain(els, id).length;
+diff --git a/src/core/geometry.ts b/src/core/geometry.ts
+index 60d4c2c..774852a 100644
+--- a/src/core/geometry.ts
++++ b/src/core/geometry.ts
+@@ -1,4 +1,4 @@
+-import { HirakuElement, StrokeElement, isLinear } from "./model";
++import { FrameElement, HirakuElement, StrokeElement, isLinear } from "./model";
+ import { linearPath } from "./linear";
+ import { outlinePath, pointInPolygon, shapePath } from "./shapes";
+ 
+@@ -46,6 +46,8 @@ export function strokeHit(el: StrokeElement, x: number, y: number, r: number): b
+ /** O círculo (x, y, r) toca o elemento? Traço: pelo eixo. Forma: pelo contorno ou, se preenchida, pelo interior. */
+ export function elementHit(el: HirakuElement, x: number, y: number, r: number): boolean {
+   if (el.type === "stroke") return strokeHit(el, x, y, r);
++  if (el.type === "node") return !el.hidden && pointInPolygon(x, y, shapePath(el)) || (!el.hidden && nearPolygon(shapePath(el), x, y, r));
++  if (el.type === "frame") return frameHit(el, x, y, r);
+ 
+   if (isLinear(el)) {
+     const lr = r + el.strokeWidth / 2;
+@@ -79,3 +81,30 @@ export function elementHit(el: HirakuElement, x: number, y: number, r: number):
+   }
+   return el.fill !== null && pointInPolygon(x, y, pts);
+ }
++
++function nearPolygon(poly: { x: number; y: number }[], x: number, y: number, r: number): boolean {
++  for (let i = 0; i < poly.length; i++) {
++    const a = poly[i], b = poly[(i + 1) % poly.length];
++    if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= r) return true;
++  }
++  return false;
++}
++
++/** Altura (mundo) da faixa do título acima do quadro. */
++export const FRAME_TITLE_H = 22;
++
++/** Quadro só é "tocado" pelo contorno ou pela faixa do título; o miolo deixa passar o clique para o que está dentro. */
++function frameHit(el: FrameElement, x: number, y: number, r: number): boolean {
++  const reach = r + 4;
++  const inX = x >= el.x - reach && x <= el.x + el.w + reach;
++  const inY = y >= el.y - reach && y <= el.y + el.h + reach;
++  if (!inX || !inY) {
++    // faixa do título (acima do canto superior esquerdo)
++    const tw = Math.min(el.w, Math.max(60, el.title.length * 8 + 16));
++    return x >= el.x && x <= el.x + tw && y >= el.y - FRAME_TITLE_H - reach && y <= el.y;
++  }
++  const nearEdge = x - el.x <= reach || el.x + el.w - x <= reach || y - el.y <= reach || el.y + el.h - y <= reach;
++  if (nearEdge) return true;
++  const tw = Math.min(el.w, Math.max(60, el.title.length * 8 + 16));
++  return x >= el.x && x <= el.x + tw && y >= el.y - FRAME_TITLE_H && y <= el.y;
++}
+diff --git a/src/core/mapActions.ts b/src/core/mapActions.ts
+new file mode 100644
+index 0000000..11900bf
+--- /dev/null
++++ b/src/core/mapActions.ts
+@@ -0,0 +1,359 @@
++// Ações de mapa mental e quadros ligadas ao store (teclado, barra de ferramentas, ferramentas do canvas).
++// Toda operação grava com `replaceElements`: um único passo de desfazer, mesmo mexendo em vários nós.
++import { create } from "zustand";
++import { makeBinding, solveArrow } from "./binding";
++import { Camera, clampZoom } from "./camera";
++import { fitFrameToContent, framesOf, makeFrame, settleFrames, ungroupFrame, wrapInFrame } from "./frames";
++import { BranchStyle, HirakuElement, ID, LinearElement, MapLayout, NodeElement, newId } from "./model";
++import {
++  Added, Measure, NodePatch, NODE_PRESETS, addChild, addSibling, ancestorsOf, childrenMap, detachToRoot, focusBranch, isNodeEl,
++  mapFromOutline, neighbor, newRoot, nodesOf, parseOutline, refitAll, relayout, reparent, reorderByPosition, rootOf,
++  setAllCollapsed, setNodeText, styleNodes, subtreeIds, toOutline, toggleCollapse, withDependents,
++} from "./mindmap";
++import { elementBounds } from "./selection";
++import { selectActivePage, useDoc, useSel, useTool, useView } from "./store";
++import { measureBlock } from "./text";
++import { useUI } from "./ui";
++
++const measure: Measure = (t, f, s) => measureBlock(t, f, s);
++
++const els = () => selectActivePage(useDoc.getState()).elements;
++const commit = (next: HirakuElement[]) => {
++  if (next !== els()) useDoc.getState().replaceElements(next);
++};
++const selIds = () => useSel.getState().ids;
++const selNodes = (): NodeElement[] => {
++  const ids = new Set(selIds());
++  return nodesOf(els()).filter((n) => ids.has(n.id));
++};
++const toast = (m: string) => useUI.getState().showToast(m);
++
++// ---------- edição do texto de nós e do título de quadros ----------
++export interface LabelSession { token: number; id: ID; kind: "node" | "frame"; text: string; isNew: boolean }
++interface LabelState { session: LabelSession | null }
++export const useLabel = create<LabelState>(() => ({ session: null }));
++let labelCounter = 0;
++
++export function beginLabel(id: ID, isNew = false) {
++  commitLabel();
++  const el = els().find((e) => e.id === id);
++  if (!el || (el.type !== "node" && el.type !== "frame")) return;
++  useLabel.setState({
++    session: { token: ++labelCounter, id, kind: el.type, text: el.type === "node" ? el.text : el.title, isNew },
++  });
++}
++
++export const patchLabel = (text: string) => useLabel.setState((s) => (s.session ? { session: { ...s.session, text } } : s));
++
++/** Confirma a edição. Nó novo e vazio é descartado; nó existente com texto vazio mantém o texto antigo. */
++export function commitLabel(token?: number, cancel = false) {
++  const s = useLabel.getState().session;
++  if (!s || (token !== undefined && token !== s.token)) return;
++  useLabel.setState({ session: null });
++  const cur = els().find((e) => e.id === s.id);
++  if (!cur) return;
++  const text = s.text.replace(/\s+$/, "");
++  if (cur.type === "node") {
++    if (!text.trim() || cancel) {
++      if (s.isNew && !text.trim()) {
++        useDoc.getState().removeElements([cur.id]);
++        useSel.getState().set(cur.parentId ? [cur.parentId] : []);
++      }
++      return;
++    }
++    if (text !== cur.text) commit(setNodeText(els(), cur.id, text, measure));
++  } else if (cur.type === "frame" && !cancel && text.trim() && text !== cur.title) {
++    commit(els().map((e) => (e.id === cur.id ? { ...cur, title: text } : e)));
++  }
++}
++
++// ---------- criar ----------
++function finishAdd(a: Added | null, edit = true) {
++  if (!a) return;
++  // nós novos entram num quadro se a raiz estiver dentro de um
++  commit(a.elements);
++  useSel.getState().set([a.id]);
++  if (edit) beginLabel(a.id, true);
++}
++
++/** Novo mapa no ponto P (centro do nó raiz). */
++export function createRootAt(P: { x: number; y: number }) {
++  const a = newRoot(els(), P.x, P.y, "Ideia central", measure);
++  const withFrame = settleFrames(a.elements, [a.id]);
++  commit(withFrame);
++  useSel.getState().set([a.id]);
++  useTool.getState().setTool("select");
++  beginLabel(a.id, false);
++}
++
++/** Centro da área visível, em coordenadas do mundo. */
++export function viewCenter(): { x: number; y: number } {
++  const c = useView.getState().camera;
++  return { x: (window.innerWidth / 2 - c.x) / c.zoom, y: (window.innerHeight / 2 - c.y) / c.zoom };
++}
++
++export function addChildToSelection(): boolean {
++  const sel = selNodes();
++  if (sel.length !== 1) {
++    if (!sel.length && selIds().length === 0) {
++      // Tab sem nada selecionado: começa um mapa novo no centro da tela
++      createRootAt(viewCenter());
++      return true;
++    }
++    return false;
++  }
++  finishAdd(addChild(els(), sel[0].id, "Tópico", measure));
++  return true;
++}
++
++export function addSiblingToSelection(before = false): boolean {
++  const sel = selNodes();
++  if (sel.length !== 1) return false;
++  finishAdd(addSibling(els(), sel[0].id, "Tópico", measure, before));
++  return true;
++}
++
++/** Adiciona um filho a `id` (usado pelo clique da ferramenta Mapa). */
++export function addChildTo(id: ID) {
++  finishAdd(addChild(els(), id, "Tópico", measure));
++}
++
++export function editSelectedLabel(): boolean {
++  const ids = selIds();
++  if (ids.length !== 1) return false;
++  const e = els().find((x) => x.id === ids[0]);
++  if (!e || (e.type !== "node" && e.type !== "frame")) return false;
++  beginLabel(e.id);
++  return true;
++}
++
++// ---------- recolher / navegar ----------
++export function toggleCollapseSelection() {
++  const sel = selNodes();
++  if (!sel.length) return;
++  let out = els();
++  const want = !sel.every((n) => n.collapsed);
++  for (const n of sel) out = toggleCollapse(out, n.id, want);
++  commit(out);
++}
++
++export function collapseMap(collapsed: boolean, fromLevel = 1) {
++  const sel = selNodes();
++  const roots = new Set(sel.map((n) => rootOf(els(), n.id)?.id).filter(Boolean) as ID[]);
++  if (!roots.size) { toast("Selecione um nó do mapa."); return; }
++  let out = els();
++  for (const r of roots) out = setAllCollapsed(out, r, collapsed, fromLevel);
++  commit(out);
++}
++
++export function focusSelection() {
++  const sel = selNodes();
++  if (sel.length !== 1) return;
++  commit(focusBranch(els(), sel[0].id));
++}
++
++export function selectNeighbor(dir: "left" | "right" | "up" | "down"): boolean {
++  const sel = selNodes();
++  if (sel.length !== 1) return false;
++  const id = neighbor(els(), sel[0].id, dir);
++  if (id) useSel.getState().set([id]);
++  return true;
++}
++
++/** Pai (Alt+↑ / Esc no nó) e primeiro filho (Alt+↓). */
++export function selectParent(): boolean {
++  const sel = selNodes();
++  if (sel.length !== 1) return false;
++  const a = ancestorsOf(els(), sel[0].id)[0];
++  if (a) useSel.getState().set([a]);
++  return true;
++}
++
++// ---------- estilo ----------
++export function styleSelection(patch: NodePatch, withSubtree = false) {
++  const sel = selNodes();
++  if (!sel.length) return;
++  // `layout`/`branchStyle` pertencem à raiz do mapa
++  const { layout, branchStyle, ...rest } = patch;
++  let out = els();
++  if (Object.keys(rest).length) out = styleNodes(out, sel.map((n) => n.id), rest, measure, withSubtree);
++  if (layout || branchStyle) {
++    const roots = new Set(sel.map((n) => rootOf(out, n.id)?.id).filter(Boolean) as ID[]);
++    out = styleNodes(out, [...roots], { ...(layout ? { layout } : {}), ...(branchStyle ? { branchStyle } : {}) }, measure);
++  }
++  commit(out);
++}
++
++export const setMapLayout = (layout: MapLayout) => styleSelection({ layout });
++export const setBranchStyle = (branchStyle: BranchStyle) => styleSelection({ branchStyle });
++
++/** Código visual pronto (prioridade alta, validado…). */
++export function applyPreset(id: string, withSubtree = false) {
++  const p = NODE_PRESETS.find((x) => x.id === id);
++  if (!p) return;
++  styleSelection({ fill: p.fill, stroke: p.stroke, color: p.color, branchColor: p.stroke }, withSubtree);
++}
++
++export function toggleDone() {
++  const sel = selNodes();
++  if (!sel.length) return;
++  const want = !sel.every((n) => n.done);
++  styleSelection({ done: want });
++}
++
++// ---------- estrutura ----------
++export function detachSelection() {
++  const sel = selNodes().filter((n) => n.parentId);
++  if (!sel.length) return;
++  let out = els();
++  for (const n of sel) out = detachToRoot(out, n.id);
++  commit(out);
++}
++
++/** Aplica o resultado de arrastar nós: reparenta pelo nó sob o centro ou reordena entre irmãos. */
++export function settleMoved(next: HirakuElement[], draggedIds: ID[]): HirakuElement[] {
++  const dragged = new Set(draggedIds);
++  const byId = new Map(next.map((e) => [e.id, e]));
++  let all = els().map((e) => byId.get(e.id) ?? e);
++  const tops = nodesOf(all).filter((n) => dragged.has(n.id) && !(n.parentId && dragged.has(n.parentId)));
++  for (const t of tops) {
++    const cur = nodesOf(all).find((n) => n.id === t.id)!;
++    const sub = subtreeIds(all, cur.id);
++    const cx = cur.x + cur.w / 2, cy = cur.y + cur.h / 2;
++    const target = nodesOf(all)
++      .filter((n) => !sub.has(n.id) && !n.hidden && cx >= n.x && cx <= n.x + n.w && cy >= n.y && cy <= n.y + n.h)
++      .pop();
++    if (target) all = reparent(all, cur.id, target.id);
++    else if (cur.parentId) all = reorderByPosition(all, cur.id);
++    else all = relayout(all);
++  }
++  return settleFrames(all, [...dragged]);
++}
++
++// ---------- quadros ----------
++export function wrapSelectionInFrame() {
++  const ids = selIds();
++  if (!ids.length) {
++    // sem seleção: quadro vazio no centro da tela
++    const c = viewCenter();
++    const f = makeFrame(newId(), c.x - 240, c.y - 160, 480, 320);
++    commit([f, ...els()]);
++    useSel.getState().set([f.id]);
++    beginLabel(f.id);
++    return;
++  }
++  // se há quadros e nós, o filho de um nó selecionado já anda com o pai
++  const r = wrapInFrame(els(), ids);
++  if (!r) return;
++  commit(r.elements);
++  useSel.getState().set([r.id]);
++  beginLabel(r.id);
++}
++
++export function ungroupSelection() {
++  const ids = selIds();
++  let out = els();
++  for (const id of ids) out = ungroupFrame(out, id);
++  commit(out);
++  useSel.getState().set(ids.filter((id) => !framesOf(els()).some((f) => f.id === id)));
++}
++
++export function fitFrameSelection() {
++  let out = els();
++  for (const id of selIds()) out = fitFrameToContent(out, id);
++  commit(out);
++}
++
++export function recolorFrames(color: string) {
++  const ids = new Set(selIds());
++  commit(els().map((e) => (e.type === "frame" && ids.has(e.id) ? { ...e, color } : e)));
++}
++
++/** Cria um quadro a partir de um retângulo arrastado; adota o que estiver dentro. */
++export function createFrameFromBox(b: { x: number; y: number; w: number; h: number }) {
++  const f = makeFrame(newId(), b.x, b.y, Math.max(80, b.w), Math.max(60, b.h));
++  const all = settleFrames([f, ...els()], [...els().map((e) => e.id), f.id]);
++  // só adota elementos que NÃO têm quadro mais interno: settle já escolhe o mais interno
++  commit(all);
++  useSel.getState().set([f.id]);
++  useTool.getState().setTool("select");
++  beginLabel(f.id);
++}
++
++/** Vai (câmera) até um quadro/seleção. */
++export function fitToSelection(all = false) {
++  const ids = new Set(selIds());
++  const pool = all || !ids.size ? els() : els().filter((e) => ids.has(e.id) || e.frameId && ids.has(e.frameId));
++  const list = pool.filter((e) => !(e.type === "node" && e.hidden));
++  if (!list.length) return;
++  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
++  for (const e of list) {
++    const b = elementBounds(e);
++    minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY);
++    maxX = Math.max(maxX, b.maxX); maxY = Math.max(maxY, b.maxY);
++  }
++  const W = window.innerWidth, H = window.innerHeight;
++  const pad = 90;
++  const zoom = clampZoom(Math.min((W - pad * 2) / Math.max(1, maxX - minX), (H - pad * 2) / Math.max(1, maxY - minY), 2));
++  const cam: Camera = { zoom, x: W / 2 - ((minX + maxX) / 2) * zoom, y: H / 2 - ((minY + maxY) / 2) * zoom };
++  useView.getState().setCamera(cam);
++}
++
++// ---------- conectores livres ----------
++/** Seta ligando dois elementos (nós de ramos diferentes, formas…): o par de seleção, na ordem em que foram marcados. */
++export function connectSelection(): boolean {
++  const ids = selIds();
++  const all = els();
++  const pair = ids.map((id) => all.find((e) => e.id === id)).filter((e): e is HirakuElement => !!e && (e.type === "node" || e.type === "text" || ["rect", "ellipse", "diamond"].includes(e.type)));
++  if (pair.length !== 2) {
++    toast("Selecione 2 nós (Shift+clique) para ligá-los com uma seta.");
++    return false;
++  }
++  const [a, b] = pair as unknown as [NodeElement, NodeElement];
++  const center = (e: NodeElement) => ({ x: e.x + e.w / 2, y: e.y + e.h / 2 });
++  const t = useTool.getState();
++  const arrow: LinearElement = {
++    id: newId(), type: "arrow", points: [center(a), center(b)],
++    stroke: t.color, strokeWidth: 2.5, strokeStyle: "dashed", startHead: "none", endHead: "arrow", curved: false,
++    startBinding: makeBinding(a, center(a)), endBinding: makeBinding(b, center(b)), opacity: 1,
++  };
++  const solved = solveArrow(arrow, new Map(all.map((e) => [e.id, e])));
++  commit([...all, solved]);
++  useSel.getState().set([solved.id]);
++  return true;
++}
++
++// ---------- lista (outline) ----------
++export function exportOutlineOfSelection(): string | null {
++  const sel = selNodes();
++  const root = sel.length ? rootOf(els(), sel[0].id) : nodesOf(els()).find((n) => !n.parentId);
++  return root ? toOutline(els(), root.id) : null;
++}
++
++export function importOutlineText(text: string): boolean {
++  const items = parseOutline(text);
++  if (!items.length) return false;
++  const a = mapFromOutline(els(), items, viewCenter(), measure);
++  if (!a) return false;
++  commit(a.elements);
++  useSel.getState().set([a.id]);
++  fitToSelectionSoon();
++  return true;
++}
++
++function fitToSelectionSoon() {
++  setTimeout(() => fitToSelection(false), 30);
++}
++
++/** Refaz tamanho e layout de todos os mapas (depois de abrir arquivo ou trocar de fonte). */
++export function reflowAll() {
++  commit(refitAll(els(), measure));
++}
++
++export const mapInfo = () => {
++  const n = nodesOf(els());
++  const roots = n.filter((x) => !x.parentId).length;
++  return { nodes: n.length, maps: roots };
++};
++
++export { isNodeEl, childrenMap, withDependents };
+diff --git a/src/core/mindmap.test.ts b/src/core/mindmap.test.ts
+new file mode 100644
+index 0000000..d870426
+--- /dev/null
++++ b/src/core/mindmap.test.ts
+@@ -0,0 +1,140 @@
++import { describe, expect, it } from "vitest";
++import { makeFrame, settleFrames, ungroupFrame, wrapInFrame } from "./frames";
++import { HirakuElement, NodeElement } from "./model";
++import {
++  addChild, addSibling, approxMeasure, childrenMap, mapFromOutline, newRoot, nodesOf, parseOutline, relayout, reparent,
++  setAllCollapsed, subtreeIds, toOutline, toggleCollapse, rootOf,
++} from "./mindmap";
++import { reidentify } from "./binding";
++import { normalizeDoc } from "./model";
++
++const M = approxMeasure;
++const overlap = (a: NodeElement, b: NodeElement) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
++
++function build() {
++  let els: HirakuElement[] = [];
++  const r = newRoot(els, 0, 0, "Centro", M);
++  els = r.elements;
++  const ids: string[] = [];
++  for (let i = 0; i < 4; i++) {
++    const a = addChild(els, r.id, "Ramo " + i, M)!;
++    els = a.elements;
++    ids.push(a.id);
++    for (let j = 0; j < 3; j++) {
++      const b = addChild(els, a.id, "Sub " + i + j, M)!;
++      els = b.elements;
++    }
++  }
++  return { els, root: r.id, ids };
++}
++
++describe("mapa mental", () => {
++  it("layout sem sobreposição de nós visíveis", () => {
++    const { els } = build();
++    const ns = nodesOf(els);
++    expect(ns.length).toBe(1 + 4 + 12);
++    for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) expect(overlap(ns[i], ns[j])).toBe(false);
++  });
++
++  it("dois lados: ramos de cada lado da raiz", () => {
++    const { els, root } = build();
++    const r = nodesOf(els).find((n) => n.id === root)!;
++    const kids = childrenMap(els).get(root)!;
++    const left = kids.filter((k) => k.x + k.w / 2 < r.x + r.w / 2).length;
++    expect(left).toBe(2);
++  });
++
++  it("recolher esconde descendentes e libera o espaço", () => {
++    const { els, ids } = build();
++    const col = toggleCollapse(els, ids[0], true);
++    const hid = nodesOf(col).filter((n) => n.hidden).length;
++    expect(hid).toBe(3);
++    expect(nodesOf(toggleCollapse(col, ids[0], false)).some((n) => n.hidden)).toBe(false);
++  });
++
++  it("recolher/expandir tudo", () => {
++    const { els, root } = build();
++    const all = setAllCollapsed(els, root, true, 1);
++    expect(nodesOf(all).filter((n) => n.hidden).length).toBe(12);
++    const open = setAllCollapsed(all, root, false);
++    expect(nodesOf(open).some((n) => n.hidden || n.collapsed)).toBe(false);
++  });
++
++  it("irmão e reparentar (sem ciclos)", () => {
++    const { els, ids } = build();
++    const s = addSibling(els, ids[1], "Novo", M)!;
++    const n = nodesOf(s.elements).find((x) => x.id === s.id)!;
++    expect(n.parentId).toBe(nodesOf(els).find((x) => x.id === ids[1])!.parentId);
++    const sub = [...subtreeIds(els, ids[0])];
++    expect(reparent(els, ids[0], sub[1])).toBe(els); // pai dentro do próprio ramo: recusa
++    const moved = reparent(els, ids[0], ids[1]);
++    expect(rootOf(moved, ids[0])!.text).toBe("Centro");
++    expect(nodesOf(moved).find((x) => x.id === ids[0])!.parentId).toBe(ids[1]);
++  });
++
++  it("relayout é idempotente", () => {
++    const { els } = build();
++    expect(relayout(els)).toBe(els);
++  });
++
++  it("outline: ida e volta", () => {
++    const { els, root } = build();
++    const txt = toOutline(els, root);
++    const items = parseOutline(txt);
++    expect(items.length).toBe(17);
++    expect(items[0]).toEqual({ text: "Centro", depth: 0 });
++    const m = mapFromOutline([], items, { x: 0, y: 0 }, M)!;
++    expect(nodesOf(m.elements).length).toBe(17);
++  });
++
++  it("outline com tabs, números e saltos de nível", () => {
++    const it = parseOutline("Tema\n\tA\n\t\t\t\tfundo\n1. B");
++    expect(it.map((i) => i.depth)).toEqual([0, 1, 2, 0]);
++  });
++
++  it("cópia remapeia pai e quadro", () => {
++    const { els } = build();
++    const copy = reidentify(els);
++    const ids = new Set(copy.map((e) => e.id));
++    for (const n of nodesOf(copy)) if (n.parentId) expect(ids.has(n.parentId)).toBe(true);
++    const part = reidentify(els.filter((e) => e.type === "node" && e.text.startsWith("Sub")));
++    expect(nodesOf(part).every((n) => n.parentId === null)).toBe(true);
++  });
++
++  it("normalizeDoc aceita nós/quadros e descarta lixo", () => {
++    const { els } = build();
++    const doc = normalizeDoc({ version: 1, pages: [{ id: "p", name: "x", elements: [...els, { type: "node", id: "bad" }, makeFrame("f", 0, 0, 10, 10)] }] });
++    expect(doc.pages[0].elements.some((e) => e.type === "frame")).toBe(true);
++  });
++});
++
++describe("quadros", () => {
++  it("adota pelo quadro mais interno e aceita aninhamento", () => {
++    const big = makeFrame("big", 0, 0, 1000, 1000);
++    const small = makeFrame("small", 100, 100, 300, 300);
++    const t = { id: "t", type: "text", x: 150, y: 150, w: 20, h: 20, angle: 0, text: "x", fontSize: 16, fontFamily: "sans", align: "left", color: "#000", opacity: 1 } as HirakuElement;
++    let els: HirakuElement[] = [big, small, t];
++    els = settleFrames(els, ["small", "t"]);
++    expect(els.find((e) => e.id === "t")!.frameId).toBe("small");
++    expect(els.find((e) => e.id === "small")!.frameId).toBe("big");
++    expect(els.find((e) => e.id === "big")!.frameId ?? null).toBe(null);
++  });
++
++  it("quadro nunca entra num descendente", () => {
++    const a = makeFrame("a", 0, 0, 500, 500);
++    const b = { ...makeFrame("b", 100, 100, 100, 100), frameId: "a" };
++    const out = settleFrames([a, b], ["a"]);
++    expect(out.find((e) => e.id === "a")!.frameId ?? null).toBe(null);
++  });
++
++  it("envolver e desfazer", () => {
++    const { els } = build();
++    const ids = nodesOf(els).slice(0, 3).map((n) => n.id);
++    const w = wrapInFrame(els, ids)!;
++    expect(w.elements[0].type).toBe("frame");
++    expect(w.elements.filter((e) => e.frameId === w.id).length).toBeGreaterThan(0);
++    const u = ungroupFrame(w.elements, w.id);
++    expect(u.some((e) => e.type === "frame")).toBe(false);
++    expect(u.every((e) => !e.frameId)).toBe(true);
++  });
++});
+diff --git a/src/core/mindmap.ts b/src/core/mindmap.ts
+new file mode 100644
+index 0000000..d859bab
+--- /dev/null
++++ b/src/core/mindmap.ts
+@@ -0,0 +1,614 @@
++// Mapa mental: árvore, layout automático, recolher/expandir, estilos e atalhos de edição. PURO (sem Pixi,
++// React nem store): recebe a lista de elementos e devolve uma NOVA lista; quem grava é core/mapActions.ts.
++//
++// A árvore vem de `parentId`; a ordem dos irmãos é a ordem dos nós na lista de elementos. Posição (x, y) e
++// `hidden` são derivados por `relayout` e gravados no nó para o desenho ser rápido.
++import {
++  BranchStyle, FontFamily, HirakuElement, ID, MapLayout, NodeElement, NodeShape, newId,
++} from "./model";
++
++/** Mede um bloco de texto (no app usa canvas 2D; nos testes, uma aproximação). */
++export type Measure = (text: string, family: FontFamily, size: number) => { w: number; h: number };
++
++export const approxMeasure: Measure = (text, _f, size) => {
++  const lines = text.split("\n");
++  return { w: Math.max(...lines.map((l) => l.length), 1) * size * 0.55, h: lines.length * size * 1.25 };
++};
++
++export const BRANCH_PALETTE = ["#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F", "#7B4FB5", "#0E8A9B", "#B5487A", "#5E6B7E"];
++
++/** Códigos visuais prontos (prioridade, status…). `stroke` também vira a cor do ramo se "recolorir ramo". */
++export const NODE_PRESETS: { id: string; label: string; fill: string | null; stroke: string; color: string }[] = [
++  { id: "high", label: "Prioridade alta", fill: "#F6D5D2", stroke: "#C8372D", color: "#7A1F18" },
++  { id: "mid", label: "Atenção", fill: "#F7E3BD", stroke: "#D98A1F", color: "#6B4208" },
++  { id: "ok", label: "Ideia validada", fill: "#CFE8DB", stroke: "#2F7D5B", color: "#174B34" },
++  { id: "info", label: "Informação", fill: "#C9D6F2", stroke: "#2F4B8F", color: "#1B2D5C" },
++  { id: "idea", label: "Ideia nova", fill: "#E4D9F4", stroke: "#7B4FB5", color: "#3F2468" },
++  { id: "plain", label: "Neutro", fill: "#FFFFFF", stroke: "#5E6B7E", color: "#1B2233" },
++];
++
++export const NODE_ICONS = ["✅", "⚠️", "⭐", "❓", "💡", "🔥", "📌", "🚩", "❤️", "1", "2", "3"];
++
++export const FONT_SIZE_ROOT = 24;
++export const FONT_SIZE_NODE = 18;
++const GAP_LEVEL_H = 56;
++const GAP_SIB_H = 14;
++const GAP_LEVEL_V = 48;
++const GAP_SIB_V = 22;
++
++// ---------- cores ----------
++const clamp8 = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
++/** Mistura `hex` com branco (amount 0 = cor pura, 1 = branco). */
++export function tint(hex: string, amount: number): string {
++  const m = /^#([0-9a-f]{6})$/i.exec(hex);
++  if (!m) return hex;
++  const n = parseInt(m[1], 16);
++  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => clamp8(c + (255 - c) * amount));
++  return "#" + ch.map((c) => c.toString(16).padStart(2, "0")).join("").toUpperCase();
++}
++/** Preto ou branco, o que ler melhor sobre `hex`. */
++export function readableOn(hex: string): string {
++  const m = /^#([0-9a-f]{6})$/i.exec(hex);
++  if (!m) return "#1B2233";
++  const n = parseInt(m[1], 16);
++  const l = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
++  return l > 0.6 ? "#1B2233" : "#FFFFFF";
++}
++
++// ---------- árvore ----------
++export const isNodeEl = (e: HirakuElement): e is NodeElement => e.type === "node";
++export const nodesOf = (els: HirakuElement[]): NodeElement[] => els.filter(isNodeEl);
++
++/** Pai VÁLIDO (existe e é um nó) ou null (raiz). Evita nós órfãos depois de apagar/colar. */
++export function parentMap(els: HirakuElement[]): Map<ID, ID | null> {
++  const ids = new Set(nodesOf(els).map((n) => n.id));
++  const out = new Map<ID, ID | null>();
++  for (const n of nodesOf(els)) out.set(n.id, n.parentId && n.parentId !== n.id && ids.has(n.parentId) ? n.parentId : null);
++  return out;
++}
++
++export function childrenMap(els: HirakuElement[]): Map<ID | null, NodeElement[]> {
++  const pm = parentMap(els);
++  const out = new Map<ID | null, NodeElement[]>();
++  for (const n of nodesOf(els)) {
++    const p = pm.get(n.id) ?? null;
++    const list = out.get(p);
++    if (list) list.push(n);
++    else out.set(p, [n]);
++  }
++  return out;
++}
++
++/** Ids do nó + todos os descendentes. */
++export function subtreeIds(els: HirakuElement[], id: ID): Set<ID> {
++  const ch = childrenMap(els);
++  const out = new Set<ID>();
++  const walk = (i: ID) => {
++    if (out.has(i)) return; // proteção contra ciclos em arquivos corrompidos
++    out.add(i);
++    for (const c of ch.get(i) ?? []) walk(c.id);
++  };
++  walk(id);
++  return out;
++}
++
++export function ancestorsOf(els: HirakuElement[], id: ID): ID[] {
++  const pm = parentMap(els);
++  const out: ID[] = [];
++  let cur = pm.get(id) ?? null;
++  while (cur && !out.includes(cur)) {
++    out.push(cur);
++    cur = pm.get(cur) ?? null;
++  }
++  return out;
++}
++
++export const depthOf = (els: HirakuElement[], id: ID): number => ancestorsOf(els, id).length;
++
++export function rootOf(els: HirakuElement[], id: ID): NodeElement | null {
++  const anc = ancestorsOf(els, id);
++  const rootId = anc.length ? anc[anc.length - 1] : id;
++  return nodesOf(els).find((n) => n.id === rootId) ?? null;
++}
++
++export const rootsOf = (els: HirakuElement[]): NodeElement[] => childrenMap(els).get(null) ?? [];
++
++/** Todos os nós (e ids extras) a mover/copiar/apagar junto: descendentes e membros de quadro. */
++export function withDependents(els: HirakuElement[], ids: Iterable<ID>): Set<ID> {
++  const out = new Set<ID>(ids);
++  let grew = true;
++  const pm = parentMap(els);
++  while (grew) {
++    grew = false;
++    for (const e of els) {
++      if (out.has(e.id)) continue;
++      const parent = e.type === "node" ? pm.get(e.id) : null;
++      const inFrame = e.frameId;
++      if ((parent && out.has(parent)) || (inFrame && out.has(inFrame))) {
++        out.add(e.id);
++        grew = true;
++      }
++    }
++  }
++  return out;
++}
++
++// ---------- tamanho do nó ----------
++const PAD: Record<NodeShape, [number, number]> = {
++  pill: [18, 8], rounded: [14, 8], rect: [12, 8], ellipse: [26, 12], underline: [6, 6], none: [4, 4],
++};
++
++export function nodeSize(n: Pick<NodeElement, "text" | "fontFamily" | "fontSize" | "shape" | "icon">, measure: Measure): { w: number; h: number } {
++  const label = n.text || " ";
++  const m = measure(label, n.fontFamily, n.fontSize);
++  const [px, py] = PAD[n.shape];
++  const iconW = n.icon ? n.fontSize * 1.35 : 0;
++  const minW = n.shape === "none" || n.shape === "underline" ? 24 : 56;
++  return { w: Math.max(minW, Math.ceil(m.w + iconW + px * 2)), h: Math.ceil(Math.max(m.h, n.icon ? n.fontSize * 1.25 : 0) + py * 2) };
++}
++
++/** Recalcula w/h de um nó (a posição fica; o layout ajusta depois). */
++export function refit(n: NodeElement, measure: Measure): NodeElement {
++  const { w, h } = nodeSize(n, measure);
++  if (w === n.w && h === n.h) return n;
++  // mantém o centro: a raiz não "anda" ao editar o texto
++  return { ...n, x: n.x + (n.w - w) / 2, y: n.y + (n.h - h) / 2, w, h };
++}
++
++// ---------- layout ----------
++type Dir = "right" | "left" | "down";
++
++interface Placed { x: number; y: number }
++
++/**
++ * Posiciona todos os mapas da lista. A raiz de cada mapa fica onde está; os descendentes são colocados em
++ * volta dela sem sobreposição (altura de cada ramo = soma dos filhos). Também recalcula `hidden`.
++ * Devolve a MESMA lista se nada mudou.
++ */
++export function relayout(els: HirakuElement[]): HirakuElement[] {
++  const ch = childrenMap(els);
++  const pos = new Map<ID, Placed>();
++  const hidden = new Set<ID>();
++
++  // escondido = algum ancestral recolhido
++  const markHidden = (n: NodeElement, hid: boolean, seen = new Set<ID>()) => {
++    if (seen.has(n.id)) return;
++    seen.add(n.id);
++    for (const c of ch.get(n.id) ?? []) {
++      if (hid || n.collapsed) hidden.add(c.id);
++      markHidden(c, hid || n.collapsed, seen);
++    }
++  };
++  const visibleKids = (n: NodeElement) => (n.collapsed ? [] : ch.get(n.id) ?? []);
++
++  for (const root of ch.get(null) ?? []) {
++    markHidden(root, false);
++    const layout: MapLayout = root.layout;
++    const cross = (n: NodeElement, d: Dir) => (d === "down" ? n.w : n.h);
++    const sibGap = (d: Dir) => (d === "down" ? GAP_SIB_V : GAP_SIB_H);
++    const levelGap = (d: Dir) => (d === "down" ? GAP_LEVEL_V : GAP_LEVEL_H);
++
++    const memo = new Map<ID, number>();
++    const extent = (n: NodeElement, d: Dir): number => {
++      const hit = memo.get(n.id + d);
++      if (hit !== undefined) return hit;
++      const kids = visibleKids(n);
++      let total = 0;
++      kids.forEach((k, i) => (total += extent(k, d) + (i ? sibGap(d) : 0)));
++      const v = Math.max(cross(n, d), total);
++      memo.set(n.id + d, v);
++      return v;
++    };
++
++    const rec = (n: NodeElement, at: Placed, d: Dir, kids: NodeElement[]) => {
++      // `at` = posição (canto superior esquerdo) já decidida de `n`
++      pos.set(n.id, at);
++      if (!kids.length) return;
++      let total = 0;
++      kids.forEach((k, i) => (total += extent(k, d) + (i ? sibGap(d) : 0)));
++      if (d === "down") {
++        let cx = at.x + n.w / 2 - total / 2;
++        for (const k of kids) {
++          const ext = extent(k, d);
++          rec(k, { x: cx + ext / 2 - k.w / 2, y: at.y + n.h + levelGap(d) }, d, visibleKids(k));
++          cx += ext + sibGap(d);
++        }
++      } else {
++        let cy = at.y + n.h / 2 - total / 2;
++        for (const k of kids) {
++          const ext = extent(k, d);
++          const x = d === "right" ? at.x + n.w + levelGap(d) : at.x - levelGap(d) - k.w;
++          rec(k, { x, y: cy + ext / 2 - k.h / 2 }, d, visibleKids(k));
++          cy += ext + sibGap(d);
++        }
++      }
++    };
++
++    const rootAt = { x: root.x, y: root.y };
++    const rootKids = visibleKids(root);
++    if (layout === "both") {
++      const right: NodeElement[] = [];
++      const left: NodeElement[] = [];
++      let rs = 0, ls = 0;
++      for (const k of rootKids) {
++        const e = extent(k, "right");
++        const goRight = k.side === "right" ? true : k.side === "left" ? false : rs <= ls;
++        if (goRight) { right.push(k); rs += e; } else { left.push(k); ls += e; }
++      }
++      pos.set(root.id, rootAt);
++      // cada lado é um "mapa" ancorado na raiz, com os filhos centrados na altura da raiz
++      const side = (kids: NodeElement[], d: Dir) => {
++        if (!kids.length) return;
++        let total = 0;
++        kids.forEach((k, i) => (total += extent(k, d) + (i ? sibGap(d) : 0)));
++        let cy = rootAt.y + root.h / 2 - total / 2;
++        for (const k of kids) {
++          const ext = extent(k, d);
++          const x = d === "right" ? rootAt.x + root.w + levelGap(d) : rootAt.x - levelGap(d) - k.w;
++          rec(k, { x, y: cy + ext / 2 - k.h / 2 }, d, visibleKids(k));
++          cy += ext + sibGap(d);
++        }
++      };
++      side(right, "right");
++      side(left, "left");
++    } else {
++      rec(root, rootAt, layout as Dir, rootKids);
++    }
++  }
++
++  let out: HirakuElement[] | null = null;
++  els.forEach((e, i) => {
++    if (e.type !== "node") return;
++    const p = pos.get(e.id);
++    const h = hidden.has(e.id);
++    const nx = p ? p.x : e.x, ny = p ? p.y : e.y;
++    if (Math.abs(nx - e.x) < 0.01 && Math.abs(ny - e.y) < 0.01 && !!e.hidden === h) return;
++    out ??= els.slice();
++    out[i] = { ...e, x: nx, y: ny, hidden: h };
++  });
++  return out ?? els;
++}
++
++// ---------- criação ----------
++export function defaultNodeStyle(depth: number, branchColor: string): Pick<NodeElement, "shape" | "fill" | "stroke" | "color" | "fontSize" | "strokeWidth"> {
++  if (depth === 0) return { shape: "rounded", fill: "#2F4B8F", stroke: null, color: "#FFFFFF", fontSize: FONT_SIZE_ROOT, strokeWidth: 2 };
++  if (depth === 1) return { shape: "pill", fill: tint(branchColor, 0.85), stroke: branchColor, color: "#1B2233", fontSize: FONT_SIZE_NODE, strokeWidth: 2 };
++  return { shape: "underline", fill: null, stroke: branchColor, color: "#1B2233", fontSize: FONT_SIZE_NODE - 2, strokeWidth: 2 };
++}
++
++export function makeNode(id: ID, x: number, y: number, text: string, over: Partial<NodeElement> = {}): NodeElement {
++  const depth0 = defaultNodeStyle(0, BRANCH_PALETTE[0]);
++  return {
++    id, type: "node", x, y, w: 80, h: 36, angle: 0,
++    text, fontFamily: "sans", icon: null, done: false, parentId: null, collapsed: false, side: "auto",
++    layout: "both", branchStyle: "curve", branchColor: BRANCH_PALETTE[0], hidden: false, opacity: 1,
++    ...depth0, ...over,
++  };
++}
++
++export interface Added { elements: HirakuElement[]; id: ID }
++
++/** Novo mapa (nó raiz) no ponto dado. */
++export function newRoot(els: HirakuElement[], x: number, y: number, text: string, measure: Measure): Added {
++  const n = refit(makeNode(newId(), x, y, text), measure);
++  return { elements: [...els, { ...n, x: x - n.w / 2, y: y - n.h / 2 }], id: n.id };
++}
++
++/** Novo filho (último dos irmãos). Em mapas "dos dois lados" vai para o lado mais leve. */
++export function addChild(els: HirakuElement[], parentId: ID, text: string, measure: Measure): Added | null {
++  const parent = nodesOf(els).find((n) => n.id === parentId);
++  if (!parent) return null;
++  const depth = depthOf(els, parentId) + 1;
++  const ch = childrenMap(els);
++  const sibs = ch.get(parentId) ?? [];
++  const root = rootOf(els, parentId)!;
++  const branchColor = depth === 1 ? BRANCH_PALETTE[sibs.length % BRANCH_PALETTE.length] : parent.branchColor;
++  const st = defaultNodeStyle(depth, branchColor);
++  let side: NodeElement["side"] = "auto";
++  if (depth === 1 && root.layout === "both") {
++    // lado com menos "peso" (soma da altura dos ramos) — fica fixo, então o mapa não embaralha
++    let r = 0, l = 0;
++    for (const s of sibs) { const w = 1 + (ch.get(s.id)?.length ?? 0); if (s.side === "left") l += w; else r += w; }
++    side = r <= l ? "right" : "left";
++  }
++  const n = refit(
++    makeNode(newId(), parent.x, parent.y, text, {
++      ...st,
++      // filhos de quem já tem estilo próprio herdam forma e fonte (menos a raiz, que tem estilo de título)
++      ...(depth >= 2 ? { shape: parent.shape === "none" ? "none" : st.shape } : {}),
++      parentId, branchColor, side,
++      fontFamily: parent.fontFamily,
++    }),
++    measure,
++  );
++  // se estava recolhido, abre para o novo filho aparecer
++  const next = els.map((e) => (e.id === parentId && e.type === "node" && e.collapsed ? { ...e, collapsed: false } : e));
++  return { elements: relayout([...next, n]), id: n.id };
++}
++
++/** Novo irmão logo depois (ou antes) do nó. Na raiz, vira filho. */
++export function addSibling(els: HirakuElement[], id: ID, text: string, measure: Measure, before = false): Added | null {
++  const pm = parentMap(els);
++  const parentId = pm.get(id);
++  if (parentId === undefined) return null;
++  if (parentId === null) return addChild(els, id, text, measure);
++  const cur = nodesOf(els).find((n) => n.id === id)!;
++  const added = addChild(els, parentId, text, measure);
++  if (!added) return null;
++  // addChild põe no fim; move o novo nó para a posição certa e herda o lado do irmão
++  const list = added.elements.filter((e) => e.id !== added.id);
++  const nn = added.elements.find((e) => e.id === added.id)! as NodeElement;
++  const at = list.findIndex((e) => e.id === id);
++  const placed: NodeElement = { ...nn, side: cur.side, branchColor: depthOf(els, id) === 1 ? nn.branchColor : cur.branchColor };
++  list.splice(before ? at : at + 1, 0, placed);
++  return { elements: relayout(list), id: added.id };
++}
++
++// ---------- recolher / expandir ----------
++const patchNodes = (els: HirakuElement[], ids: Set<ID>, patch: (n: NodeElement) => NodeElement): HirakuElement[] => {
++  let changed = false;
++  const out = els.map((e) => {
++    if (e.type !== "node" || !ids.has(e.id)) return e;
++    const n = patch(e);
++    if (n !== e) changed = true;
++    return n;
++  });
++  return changed ? out : els;
++};
++
++export function toggleCollapse(els: HirakuElement[], id: ID, collapsed?: boolean): HirakuElement[] {
++  const has = (childrenMap(els).get(id) ?? []).length > 0;
++  return relayout(patchNodes(els, new Set([id]), (n) => {
++    const want = collapsed ?? !n.collapsed;
++    if (want && !has) return n; // nada para recolher
++    return n.collapsed === want ? n : { ...n, collapsed: want };
++  }));
++}
++
++/** Recolhe/expande o mapa inteiro. `fromLevel`: só nós a partir dessa profundidade (1 = filhos da raiz). */
++export function setAllCollapsed(els: HirakuElement[], rootId: ID, collapsed: boolean, fromLevel = 1): HirakuElement[] {
++  const ids = subtreeIds(els, rootId);
++  const ch = childrenMap(els);
++  const depth = (id: ID) => depthOf(els, id);
++  return relayout(patchNodes(els, ids, (n) => {
++    const has = (ch.get(n.id) ?? []).length > 0;
++    const want = collapsed ? has && depth(n.id) >= fromLevel : false;
++    return n.collapsed === want ? n : { ...n, collapsed: want };
++  }));
++}
++
++/** Modo foco: deixa aberto só o caminho até o nó; os irmãos ao longo do caminho ficam recolhidos. */
++export function focusBranch(els: HirakuElement[], id: ID): HirakuElement[] {
++  const path = new Set([id, ...ancestorsOf(els, id)]);
++  const ch = childrenMap(els);
++  const root = rootOf(els, id);
++  if (!root) return els;
++  const ids = subtreeIds(els, root.id);
++  return relayout(patchNodes(els, ids, (n) => {
++    const has = (ch.get(n.id) ?? []).length > 0;
++    if (!has) return n;
++    const want = path.has(n.id) ? false : true;
++    return n.collapsed === want ? n : { ...n, collapsed: want };
++  }));
++}
++
++export const visibleDescendantCount = (els: HirakuElement[], id: ID): number => subtreeIds(els, id).size - 1;
++
++// ---------- reparentar e reordenar ----------
++/** Move `id` (com os descendentes) para baixo de `newParentId`. Recusa ciclos. */
++export function reparent(els: HirakuElement[], id: ID, newParentId: ID, measure?: Measure): HirakuElement[] {
++  void measure;
++  const sub = subtreeIds(els, id);
++  if (sub.has(newParentId)) return els;
++  const np = nodesOf(els).find((n) => n.id === newParentId);
++  if (!np) return els;
++  const toRoot = parentMap(els).get(newParentId) === null;
++  const out = patchNodes(els, new Set([id]), (n) => ({ ...n, parentId: newParentId, side: "auto" }));
++  // dentro de um ramo, o nó assume a cor do ramo de destino
++  const recolored = toRoot ? out : patchNodes(out, sub, (n) => ({ ...n, branchColor: np.branchColor, stroke: n.stroke ? np.branchColor : n.stroke }));
++  // abre o destino para o nó movido continuar visível
++  return relayout(patchNodes(recolored, new Set([newParentId]), (n) => (n.collapsed ? { ...n, collapsed: false } : n)));
++}
++
++/** Torna o nó uma raiz (novo mapa) mantendo o lugar. */
++export function detachToRoot(els: HirakuElement[], id: ID): HirakuElement[] {
++  return relayout(patchNodes(els, new Set([id]), (n) => ({ ...n, parentId: null, side: "auto", layout: "both", branchStyle: "curve" })));
++}
++
++/** Reordena `id` entre os irmãos conforme a posição atual (usado ao soltar um nó arrastado). */
++export function reorderByPosition(els: HirakuElement[], id: ID): HirakuElement[] {
++  const pm = parentMap(els);
++  const parentId = pm.get(id);
++  if (parentId === undefined) return els;
++  const me = nodesOf(els).find((n) => n.id === id)!;
++  const sibs = (childrenMap(els).get(parentId) ?? []).filter((s) => s.id !== id);
++  if (!sibs.length) return els;
++  const root = rootOf(els, id)!;
++  const vertical = root.layout === "down";
++  const key = (n: NodeElement) => (vertical ? n.x + n.w / 2 : n.y + n.h / 2);
++  // em mapas "dos dois lados" só compara com irmãos do mesmo lado da raiz
++  const sameSide = (n: NodeElement) => (root.layout === "both" && parentId === root.id ? (n.x + n.w / 2 < root.x + root.w / 2) === (me.x + me.w / 2 < root.x + root.w / 2) : true);
++  const peers = sibs.filter(sameSide);
++  const mine = key(me);
++  const after = peers.filter((s) => key(s) < mine).pop();
++  const list = els.filter((e) => e.id !== id);
++  let target: number;
++  if (after) target = list.findIndex((e) => e.id === after.id) + 1;
++  else if (peers.length) target = list.findIndex((e) => e.id === peers[0].id);
++  else return els;
++  list.splice(target, 0, me);
++  let side = me.side;
++  if (root.layout === "both" && parentId === root.id) side = me.x + me.w / 2 < root.x + root.w / 2 ? "left" : "right";
++  return relayout(list.map((e) => (e.id === id && e.type === "node" ? { ...e, side } : e)));
++}
++
++// ---------- estilo ----------
++export type NodePatch = Partial<Pick<NodeElement, "shape" | "fill" | "stroke" | "color" | "fontSize" | "fontFamily" | "icon" | "done" | "branchColor" | "side" | "layout" | "branchStyle" | "strokeWidth">>;
++
++/** Aplica estilo aos nós `ids` (opcionalmente a todos os descendentes) e refaz tamanho/layout. */
++export function styleNodes(els: HirakuElement[], ids: ID[], patch: NodePatch, measure: Measure, withSubtree = false): HirakuElement[] {
++  const target = new Set<ID>();
++  for (const id of ids) (withSubtree ? subtreeIds(els, id) : new Set([id])).forEach((x) => target.add(x));
++  const out = patchNodes(els, target, (n) => {
++    const m = { ...n, ...patch };
++    // `layout` e `branchStyle` pertencem à raiz do mapa: ignorados em outros nós
++    return refit(m, measure);
++  });
++  return relayout(out);
++}
++
++export function setNodeText(els: HirakuElement[], id: ID, text: string, measure: Measure): HirakuElement[] {
++  return relayout(patchNodes(els, new Set([id]), (n) => (n.text === text ? n : refit({ ...n, text }, measure))));
++}
++
++/** Refaz tamanho de todos os nós (depois de abrir um arquivo, por exemplo) e o layout. */
++export function refitAll(els: HirakuElement[], measure: Measure): HirakuElement[] {
++  return relayout(els.map((e) => (e.type === "node" ? refit(e, measure) : e)));
++}
++
++// ---------- navegação por teclado ----------
++/** Próximo nó VISÍVEL na direção pedida, preferindo parentes (pai/filho/irmão) e depois o mais próximo. */
++export function neighbor(els: HirakuElement[], id: ID, dir: "left" | "right" | "up" | "down"): ID | null {
++  const nodes = nodesOf(els).filter((n) => !n.hidden);
++  const me = nodes.find((n) => n.id === id);
++  if (!me) return null;
++  const cx = me.x + me.w / 2, cy = me.y + me.h / 2;
++  let best: NodeElement | null = null;
++  let bestScore = Infinity;
++  for (const n of nodes) {
++    if (n.id === id) continue;
++    const dx = n.x + n.w / 2 - cx, dy = n.y + n.h / 2 - cy;
++    const along = dir === "right" ? dx : dir === "left" ? -dx : dir === "down" ? dy : -dy;
++    if (along <= 1) continue;
++    const across = dir === "left" || dir === "right" ? Math.abs(dy) : Math.abs(dx);
++    if (across > along * 2.2 + 40) continue; // fora do cone da direção
++    const score = along + across * 2.2;
++    if (score < bestScore) { bestScore = score; best = n; }
++  }
++  return best?.id ?? null;
++}
++
++// ---------- lista (outline) ----------
++export interface OutlineItem { text: string; depth: number }
++
++/** Texto indentado em lista Markdown ("- tópico"), um mapa por vez. */
++export function toOutline(els: HirakuElement[], rootId: ID): string {
++  const ch = childrenMap(els);
++  const lines: string[] = [];
++  const walk = (n: NodeElement, d: number) => {
++    const text = n.text.replace(/\n+/g, " ").trim();
++    const mark = n.done ? "[x] " : "";
++    lines.push(`${"  ".repeat(d)}- ${mark}${n.icon ? n.icon + " " : ""}${text}`);
++    for (const c of ch.get(n.id) ?? []) walk(c, d + 1);
++  };
++  const root = nodesOf(els).find((n) => n.id === rootId);
++  if (root) walk(root, 0);
++  return lines.join("\n") + "\n";
++}
++
++/** Lê uma lista indentada (espaços ou tabs; marcadores -, *, +, •, "1." ou nenhum). */
++export function parseOutline(text: string): OutlineItem[] {
++  const items: OutlineItem[] = [];
++  const stack: number[] = []; // indentações abertas
++  for (const raw of text.replace(/\r/g, "").split("\n")) {
++    if (!raw.trim()) continue;
++    const m = /^([ \t]*)(?:[-*+•]\s+|\d+[.)]\s+)?(.*)$/.exec(raw)!;
++    const indent = m[1].replace(/\t/g, "    ").length;
++    const label = m[2].replace(/^\[( |x|X)\]\s*/, "").trim();
++    if (!label) continue;
++    while (stack.length && stack[stack.length - 1] >= indent) stack.pop();
++    stack.push(indent);
++    items.push({ text: label, depth: stack.length - 1 });
++  }
++  // normaliza: um item nunca pode ser mais de 1 nível mais fundo que o anterior
++  let prev = -1;
++  for (const it of items) {
++    it.depth = Math.min(it.depth, prev + 1);
++    prev = it.depth;
++  }
++  return items;
++}
++
++/** Cria um mapa a partir de uma lista. O primeiro item é a raiz; vários itens de nível 0 viram filhos da raiz. */
++export function mapFromOutline(els: HirakuElement[], items: OutlineItem[], at: { x: number; y: number }, measure: Measure): Added | null {
++  if (!items.length) return null;
++  let cur = els;
++  let rootId: ID;
++  const level0 = items.filter((i) => i.depth === 0);
++  let list = items;
++  if (level0.length > 1) list = [{ text: "Mapa", depth: 0 }, ...items.map((i) => ({ ...i, depth: i.depth + 1 }))];
++  const r = newRoot(cur, at.x, at.y, list[0].text, measure);
++  cur = r.elements;
++  rootId = r.id;
++  const stack: ID[] = [rootId];
++  for (const it of list.slice(1)) {
++    const parent = stack[Math.min(it.depth - 1, stack.length - 1)];
++    const a = addChild(cur, parent, it.text, measure);
++    if (!a) continue;
++    cur = a.elements;
++    stack.length = it.depth;
++    stack.push(a.id);
++  }
++  return { elements: cur, id: rootId };
++}
++
++export type { BranchStyle };
++
++// ---------- geometria de ramo (usada pelo renderer e pelo hit-test) ----------
++export type GrowDir = "right" | "left" | "down";
++
++/** Para onde crescem os filhos deste nó (define onde fica a bolinha de recolher). */
++export function growDir(n: Pick<NodeElement, "x" | "w">, root: Pick<NodeElement, "x" | "w" | "layout"> | null): GrowDir {
++  const layout = root?.layout ?? "both";
++  if (layout === "down") return "down";
++  if (layout === "right") return "right";
++  if (layout === "left") return "left";
++  return root && n.x + n.w / 2 < root.x + root.w / 2 ? "left" : "right";
++}
++
++/** Centro da bolinha de recolher/expandir de um nó. */
++export function badgeCenter(n: NodeElement, root: NodeElement | null): { x: number; y: number } {
++  const d = growDir(n, root);
++  const r = 9;
++  if (d === "down") return { x: n.x + n.w / 2, y: n.y + n.h + r + 3 };
++  const ay = n.shape === "underline" ? n.y + n.h : n.y + n.h / 2;
++  return { x: d === "right" ? n.x + n.w + r + 3 : n.x - r - 3, y: ay };
++}
++
++/** Pontos da curva do ramo pai → filho. Devolve a polilinha já amostrada (curva/cotovelo/reta). */
++export function branchPath(parent: NodeElement, child: NodeElement, style: BranchStyle, vertical: boolean): { x: number; y: number }[] {
++  const ay = (n: NodeElement) => (n.shape === "underline" ? n.y + n.h : n.y + n.h / 2);
++  let a: { x: number; y: number }, b: { x: number; y: number };
++  if (vertical) {
++    a = { x: parent.x + parent.w / 2, y: parent.y + parent.h };
++    b = { x: child.x + child.w / 2, y: child.y };
++  } else if (child.x + child.w / 2 >= parent.x + parent.w / 2) {
++    a = { x: parent.x + parent.w, y: ay(parent) };
++    b = { x: child.x, y: ay(child) };
++  } else {
++    a = { x: parent.x, y: ay(parent) };
++    b = { x: child.x + child.w, y: ay(child) };
++  }
++  if (style === "straight") return [a, b];
++  const pts: { x: number; y: number }[] = [];
++  if (style === "elbow") {
++    if (vertical) {
++      const my = (a.y + b.y) / 2;
++      return [a, { x: a.x, y: my }, { x: b.x, y: my }, b];
++    }
++    const mx = (a.x + b.x) / 2;
++    return [a, { x: mx, y: a.y }, { x: mx, y: b.y }, b];
++  }
++  // curva: bézier cúbica com tangentes ao longo do eixo do mapa
++  const N = 18;
++  const c1 = vertical ? { x: a.x, y: (a.y + b.y) / 2 } : { x: (a.x + b.x) / 2, y: a.y };
++  const c2 = vertical ? { x: b.x, y: (a.y + b.y) / 2 } : { x: (a.x + b.x) / 2, y: b.y };
++  for (let i = 0; i <= N; i++) {
++    const t = i / N, u = 1 - t;
++    pts.push({
++      x: u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x,
++      y: u * u * u * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y,
++    });
++  }
++  return pts;
++}
+diff --git a/src/core/model.ts b/src/core/model.ts
+index 5d09e71..b324a15 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -35,6 +35,8 @@ export interface StrokeDyn {
+ 
+ export interface StrokeElement {
+   id: ID;
++  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
++  frameId?: ID | null;
+   type: "stroke";
+   points: InkPoint[];
+   color: string;
+@@ -61,6 +63,8 @@ export type LineStyle = "solid" | "dashed" | "dotted";
+ 
+ export interface ShapeElement {
+   id: ID;
++  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
++  frameId?: ID | null;
+   type: ShapeType;
+   /** Caixa em coordenadas do mundo (x, y = canto superior esquerdo). */
+   x: number;
+@@ -100,6 +104,8 @@ export interface ArrowBinding {
+ /** Linha ou seta com 2+ pontos (retos ou suavizados). */
+ export interface LinearElement {
+   id: ID;
++  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
++  frameId?: ID | null;
+   type: LinearType;
+   points: { x: number; y: number }[];
+   stroke: string;
+@@ -122,6 +128,8 @@ export type TextAlign = "left" | "center" | "right";
+ /** Texto de bloco único (sem quebra automática): w/h são medidos ao confirmar a edição. */
+ export interface TextElement {
+   id: ID;
++  /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
++  frameId?: ID | null;
+   type: "text";
+   x: number;
+   y: number;
+@@ -137,12 +145,111 @@ export interface TextElement {
+   opacity: number;
+ }
+ 
++
++// ---------- mapa mental e quadros ----------
++
++export type NodeShape = "pill" | "rounded" | "rect" | "ellipse" | "underline" | "none";
++export const NODE_SHAPES: { id: NodeShape; label: string }[] = [
++  { id: "pill", label: "Pílula" },
++  { id: "rounded", label: "Arredondado" },
++  { id: "rect", label: "Retângulo" },
++  { id: "ellipse", label: "Elipse" },
++  { id: "underline", label: "Sublinhado" },
++  { id: "none", label: "Só texto" },
++];
++
++export type MapLayout = "both" | "right" | "left" | "down";
++export const MAP_LAYOUTS: { id: MapLayout; label: string }[] = [
++  { id: "both", label: "Dos dois lados" },
++  { id: "right", label: "Para a direita" },
++  { id: "left", label: "Para a esquerda" },
++  { id: "down", label: "Para baixo" },
++];
++
++export type BranchStyle = "curve" | "elbow" | "straight";
++export const BRANCH_STYLES: { id: BranchStyle; label: string }[] = [
++  { id: "curve", label: "Curva" },
++  { id: "elbow", label: "Em cotovelo" },
++  { id: "straight", label: "Reta" },
++];
++
++/**
++ * Nó de mapa mental. É uma caixa (x, y, w, h) como as formas, então seleção, mover, setas ligadas e
++ * miniaturas funcionam sem caso especial. A árvore vem de `parentId`; posições e `hidden` são DERIVADOS
++ * por core/mindmap.ts (layout automático) e ficam gravados para o desenho ser rápido.
++ */
++export interface NodeElement {
++  id: ID;
++  type: "node";
++  frameId?: ID | null;
++  x: number;
++  y: number;
++  w: number;
++  h: number;
++  /** Sempre 0 (nós não giram); existe para serem "ligáveis" como as formas. */
++  angle: number;
++  /** Largura do contorno (e da ligação com o pai, na raiz). */
++  strokeWidth: number;
++  text: string;
++  fontSize: number;
++  fontFamily: FontFamily;
++  /** Cor do texto. */
++  color: string;
++  shape: NodeShape;
++  fill: string | null;
++  stroke: string | null;
++  /** Cor do ramo que liga ESTE nó ao pai. */
++  branchColor: string;
++  /** Marcador (emoji/símbolo) mostrado antes do texto; null = nenhum. */
++  icon: string | null;
++  /** Tarefa concluída: texto riscado e esmaecido. */
++  done: boolean;
++  /** Pai na árvore; null/ausente = raiz do mapa. Pai inexistente também vale como raiz. */
++  parentId?: ID | null;
++  /** Filhos escondidos. */
++  collapsed: boolean;
++  /** Em mapas "dos dois lados": lado fixo deste ramo (só filhos diretos da raiz). */
++  side: "auto" | "left" | "right";
++  /** Só na raiz: direção do mapa e estilo dos ramos. */
++  layout: MapLayout;
++  branchStyle: BranchStyle;
++  /** Derivado: dentro de um ramo recolhido. */
++  hidden?: boolean;
++  opacity: number;
++}
++
++/** Quadro (como o do Figma/Miro): contém outros elementos — inclusive outros quadros. */
++export interface FrameElement {
++  id: ID;
++  type: "frame";
++  /** Quadro pai (quadros aninhados). */
++  frameId?: ID | null;
++  x: number;
++  y: number;
++  w: number;
++  h: number;
++  angle: number;
++  strokeWidth: number;
++  title: string;
++  /** Cor do contorno, do título e do véu de fundo. */
++  color: string;
++  /** Opacidade do véu de fundo (0..0.5). */
++  tint: number;
++  rounded: boolean;
++  opacity: number;
++}
++
+ // M2+ adiciona: image
+-export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement;
++export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement;
++
++/** Elementos "de caixa" com contorno próprio: formas, nós e quadros. */
++export type BoxElement = ShapeElement | NodeElement | FrameElement;
+ 
+ /** Guardas de tipo: `type` de forma/linha é uma união de literais, então só `===` não separa as duas no TS. */
+ export const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
+ export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES as string[]).includes(el.type);
++export const isNode = (el: HirakuElement): el is NodeElement => el.type === "node";
++export const isFrame = (el: HirakuElement): el is FrameElement => el.type === "frame";
+ 
+ export type PaperKind = "blank" | "ruled" | "grid" | "dots";
+ 
+@@ -206,13 +313,60 @@ const cleanText = (e: any): TextElement => {
+   };
+ };
+ 
+-const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text"];
++const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame"];
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ const validElement = (e: any): boolean =>
+   !!e &&
+   KNOWN_TYPES.includes(e.type) &&
+   (!(e.type === "line" || e.type === "arrow") || (Array.isArray(e.points) && e.points.length >= 2)) &&
+-  (e.type !== "text" || typeof e.text === "string");
++  (e.type !== "text" || typeof e.text === "string") &&
++  (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
++  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h)));
++
++const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
++const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
++const hex = (v: unknown, d: string) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : d);
++
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++const cleanNode = (e: any): NodeElement => ({
++  ...e,
++  w: Math.max(10, num(e.w, 80)),
++  h: Math.max(10, num(e.h, 36)),
++  angle: 0,
++  strokeWidth: num(e.strokeWidth, 1.5),
++  fontSize: Math.max(6, Math.min(200, num(e.fontSize, 18))),
++  fontFamily: FONT_IDS.includes(e.fontFamily) ? e.fontFamily : "sans",
++  color: hex(e.color, "#1B2233"),
++  shape: NODE_SHAPES.some((x) => x.id === e.shape) ? e.shape : "pill",
++  fill: e.fill === null ? null : hex(e.fill, "#FFFFFF"),
++  stroke: e.stroke === null || e.stroke === undefined ? null : hex(e.stroke, "#1B2233"),
++  branchColor: hex(e.branchColor, "#2F4B8F"),
++  icon: typeof e.icon === "string" && e.icon ? e.icon.slice(0, 8) : null,
++  done: e.done === true,
++  parentId: typeof e.parentId === "string" ? e.parentId : null,
++  frameId: typeof e.frameId === "string" ? e.frameId : null,
++  collapsed: e.collapsed === true,
++  side: e.side === "left" || e.side === "right" ? e.side : "auto",
++  layout: MAP_LAYOUTS.some((x) => x.id === e.layout) ? e.layout : "both",
++  branchStyle: BRANCH_STYLES.some((x) => x.id === e.branchStyle) ? e.branchStyle : "curve",
++  hidden: e.hidden === true,
++  opacity: num(e.opacity, 1),
++});
++
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++const cleanFrame = (e: any): FrameElement => ({
++  ...e,
++  w: Math.max(10, num(e.w, 200)),
++  h: Math.max(10, num(e.h, 150)),
++  angle: 0,
++  strokeWidth: num(e.strokeWidth, 1.5),
++  title: str(e.title, "Quadro").slice(0, 120),
++  color: hex(e.color, "#2F4B8F"),
++  tint: Math.max(0, Math.min(0.5, num(e.tint, 0.06))),
++  rounded: e.rounded !== false,
++  frameId: typeof e.frameId === "string" ? e.frameId : null,
++  opacity: num(e.opacity, 1),
++});
+ 
+ /** Valida e completa campos novos de arquivos antigos (migração leve, ainda versão 1). */
+ export function normalizeDoc(raw: unknown): HirakuDoc {
+@@ -244,7 +398,11 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
+                 ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
+                 : e.type === "text"
+                   ? cleanText(e)
+-                  : e,
++                  : e.type === "node"
++                    ? cleanNode(e)
++                    : e.type === "frame"
++                      ? cleanFrame(e)
++                      : e,
+           )
+         : [],
+     })),
+diff --git a/src/core/selection.ts b/src/core/selection.ts
+index 08b29b8..4d835ba 100644
+--- a/src/core/selection.ts
++++ b/src/core/selection.ts
+@@ -47,10 +47,16 @@ export function applyXform(el: HirakuElement, x: Xform): HirakuElement {
+     const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
+     return { ...el, fontSize: size, w: el.w * r, h: el.h * r, x: c.x - (el.w * r) / 2, y: c.y - (el.h * r) / 2, angle: el.angle + x.dAngle };
+   }
++  if (el.type === "node") {
++    // Nós só mudam de lugar: tamanho vem do texto e a posição final vem do layout automático.
++    const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
++    return { ...el, x: c.x - el.w / 2, y: c.y - el.h / 2 };
++  }
+   const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
+   const w = el.w * Math.abs(x.sx);
+   const h = el.h * Math.abs(x.sy);
+-  return { ...el, x: c.x - w / 2, y: c.y - h / 2, w, h, angle: el.angle + x.dAngle };
++  // Quadros não giram (o conteúdo não acompanharia); formas giram normalmente.
++  return { ...el, x: c.x - w / 2, y: c.y - h / 2, w, h, angle: el.type === "frame" ? 0 : el.angle + x.dAngle };
+ }
+ 
+ // ---------- limites ----------
+@@ -94,7 +100,7 @@ export function selectionFrame(els: HirakuElement[]): Frame | null {
+   // Uma linha/seta sozinha não tem quadro: ela é editada ponto a ponto.
+   if (els.length === 1) {
+     const e = els[0];
+-    if (isLinear(e)) return null;
++    if (isLinear(e) || e.type === "node") return null; // nó sozinho: sem alças (tamanho vem do texto)
+     if (e.type !== "stroke") return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
+   }
+   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+@@ -207,6 +213,8 @@ export function boxSelect(els: HirakuElement[], a: Pt, b: Pt): string[] {
+   const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+   return els
+     .filter((el) => {
++      if (el.type === "node" && el.hidden) return false;
++      if (el.type === "frame") return false; // quadros se pegam pelo título/contorno, não pela caixa
+       const e = elementBounds(el);
+       return e.minX >= minX && e.maxX <= maxX && e.minY >= minY && e.maxY <= maxY;
+     })
+@@ -247,6 +255,7 @@ export function lassoSelect(els: HirakuElement[], poly: Pt[], mode: "inside" | "
+   const ids: string[] = [];
+ 
+   for (const el of els) {
++    if ((el.type === "node" && el.hidden) || el.type === "frame") continue;
+     const b = elementBounds(el);
+     if (mode === "inside") {
+       if (b.minX < minX || b.maxX > maxX || b.minY < minY || b.maxY > maxY) continue;
+diff --git a/src/core/shapes.ts b/src/core/shapes.ts
+index 1697b47..359ac1c 100644
+--- a/src/core/shapes.ts
++++ b/src/core/shapes.ts
+@@ -1,14 +1,13 @@
+ // Geometria das formas. Pura. Elementos são imutáveis → o caminho é cacheado por referência.
+-import { LineStyle, ShapeElement, ShapeType, TextElement } from "./model";
++import { BoxElement, LineStyle, NodeElement, ShapeElement, ShapeType, TextElement } from "./model";
+ 
+ export interface Pt { x: number; y: number }
+ 
+-const cache = new WeakMap<ShapeElement, Pt[]>();
++const cache = new WeakMap<BoxElement, Pt[]>();
+ 
+-function rectPath(el: ShapeElement): Pt[] {
+-  const { x, y, w, h } = el;
+-  if (!el.rounded) return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+-  const r = Math.min(Math.min(w, h) * 0.2, 32);
++/** Retângulo com cantos de raio `r` (0 = reto), como polígono. */
++function roundedRect(x: number, y: number, w: number, h: number, r: number): Pt[] {
++  r = Math.min(r, w / 2, h / 2);
+   if (r < 1) return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+   const out: Pt[] = [];
+   const corners = [
+@@ -17,17 +16,45 @@ function rectPath(el: ShapeElement): Pt[] {
+     { cx: x + w - r, cy: y + h - r, a: 0 },
+     { cx: x + r, cy: y + h - r, a: Math.PI * 0.5 },
+   ];
++  const steps = r > 12 ? 8 : 5;
+   for (const c of corners) {
+-    for (let i = 0; i <= 6; i++) {
+-      const a = c.a + (i / 6) * (Math.PI / 2);
++    for (let i = 0; i <= steps; i++) {
++      const a = c.a + (i / steps) * (Math.PI / 2);
+       out.push({ x: c.cx + Math.cos(a) * r, y: c.cy + Math.sin(a) * r });
+     }
+   }
+   return out;
+ }
+ 
++function rectPath(el: BoxElement): Pt[] {
++  const { x, y, w, h } = el;
++  if (el.type === "frame") return roundedRect(x, y, w, h, el.rounded ? 8 : 0);
++  if (el.type === "node") return nodeBase(el);
++  return roundedRect(x, y, w, h, "rounded" in el && el.rounded ? Math.min(Math.min(w, h) * 0.2, 32) : 0);
++}
++
++function ellipsePts(x: number, y: number, w: number, h: number): Pt[] {
++  const cx = x + w / 2, cy = y + h / 2;
++  const n = Math.max(32, Math.min(256, Math.round((w + h) / 4)));
++  return Array.from({ length: n }, (_, i) => {
++    const a = (i / n) * Math.PI * 2;
++    return { x: cx + (Math.cos(a) * w) / 2, y: cy + (Math.sin(a) * h) / 2 };
++  });
++}
++
++/** Contorno do nó de mapa mental conforme a forma escolhida. */
++function nodeBase(el: NodeElement): Pt[] {
++  const { x, y, w, h } = el;
++  switch (el.shape) {
++    case "pill": return roundedRect(x, y, w, h, h / 2);
++    case "rounded": return roundedRect(x, y, w, h, Math.min(h * 0.3, 14));
++    case "ellipse": return ellipsePts(x, y, w, h);
++    default: return roundedRect(x, y, w, h, 0);
++  }
++}
++
+ /** Contorno fechado da forma, em coordenadas do mundo (já com rotação). */
+-export function shapePath(el: ShapeElement): Pt[] {
++export function shapePath(el: BoxElement): Pt[] {
+   const hit = cache.get(el);
+   if (hit) return hit;
+ 
+@@ -39,11 +66,7 @@ export function shapePath(el: ShapeElement): Pt[] {
+   if (el.type === "diamond") {
+     pts = [{ x: cx, y }, { x: x + w, y: cy }, { x: cx, y: y + h }, { x, y: cy }];
+   } else if (el.type === "ellipse") {
+-    const n = Math.max(32, Math.min(256, Math.round((w + h) / 4)));
+-    pts = Array.from({ length: n }, (_, i) => {
+-      const a = (i / n) * Math.PI * 2;
+-      return { x: cx + (Math.cos(a) * w) / 2, y: cy + (Math.sin(a) * h) / 2 };
+-    });
++    pts = ellipsePts(x, y, w, h);
+   } else {
+     pts = rectPath(el);
+   }
+@@ -115,4 +138,4 @@ export function textBox(el: TextElement): Pt[] {
+ }
+ 
+ /** Contorno fechado de qualquer elemento "de caixa" (forma ou texto). */
+-export const outlinePath = (el: ShapeElement | TextElement): Pt[] => (el.type === "text" ? textBox(el) : shapePath(el));
++export const outlinePath = (el: BoxElement | TextElement): Pt[] => (el.type === "text" ? textBox(el) : shapePath(el));
+diff --git a/src/core/store.ts b/src/core/store.ts
+index b2ffba1..a7f4ccd 100644
+--- a/src/core/store.ts
++++ b/src/core/store.ts
+@@ -1,11 +1,12 @@
+ import { create } from "zustand";
+ import { persist } from "zustand/middleware";
+ import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
++import { relayout } from "./mindmap";
+ import { getBrush } from "./brushes";
+ import { Camera, defaultCamera } from "./camera";
+ import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
+ 
+-export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | ShapeType | LinearType;
++export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | ShapeType | LinearType;
+ 
+ const HISTORY_LIMIT = 200;
+ 
+@@ -20,6 +21,8 @@ interface DocState {
+   /** Substitui elementos existentes (mesmo id) por novas versões, num único passo de histórico. */
+   updateElements: (els: HirakuElement[]) => void;
+   removeElements: (ids: ID[]) => void;
++  /** Troca a lista de elementos da página ativa por `els` num único passo de histórico (operações de mapa/quadro). */
++  replaceElements: (els: HirakuElement[]) => void;
+   /**
+    * Edição transitória da página ativa (borracha de pixel): troca a lista de elementos SEM entrar no histórico.
+    * O gesto termina com `endPreview(base)` (um único passo de desfazer) ou `cancelPreview(base)`.
+@@ -87,9 +90,23 @@ export const useDoc = create<DocState>((set, get) => {
+     removeElements: (ids) => {
+       if (!ids.length) return;
+       const drop = new Set(ids);
+-      commit(mapActivePage((p) => ({ ...p, elements: clearBindingsTo(p.elements.filter((e) => !drop.has(e.id)), drop) })));
++      commit(mapActivePage((p) => {
++        let els = clearBindingsTo(p.elements.filter((e) => !drop.has(e.id)), drop);
++        // quadros apagados soltam os membros; nós apagados deixam filhos como raízes
++        if (els.some((e) => (e.frameId && drop.has(e.frameId)) || (e.type === "node" && e.parentId && drop.has(e.parentId)))) {
++          els = els.map((e) => {
++            let n = e;
++            if (e.frameId && drop.has(e.frameId)) n = { ...n, frameId: null } as HirakuElement;
++            if (e.type === "node" && e.parentId && drop.has(e.parentId)) n = { ...(n as typeof e), parentId: null };
++            return n;
++          });
++        }
++        return { ...p, elements: p.elements.some((e) => e.type === "node" && drop.has(e.id)) ? relayout(els) : els };
++      }));
+     },
+ 
++    replaceElements: (els) => commit(mapActivePage((p) => ({ ...p, elements: rebindAfterChange(els, new Set(els.map((e) => e.id))) }))),
++
+     previewElements: (els) => set({ doc: mapActivePage((p) => ({ ...p, elements: els })) }),
+ 
+     endPreview: (base) => {
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index aa5d01b..f83d8e9 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -2,19 +2,29 @@
+ // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
+ import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
+ import { Camera, defaultCamera } from "../core/camera";
+-import { DEFAULT_BACKGROUND, HirakuElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
++import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
+ import { Pt } from "../core/shapes";
+ import { FONT_CSS, LINE_HEIGHT } from "../core/text";
+ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+ import { decimateForPreview } from "../core/ink";
++import { paintFrame, paintNode } from "./mindDraw";
+ import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
+ 
+ const LINE = "#1B2233";
+ const INDIGO = "#2F4B8F";
+ 
+ /** Graphics para traços/formas/linhas; Container (com um Text dentro) para textos. */
+-interface Node { g: Container; el: HirakuElement }
++interface Node {
++  g: Container;
++  el: HirakuElement;
++  /** Versão em pré-visualização (arrastar um ramo): o desenho dos filhos usa esta em vez de `el`. */
++  view?: HirakuElement;
++  /** Dependências do desenho (pai, raiz, nº de filhos): mudou → repinta. */
++  dep?: unknown[];
++}
++
++const sameDep = (a?: unknown[], b?: unknown[]) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
+ 
+ const drawEl = (g: Graphics, el: HirakuElement) => {
+   if (isLinear(el)) drawLinearElement(g, el);
+@@ -25,6 +35,7 @@ export class Renderer {
+   private app = new Application();
+   private paperLayer = new Graphics();
+   private world = new Container();
++  private frames = new Container(); // quadros ficam SEMPRE abaixo do resto
+   private committed = new Container();
+   private live = new Graphics();
+   private liveInk = new InkNode();
+@@ -55,7 +66,7 @@ export class Renderer {
+       autoDensity: true,
+       powerPreference: "high-performance",
+     });
+-    this.world.addChild(this.committed, this.live, this.liveInk);
++    this.world.addChild(this.frames, this.committed, this.live, this.liveInk);
+     this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
+     // Redesenha o papel se a janela mudar de tamanho.
+     this.app.ticker.add(() => {
+@@ -147,19 +158,34 @@ export class Renderer {
+   /** Reconcilia os nós do Pixi com a lista de elementos. Elementos são imutáveis: referência nova = redesenhar. */
+   syncPage(elements: HirakuElement[]) {
+     const alive = new Set<string>();
++    // contexto de mapa: pai, raiz e nº de filhos (só calculado se houver nós)
++    const byId = new Map<string, HirakuElement>();
++    const kids = new Map<string, number>();
++    let hasNodes = false;
++    for (const el of elements) {
++      byId.set(el.id, el);
++      if (el.type === "node") {
++        hasNodes = true;
++        if (el.parentId) kids.set(el.parentId, (kids.get(el.parentId) ?? 0) + 1);
++      }
++    }
+     for (const el of elements) {
+       alive.add(el.id);
+-      const n = this.nodes.get(el.id);
++      let n = this.nodes.get(el.id);
++      const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
+       if (!n) {
+-        const g = el.type === "text" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+-        this.paint(g, el);
+-        this.committed.addChild(g);
+-        this.nodes.set(el.id, { g, el });
+-      } else if (n.el !== el) {
++        const g = el.type === "text" || el.type === "node" || el.type === "frame" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
++        n = { g, el, dep };
++        this.nodes.set(el.id, n);
++        (el.type === "frame" ? this.frames : this.committed).addChild(g);
++        this.paint(g, el, n);
++      } else if (n.el !== el || !sameDep(n.dep, dep)) {
+         n.g.setFromMatrix(new Matrix()); // descarta qualquer pré-visualização por matriz
+         n.g.alpha = 1;
+-        this.paint(n.g, el);
+         n.el = el;
++        n.view = undefined;
++        n.dep = dep;
++        this.paint(n.g, el, n);
+       }
+     }
+     for (const [id, n] of this.nodes) {
+@@ -171,6 +197,48 @@ export class Renderer {
+     }
+   }
+ 
++  private nodeDep(el: NodeElement, byId: Map<string, HirakuElement>, kids: Map<string, number>): unknown[] {
++    const parent = el.parentId ? byId.get(el.parentId) : undefined;
++    let root: HirakuElement = parent?.type === "node" ? parent : el;
++    for (let i = 0; i < 64 && root.type === "node" && root.parentId; i++) {
++      const up = byId.get(root.parentId);
++      if (!up || up.type !== "node") break;
++      root = up;
++    }
++    return [parent, root, kids.get(el.id) ?? 0];
++  }
++
++  /** Pai/raiz/filhos de um nó de mapa para o desenho, preferindo as versões em pré-visualização. */
++  private nodeCtx(el: NodeElement) {
++    const look = (id?: string | null) => {
++      const n = id ? this.nodes.get(id) : undefined;
++      const e = n ? n.view ?? n.el : undefined;
++      return e && e.type === "node" ? e : null;
++    };
++    const parent = look(el.parentId);
++    let root: NodeElement = parent ?? el;
++    for (let i = 0; i < 64 && root.parentId; i++) {
++      const up = look(root.parentId);
++      if (!up) break;
++      root = up;
++    }
++    let kids = 0;
++    if (el.collapsed) for (const n of this.nodes.values()) if (n.el.type === "node" && this.isDescendant(n.el, el.id)) kids++;
++    return { parent, root: root === el && !parent ? el : root, kids, res: this.textRes() };
++  }
++
++  private isDescendant(n: NodeElement, ancestor: string): boolean {
++    let cur: NodeElement | null = n;
++    for (let i = 0; i < 64 && cur; i++) {
++      const pid: string | null | undefined = cur.parentId;
++      if (!pid) return false;
++      if (pid === ancestor) return true;
++      const up: Node | undefined = this.nodes.get(pid);
++      cur = up && up.el.type === "node" ? up.el : null;
++    }
++    return false;
++  }
++
+   /** Pré-visualização barata: move/gira/escala o nó sem redesenhar (null restaura). */
+   setNodeMatrix(id: string, m: Affine | null) {
+     const n = this.nodes.get(id);
+@@ -182,12 +250,17 @@ export class Renderer {
+     const n = this.nodes.get(id);
+     if (!n) return;
+     n.g.setFromMatrix(new Matrix());
+-    this.paint(n.g, el ?? n.el);
++    n.view = el ?? undefined;
++    this.paint(n.g, el ?? n.el, n);
+   }
+ 
+   /** Desenha o elemento no nó (Graphics) ou monta o Text (Container). */
+-  private paint(node: Container, el: HirakuElement) {
+-    if (el.type === "text") {
++  private paint(node: Container, el: HirakuElement, _n?: Node) {
++    if (el.type === "node") {
++      paintNode(node, el, this.nodeCtx(el));
++    } else if (el.type === "frame") {
++      paintFrame(node, el, this.textRes());
++    } else if (el.type === "text") {
+       for (const ch of node.removeChildren()) ch.destroy();
+       const t = new Text({
+         text: el.text,
+@@ -218,6 +291,10 @@ export class Renderer {
+     this.resTimer = setTimeout(() => {
+       const r = this.textRes();
+       for (const n of this.nodes.values()) {
++        if (n.el.type === "node" || n.el.type === "frame") {
++          for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
++          continue;
++        }
+         const t = n.el.type === "text" ? (n.g.children[0] as Text | undefined) : undefined;
+         if (t && Math.abs(t.resolution - r) / r > 0.12) t.resolution = r;
+       }
+diff --git a/src/render/mindDraw.ts b/src/render/mindDraw.ts
+new file mode 100644
+index 0000000..54379d0
+--- /dev/null
++++ b/src/render/mindDraw.ts
+@@ -0,0 +1,118 @@
++// Desenho de nós de mapa mental e de quadros. Só desenha; a estrutura vive em core/mindmap.ts.
++// Cada elemento é um Container com filhos fixos [Graphics, rótulo, marcador, bolinha] reaproveitados a cada
++// repintura (arrastar um ramo repinta dezenas de nós por frame: nada de criar/destruir Text à toa).
++import { Container, Graphics, Text } from "pixi.js";
++import { FrameElement, NodeElement } from "../core/model";
++import { badgeCenter, branchPath, growDir, readableOn, tint } from "../core/mindmap";
++import { Pt, shapePath } from "../core/shapes";
++import { FONT_CSS, LINE_HEIGHT } from "../core/text";
++
++const flat = (pts: Pt[]) => pts.flatMap((p) => [p.x, p.y]);
++
++function parts(host: Container): [Graphics, Text, Text, Text] {
++  if (host.children.length < 4) {
++    for (const c of host.removeChildren()) c.destroy();
++    const mk = () => new Text({ text: "", style: { fontSize: 14 } });
++    host.addChild(new Graphics(), mk(), mk(), mk());
++  }
++  return host.children as unknown as [Graphics, Text, Text, Text];
++}
++
++export interface NodeCtx {
++  parent: NodeElement | null;
++  root: NodeElement | null;
++  kids: number;
++  res: number;
++}
++
++export function paintNode(host: Container, el: NodeElement, ctx: NodeCtx) {
++  const [g, label, icon, badge] = parts(host);
++  g.clear();
++  host.visible = !el.hidden;
++  host.alpha = el.opacity;
++  if (el.hidden) { label.visible = icon.visible = badge.visible = false; return; }
++
++  // ramo até o pai (por baixo do nó)
++  if (ctx.parent && !ctx.parent.hidden) {
++    const vertical = ctx.root?.layout === "down";
++    const pts = branchPath(ctx.parent, el, ctx.root?.branchStyle ?? "curve", !!vertical);
++    g.poly(flat(pts), false).stroke({ width: Math.max(2, el.strokeWidth * 1.6), color: el.branchColor, cap: "round", join: "round" });
++  }
++
++  // corpo
++  const stroke = el.stroke ?? null;
++  if (el.shape === "underline") {
++    g.moveTo(el.x, el.y + el.h).lineTo(el.x + el.w, el.y + el.h).stroke({ width: el.strokeWidth + 0.5, color: stroke ?? el.branchColor, cap: "round" });
++  } else if (el.shape !== "none") {
++    const poly = flat(shapePath(el));
++    if (el.fill) g.poly(poly, true).fill({ color: el.fill });
++    if (stroke) g.poly(poly, true).stroke({ width: el.strokeWidth, color: stroke, join: "round" });
++  }
++
++  // rótulo + marcador
++  const iconW = el.icon ? el.fontSize * 1.35 : 0;
++  const fill = el.color;
++  label.visible = true;
++  label.text = el.text;
++  label.style.fontFamily = FONT_CSS[el.fontFamily];
++  label.style.fontSize = el.fontSize;
++  label.style.fill = fill;
++  label.style.align = "center";
++  label.style.lineHeight = el.fontSize * LINE_HEIGHT;
++  label.style.fontWeight = "400";
++  label.resolution = ctx.res;
++  label.anchor.set(0.5);
++  label.position.set(el.x + el.w / 2 + iconW / 2, el.y + el.h / 2);
++  label.alpha = el.done ? 0.55 : 1;
++  icon.visible = !!el.icon;
++  if (el.icon) {
++    icon.text = el.icon;
++    icon.style.fontSize = el.fontSize;
++    icon.style.fill = fill;
++    icon.resolution = ctx.res;
++    icon.anchor.set(0.5);
++    icon.position.set(el.x + (el.shape === "underline" || el.shape === "none" ? 4 : 12) + iconW / 2 - 2, el.y + el.h / 2);
++  }
++  if (el.done) {
++    const lw = label.width;
++    g.moveTo(el.x + el.w / 2 + iconW / 2 - lw / 2, el.y + el.h / 2).lineTo(el.x + el.w / 2 + iconW / 2 + lw / 2, el.y + el.h / 2)
++      .stroke({ width: 1.6, color: fill, alpha: 0.7 });
++  }
++
++  // bolinha de recolher (mostra a quantidade de nós escondidos)
++  badge.visible = false;
++  if (ctx.kids > 0 && el.collapsed) {
++    const c = badgeCenter(el, ctx.root);
++    const col = el.branchColor;
++    g.circle(c.x, c.y, 9).fill({ color: col }).stroke({ width: 1.5, color: "#FFFFFF" });
++    badge.visible = true;
++    badge.text = String(ctx.kids > 99 ? "99+" : ctx.kids);
++    badge.style.fontFamily = FONT_CSS.sans;
++    badge.style.fontSize = 10;
++    badge.style.fontWeight = "700";
++    badge.style.fill = readableOn(col);
++    badge.resolution = ctx.res;
++    badge.anchor.set(0.5);
++    badge.position.set(c.x, c.y);
++  }
++  void growDir;
++}
++
++export function paintFrame(host: Container, el: FrameElement, res: number) {
++  const [g, label, icon, badge] = parts(host);
++  g.clear();
++  icon.visible = badge.visible = false;
++  host.alpha = el.opacity;
++  const poly = flat(shapePath(el));
++  if (el.tint > 0) g.poly(poly, true).fill({ color: el.color, alpha: el.tint });
++  g.poly(poly, true).stroke({ width: Math.max(1, el.strokeWidth), color: el.color, alpha: 0.9, join: "round" });
++  label.visible = !!el.title;
++  label.text = el.title;
++  label.style.fontFamily = FONT_CSS.sans;
++  label.style.fontSize = 14;
++  label.style.fontWeight = "600";
++  label.style.fill = tint(el.color, 0);
++  label.resolution = res;
++  label.anchor.set(0, 1);
++  label.position.set(el.x + 2, el.y - 5);
++}
+diff --git a/src/render/svgThumb.ts b/src/render/svgThumb.ts
+index 00c949c..e9fda02 100644
+--- a/src/render/svgThumb.ts
++++ b/src/render/svgThumb.ts
+@@ -70,6 +70,14 @@ export function thumbPath(el: HirakuElement): ThumbPath {
+       dash: el.strokeStyle === "dashed" ? `${w * 4 + 6} ${w * 2 + 5}` : el.strokeStyle === "dotted" ? `0.1 ${w * 2 + 4}` : null,
+       b: elementBounds(el), alpha: 1,
+     };
++  } else if (el.type === "node" || el.type === "frame") {
++    const nd = el.type === "node";
++    tp = {
++      d: pathFrom(shapePath(el).flatMap((p) => [p.x, p.y])),
++      fill: nd && el.fill ? safeColor(el.fill, "none") : "none",
++      stroke: safeColor(nd ? el.stroke ?? el.branchColor : el.color, "#1B2233"),
++      sw: el.strokeWidth, dash: null, b: elementBounds(el), alpha: 1,
++    };
+   } else {
+     const w = el.strokeWidth;
+     tp = {
+diff --git a/src/styles.css b/src/styles.css
+index a140a5a..6bb25c7 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -365,3 +365,12 @@ body[data-sidebar="open"] { --side: 256px; }
+ .field { display: grid; gap: 4px; font-size: 14px; }
+ .field input { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+ .chip.danger { color: #C8372D; border-color: #E8B9B5; }
++
++/* ---- mapa mental / quadros ---- */
++.label-editor {
++  position: absolute; z-index: 30; resize: none; overflow: hidden; box-sizing: border-box;
++  padding: 2px 8px; border: 2px solid #2F4B8F; outline: none; box-shadow: 0 2px 12px rgba(27, 34, 51, .25);
++}
++.mappanel { max-height: min(78vh, 640px); overflow-y: auto; }
++.mappanel .rowlabel { min-width: 52px; }
++.outline-in { width: 100%; box-sizing: border-box; font: 13px/1.4 ui-monospace, monospace; border: 1px solid #c9ced8; border-radius: 6px; padding: 6px; resize: vertical; }
+diff --git a/src/tools/selectTool.ts b/src/tools/selectTool.ts
+index 8c31cd3..ec880fd 100644
+--- a/src/tools/selectTool.ts
++++ b/src/tools/selectTool.ts
+@@ -14,6 +14,9 @@ import {
+ import { Pt, outlinePath } from "../core/shapes";
+ import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
+ import { beginEditText, beginNewText } from "../core/textEdit";
++import { beginLabel, settleMoved } from "../core/mapActions";
++import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
++import { settleFrames } from "../core/frames";
+ import { Sample } from "../input/InputController";
+ import { Renderer } from "../render/Renderer";
+ 
+@@ -47,7 +50,7 @@ export function createSelectController(renderer: Renderer) {
+   ): SelectionUI => ({
+     bindHint: hint,
+     frame: selectionFrame(els),
+-    outlines: els.length > 1 ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
++    outlines: els.length > 1 || (els.length === 1 && els[0].type === "node") ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
+     marquee,
+     lineEdit: els.length === 1 && isLinear(els[0]) ? { points: els[0].points } : null,
+   });
+@@ -118,6 +121,21 @@ export function createSelectController(renderer: Renderer) {
+       const dbl = !lasso && !!lastTap && now - lastTap.t < 380 && Math.hypot(s.x - lastTap.x, s.y - lastTap.y) < 8;
+       lastTap = { t: now, x: s.x, y: s.y };
+ 
++      // -1) bolinha de "recolhido" de um nó: clique expande
++      {
++        const all = page().elements;
++        const ch = childrenMap(all);
++        for (const n of all) {
++          if (n.type !== "node" || !n.collapsed || n.hidden || !(ch.get(n.id)?.length)) continue;
++          const bc = badgeCenter(n, rootOf(all, n.id));
++          if (Math.hypot(P.x - bc.x, P.y - bc.y) <= (touchy ? 16 : 12) / c.zoom) {
++            lastTap = null;
++            useDoc.getState().replaceElements(toggleCollapse(all, n.id, false));
++            return;
++          }
++        }
++      }
++
+       // 0) linha/seta sozinha: editar pontos
+       const lone = sel.length === 1 && isLinear(sel[0]) ? sel[0] : null;
+       if (lone) {
+@@ -158,16 +176,20 @@ export function createSelectController(renderer: Renderer) {
+       }
+ 
+       const beginMove = (candidate: string | null) => {
+-        g = { kind: "move", startP: P, startS: { x: s.x, y: s.y }, orig: selectedEls(), next: [], extra: [], moved: false, candidate };
++        // nós levam o ramo; quadros levam o conteúdo
++        const all = page().elements;
++        const set = withDependents(all, useSel.getState().ids);
++        g = { kind: "move", startP: P, startS: { x: s.x, y: s.y }, orig: all.filter((e) => set.has(e.id)), next: [], extra: [], moved: false, candidate };
+       };
+ 
+       // 2) Selecionar: clique num elemento
+       if (!lasso) {
+         const hit = topHit(P, hitTol);
+         if (hit) {
+-          if (dbl && hit.type === "text") {
++          if (dbl && (hit.type === "text" || hit.type === "node" || hit.type === "frame")) {
+             lastTap = null;
+-            beginEditText(hit);
++            if (hit.type === "text") beginEditText(hit);
++            else { useSel.getState().set([hit.id]); beginLabel(hit.id); }
+             return;
+           }
+           const ids = useSel.getState().ids;
+@@ -283,7 +305,18 @@ export function createSelectController(renderer: Renderer) {
+       if (!done) return;
+ 
+       if (done.kind === "move" || done.kind === "resize" || done.kind === "rotate") {
+-        if (done.moved) useDoc.getState().updateElements(detachForeign(done.next));
++        if (done.moved) {
++          const nxt = detachForeign(done.next);
++          const hasFrames = page().elements.some((e) => e.type === "frame");
++          const special = hasFrames || nxt.some((e) => e.type === "node" || e.type === "frame");
++          if (!special || done.kind === "rotate") useDoc.getState().updateElements(nxt);
++          else if (done.kind === "move") useDoc.getState().replaceElements(settleMoved(nxt, nxt.map((e) => e.id)));
++          else {
++            const byId = new Map(nxt.map((e) => [e.id, e]));
++            const all = page().elements.map((e) => byId.get(e.id) ?? e);
++            useDoc.getState().replaceElements(settleFrames(all, all.map((e) => e.id)));
++          }
++        }
+         else if (done.kind === "move" && done.candidate) useSel.getState().set([done.candidate]);
+       } else if (done.kind === "vertex") {
+         if (done.next) useDoc.getState().updateElements([done.next]);
+-- 
+2.43.0
+

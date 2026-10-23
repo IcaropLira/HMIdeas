@@ -104,6 +104,28 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - Brushes personalizáveis no painel (duplicar → editar), salvos em localStorage e carregados na partida (`initCustomBrushes`).
 - Borracha: modo **traço inteiro** ou **pixel** (`core/erase.ts` corta o traço; gesto = um passo de desfazer via `previewElements/endPreview`).
 
+### Mapa mental e quadros (0007)
+- Dois tipos novos de elemento, ambos **caixas** (x, y, w, h): `node` (nó do mapa) e `frame` (quadro). Seleção, binding de setas,
+  miniaturas e hit-test reaproveitam o caminho das formas. Arquivo `.hiraku` segue **versão 1** (campos aditivos, saneados em `normalizeDoc`).
+- A **árvore** é `parentId` (pai inexistente = raiz). `core/mindmap.ts` é puro: `relayout` posiciona (raiz fixa; layouts both/right/left/down,
+  sem sobreposição) e deriva `hidden` (ancestral recolhido). Nós guardam x/y/hidden já calculados para o desenho ser barato; ramos NÃO são
+  elementos: o renderer os desenha a partir do pai (`render/mindDraw.ts`). Toda operação grava com `replaceElements` = 1 passo de desfazer.
+- Arrastar um nó: leva o ramo; soltar sobre outro nó **reparenta** (sem ciclos), soltar perto reordena entre irmãos (`settleMoved`).
+- **Conectores livres** = setas normais ligadas a nós (`isBindable` inclui `node`): seguem os nós ao mover/recolher. Atalho K liga 2 selecionados.
+- **Quadros** (`core/frames.ts`): pertencer = `frameId`; aninham; `settleFrames` escolhe o quadro mais interno que contém o centro e nunca
+  um descendente. Mover o quadro leva os membros (`withDependents`). Não recortam o conteúdo. Apagar quadro solta o conteúdo; apagar nó apaga o ramo.
+- A borracha (traço/pixel) ignora nós e quadros. Atalhos: Tab filho, Enter irmão, Shift+Enter irmão acima, F2 editar, C recolher, setas navegam,
+  K ligar, Ctrl+G / Ctrl+Shift+G quadro, M/F ferramentas, Shift+1 / Shift+2 ver tudo / seleção. Painel "Mapa & quadros" na barra.
+
+### Site, downloads e atualização automática (0008)
+- Web: Vite `base` vem de `VITE_BASE` (workflow `pages.yml`); PWA em modo **prompt** (nunca recarrega sozinho). `download.html` é a segunda
+  página do build; `core/repo.ts` descobre o repositório (`VITE_GH_REPO` ou o endereço `dono.github.io/repo`) e classifica os arquivos da release.
+- Desktop: plugins Tauri `updater` + `process` (só desktop; capability `desktop.json`), pacotes assinados (`createUpdaterArtifacts`),
+  endpoint `.../releases/latest/download/latest.json` ajustado no CI por `scripts/set-repo.mjs`. A chave PÚBLICA está no `tauri.conf.json`;
+  a privada nunca entra no git (`npm run updater:keys`).
+- Android/DEB/RPM: `core/updater.ts` compara a versão com a última release e abre o download (`plugin-opener`). APK assinado no CI com a keystore dos secrets.
+- `core/autosave.ts` (IndexedDB) restaura a sessão: é o que torna seguro atualizar/recarregar. Não substitui o arquivo `.hiraku`.
+
 ## Como rodar
 
 ```bash

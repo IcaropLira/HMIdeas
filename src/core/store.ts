@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
+import { relayout } from "./mindmap";
 import { getBrush } from "./brushes";
 import { Camera, defaultCamera } from "./camera";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
-export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | ShapeType | LinearType;
+export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | ShapeType | LinearType;
 
 const HISTORY_LIMIT = 200;
 
@@ -20,6 +21,8 @@ interface DocState {
   /** Substitui elementos existentes (mesmo id) por novas versões, num único passo de histórico. */
   updateElements: (els: HirakuElement[]) => void;
   removeElements: (ids: ID[]) => void;
+  /** Troca a lista de elementos da página ativa por `els` num único passo de histórico (operações de mapa/quadro). */
+  replaceElements: (els: HirakuElement[]) => void;
   /**
    * Edição transitória da página ativa (borracha de pixel): troca a lista de elementos SEM entrar no histórico.
    * O gesto termina com `endPreview(base)` (um único passo de desfazer) ou `cancelPreview(base)`.
@@ -87,8 +90,22 @@ export const useDoc = create<DocState>((set, get) => {
     removeElements: (ids) => {
       if (!ids.length) return;
       const drop = new Set(ids);
-      commit(mapActivePage((p) => ({ ...p, elements: clearBindingsTo(p.elements.filter((e) => !drop.has(e.id)), drop) })));
+      commit(mapActivePage((p) => {
+        let els = clearBindingsTo(p.elements.filter((e) => !drop.has(e.id)), drop);
+        // quadros apagados soltam os membros; nós apagados deixam filhos como raízes
+        if (els.some((e) => (e.frameId && drop.has(e.frameId)) || (e.type === "node" && e.parentId && drop.has(e.parentId)))) {
+          els = els.map((e) => {
+            let n = e;
+            if (e.frameId && drop.has(e.frameId)) n = { ...n, frameId: null } as HirakuElement;
+            if (e.type === "node" && e.parentId && drop.has(e.parentId)) n = { ...(n as typeof e), parentId: null };
+            return n;
+          });
+        }
+        return { ...p, elements: p.elements.some((e) => e.type === "node" && drop.has(e.id)) ? relayout(els) : els };
+      }));
     },
+
+    replaceElements: (els) => commit(mapActivePage((p) => ({ ...p, elements: rebindAfterChange(els, new Set(els.map((e) => e.id))) }))),
 
     previewElements: (els) => set({ doc: mapActivePage((p) => ({ ...p, elements: els })) }),
 

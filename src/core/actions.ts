@@ -2,6 +2,7 @@
 import { detachForeign, reidentify } from "./binding";
 import { parseHex, pushRecent } from "./color";
 import { HirakuElement, TextElement, isLinear } from "./model";
+import { subtreeIds, tint, withDependents } from "./mindmap";
 import { applyXform, moveXform } from "./selection";
 import { selectActivePage, useDoc, useSel, useTool } from "./store";
 import { beginEditText, useEdit } from "./textEdit";
@@ -15,6 +16,13 @@ export const selectedElements = (): HirakuElement[] => {
   return selectActivePage(useDoc.getState()).elements.filter((e) => ids.has(e.id));
 };
 
+/** Seleção + o que anda junto: ramos dos nós e membros dos quadros (copiar/duplicar/mover). */
+export const selectedWithDependents = (): HirakuElement[] => {
+  const all = selectActivePage(useDoc.getState()).elements;
+  const set = withDependents(all, useSel.getState().ids);
+  return all.filter((e) => set.has(e.id));
+};
+
 const cloneAt = (els: HirakuElement[], dx: number, dy: number): HirakuElement[] =>
   reidentify(els.map((e) => applyXform(e, moveXform(dx, dy))));
 
@@ -23,14 +31,18 @@ export function selectAll() {
 }
 
 export function deleteSelection() {
-  const ids = useSel.getState().ids;
-  if (!ids.length) return;
-  useDoc.getState().removeElements(ids);
+  const sel = useSel.getState().ids;
+  if (!sel.length) return;
+  // apagar um nó apaga o ramo inteiro; apagar um quadro solta o conteúdo
+  const all = selectActivePage(useDoc.getState()).elements;
+  const ids = new Set(sel);
+  for (const e of all) if (e.type === "node" && ids.has(e.id)) subtreeIds(all, e.id).forEach((i) => ids.add(i));
+  useDoc.getState().removeElements([...ids]);
   useSel.getState().clear();
 }
 
 export function duplicateSelection() {
-  const els = selectedElements();
+  const els = selectedWithDependents();
   if (!els.length) return;
   const copies = cloneAt(els, 16, 16);
   useDoc.getState().addElements(copies);
@@ -38,7 +50,7 @@ export function duplicateSelection() {
 }
 
 export function copySelection() {
-  const els = selectedElements();
+  const els = selectedWithDependents();
   if (!els.length) return;
   clipboard = els;
   pasteCount = 0;
@@ -58,7 +70,7 @@ export function pasteClipboard() {
 }
 
 export function nudgeSelection(dx: number, dy: number) {
-  const els = selectedElements();
+  const els = selectedWithDependents();
   if (!els.length) return;
   const x = moveXform(dx, dy);
   useDoc.getState().updateElements(detachForeign(els.map((e) => applyXform(e, x))));
@@ -67,7 +79,11 @@ export function nudgeSelection(dx: number, dy: number) {
 export function recolorSelection(color: string) {
   const els = selectedElements();
   if (!els.length) return;
-  useDoc.getState().updateElements(els.map((e) => (e.type === "stroke" || e.type === "text" ? { ...e, color } : { ...e, stroke: color })));
+  useDoc.getState().updateElements(els.map((e) => {
+    if (e.type === "stroke" || e.type === "text" || e.type === "frame") return { ...e, color };
+    if (e.type === "node") return { ...e, stroke: e.stroke ? color : e.stroke, fill: e.fill ? tint(color, 0.85) : e.fill, branchColor: color };
+    return { ...e, stroke: color };
+  }));
 }
 
 /**
@@ -92,6 +108,8 @@ export function applyColor(color: string, opts: { commit?: boolean; remember?: b
 /** Cor "principal" de um elemento, para o conta-gotas (forma preenchida → preenchimento). */
 export function elementColor(el: HirakuElement): string {
   if (el.type === "stroke" || el.type === "text") return el.color;
+  if (el.type === "node") return el.stroke ?? el.branchColor;
+  if (el.type === "frame") return el.color;
   if (isLinear(el)) return el.stroke;
   return el.fill ?? el.stroke;
 }

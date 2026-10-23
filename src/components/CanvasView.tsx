@@ -14,10 +14,11 @@ import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEd
 import { InputController, Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 import { InkStyle } from "../render/strokeDraw";
+import { addChildTo, createFrameFromBox, createRootAt } from "../core/mapActions";
 import { createSelectController } from "../tools/selectTool";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
-type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text";
+type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
 
 const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
 const isLinearTool = (t: string): t is LinearType => t === "line" || t === "arrow";
@@ -177,6 +178,7 @@ export function CanvasView() {
           const x = from.x + ((to.x - from.x) * i) / steps;
           const y = from.y + ((to.y - from.y) * i) / steps;
           for (const el of elements) {
+            if (el.type === "node" || el.type === "frame") continue; // estrutura: só Delete apaga
             if (!erased.has(el.id) && elementHit(el, x, y, r)) erased.add(el.id);
           }
         }
@@ -261,6 +263,23 @@ export function CanvasView() {
               }
               if (hit) beginEditText(hit);
               else beginNewText(P);
+            } else if (t.tool === "mindmap") {
+              // clique num nó = novo filho; clique no vazio = novo mapa
+              mode = "text";
+              const cam = useView.getState().camera;
+              const P = screenToWorld(cam, s.x, s.y);
+              const els = selectActivePage(useDoc.getState()).elements;
+              let hit: string | null = null;
+              for (let i = els.length - 1; i >= 0 && !hit; i--) {
+                const e = els[i];
+                if (e.type === "node" && !e.hidden && elementHit(e, P.x, P.y, 4 / cam.zoom)) hit = e.id;
+              }
+              if (hit) addChildTo(hit);
+              else createRootAt(P);
+            } else if (t.tool === "frame") {
+              mode = "frame";
+              shapeStart = screenToWorld(useView.getState().camera, s.x, s.y);
+              shapeBox = null;
             } else if (t.tool === "select" || t.tool === "lasso") {
               mode = "select";
               selectCtl.start(s, t.tool === "lasso");
@@ -323,11 +342,15 @@ export function CanvasView() {
               bindHintUI(endShape ? outlinePath(endShape) : null);
               return;
             }
-            if (mode === "shape") {
+            if (mode === "shape" || mode === "frame") {
               const s = samples[samples.length - 1];
               const to = screenToWorld(useView.getState().camera, s.x, s.y);
-              shapeBox = boxFromDrag(shapeStart, to, s.shift, s.alt);
-              renderer.previewElement(shapeFrom("preview", shapeBox));
+              shapeBox = boxFromDrag(shapeStart, to, mode === "shape" && s.shift, s.alt);
+              renderer.previewElement(
+                mode === "frame"
+                  ? makeShape("preview", "rect", shapeBox, { stroke: "#5E6B7E", strokeWidth: 2, strokeStyle: "dashed", fill: null, rounded: true })
+                  : shapeFrom("preview", shapeBox),
+              );
               return;
             }
             let added = false;
@@ -371,6 +394,14 @@ export function CanvasView() {
               renderer.previewElement(null);
               linEl = null;
               selectCtl.refresh(); // tira o realce da forma-alvo
+              return;
+            }
+            if (mode === "frame") {
+              renderer.previewElement(null);
+              const z = useView.getState().camera.zoom;
+              if (shapeBox && shapeBox.w * z > 30 && shapeBox.h * z > 30) createFrameFromBox(shapeBox);
+              else createFrameFromBox({ x: shapeStart.x - 240, y: shapeStart.y - 160, w: 480, h: 320 }); // clique: quadro padrão
+              shapeBox = null;
               return;
             }
             if (mode === "shape") {
@@ -426,7 +457,7 @@ export function CanvasView() {
               eraseBase = null;
               eraseEls = null;
               renderer.setGhosts(erased);
-            } else if (mode === "shape" || mode === "linear") {
+            } else if (mode === "shape" || mode === "linear" || mode === "frame") {
               renderer.previewElement(null);
               shapeBox = null;
               linEl = null;
@@ -458,7 +489,7 @@ export function CanvasView() {
         {
           getTool: () => useTool.getState().tool,
           // Com Selecionar, o dedo seleciona/arrasta; pan e zoom ficam com 2 dedos.
-          getFingerDraws: () => useTool.getState().fingerDraws || useTool.getState().tool === "select",
+          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame"].includes(useTool.getState().tool),
         },
       );
     })();

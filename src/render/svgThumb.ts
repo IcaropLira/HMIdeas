@@ -70,6 +70,14 @@ export function thumbPath(el: HirakuElement): ThumbPath {
       dash: el.strokeStyle === "dashed" ? `${w * 4 + 6} ${w * 2 + 5}` : el.strokeStyle === "dotted" ? `0.1 ${w * 2 + 4}` : null,
       b: elementBounds(el), alpha: 1,
     };
+  } else if (el.type === "node" || el.type === "frame") {
+    const nd = el.type === "node";
+    tp = {
+      d: pathFrom(shapePath(el).flatMap((p) => [p.x, p.y])),
+      fill: nd && el.fill ? safeColor(el.fill, "none") : "none",
+      stroke: safeColor(nd ? el.stroke ?? el.branchColor : el.color, "#1B2233"),
+      sw: el.strokeWidth, dash: null, b: elementBounds(el), alpha: 1,
+    };
   } else {
     const w = el.strokeWidth;
     tp = {

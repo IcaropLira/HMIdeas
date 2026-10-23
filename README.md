@@ -27,6 +27,48 @@ O script:
 
 Para desfazer um patch já aplicado: `git revert <commit>`.
 
+## Publicar e atualizar (site, Windows, Linux, Android, macOS)
+
+Tudo roda no GitHub Actions; você só precisa fazer a configuração abaixo **uma vez**.
+
+**1. Site (PWA) + página de download** — `Settings → Pages → Source: GitHub Actions`. A cada push na `main` o workflow **Site**
+publica o app em `https://dono.github.io/repositorio/` e a página de download em `.../download.html` (ela lê a última release e
+destaca o instalador do sistema de quem abriu). O site é instalável (Chrome/Edge/Android/iPad) e funciona offline. Domínio próprio:
+crie a variável de repositório `SITE_BASE` = `/`.
+
+**2. Chave das atualizações do desktop** (uma vez):
+
+```bash
+npm run updater:keys     # gera ~/.tauri/hm-ideas.key e grava a chave PÚBLICA no tauri.conf.json (faça commit)
+```
+Cadastre em `Settings → Secrets and variables → Actions`: `TAURI_SIGNING_PRIVATE_KEY` (conteúdo do arquivo) e, se pôs senha,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Sem essa chave o app recusa qualquer atualização (é a proteção contra pacote falso).
+
+**3. Chave do APK (Android)** (uma vez, e use SEMPRE a mesma — o Android só atualiza por cima se a assinatura for igual):
+
+```bash
+npm run android:keystore # imprime os 3 secrets: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
+```
+
+**4. Publicar uma versão**:
+
+```bash
+npm run release -- 0.3.0
+git push && git push origin v0.3.0
+```
+O workflow **Release** gera Windows (EXE + MSI), Linux (AppImage, DEB, RPM), macOS (DMG) e Android (APK), publica na release e cria o
+`latest.json`. A página de download já mostra os arquivos novos.
+
+**Como cada um se atualiza**
+- Windows / macOS / Linux AppImage: o app verifica ao abrir e a cada 6 h; mostra “Nova versão” → **Atualizar** baixa o pacote
+  assinado, instala e reinicia. O botão `vX.Y.Z` no topo verifica na hora.
+- Linux DEB/RPM e Android: o app avisa e abre o download da versão nova (instale por cima).
+- Site/PWA: o aviso pede um clique para recarregar. O desenho é guardado automaticamente no navegador (IndexedDB) e restaurado ao abrir,
+  então atualizar não perde nada. (“Salvar” continua gerando o arquivo `.hiraku`.)
+
+Avisos honestos: sem certificado pago, o Windows (SmartScreen) e o macOS (Gatekeeper) mostram um alerta no primeiro uso; a
+atualização automática funciona mesmo assim. iPhone/iPad só têm a versão web (PWA).
+
 ## Releases (instaladores)
 
 ```bash
@@ -35,7 +77,7 @@ git push && git push origin v0.3.0
 ```
 O workflow **Release** gera Linux (DEB, RPM, AppImage), Windows (MSI, NSIS) e macOS (DMG universal) e publica no GitHub Releases.
 O macOS é compilado na nuvem, então você não precisa de um Mac para ter o app para Apple.
-O atualizador silencioso dentro do app (Tauri Updater) exige uma chave de assinatura nos *secrets* do GitHub e entra numa etapa futura.
+O atualizador automático está descrito em “Publicar e atualizar”, acima.
 
 ## Pré-requisitos (Linux)
 

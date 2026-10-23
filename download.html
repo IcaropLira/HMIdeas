@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#EDF0F4" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <title>Baixar o HM Ideas</title>
+    <meta name="description" content="HM Ideas para Windows, Linux, Android e macOS — ou direto no navegador." />
+    <style>
+      :root { --bg:#EDF0F4; --card:#fff; --ink:#1B2233; --mute:#5E6B7E; --brand:#2F4B8F; --line:#D5DBE5; color-scheme: light dark; }
+      @media (prefers-color-scheme: dark) { :root { --bg:#12151C; --card:#1B2030; --ink:#E8ECF4; --mute:#9AA6BA; --brand:#8FA8F0; --line:#2B3246; } }
+      * { box-sizing: border-box; }
+      body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      main { max-width: 880px; margin: 0 auto; padding: 40px 16px 64px; }
+      header { display:flex; align-items:center; gap:14px; margin-bottom: 8px; }
+      header img { width:48px; height:48px; border-radius:12px; }
+      h1 { font-size: 28px; margin:0; }
+      .sub { color:var(--mute); margin: 4px 0 28px; }
+      .hero { background:var(--card); border-radius:20px; padding:24px; box-shadow:0 4px 24px rgba(27,34,51,.08); display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; }
+      .hero h2 { margin:0 0 4px; font-size:20px; }
+      .hero p { margin:0; color:var(--mute); font-size:14px; }
+      .cta { display:inline-block; background:var(--brand); color:#fff; text-decoration:none; font-weight:600; padding:14px 22px; border-radius:14px; }
+      @media (prefers-color-scheme: dark) { .cta { color:#12151C; } }
+      .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-top:20px; }
+      .card { background:var(--card); border-radius:16px; padding:18px; border:2px solid transparent; }
+      .card.me { border-color: var(--brand); }
+      .card h3 { margin:0 0 10px; font-size:17px; }
+      .card a.dl { display:flex; justify-content:space-between; gap:8px; padding:9px 12px; margin-top:8px; border:1px solid var(--line); border-radius:10px; color:var(--ink); text-decoration:none; font-size:14px; }
+      .card a.dl:hover { border-color: var(--brand); }
+      .card a.dl small { color:var(--mute); white-space:nowrap; }
+      .card p { margin:8px 0 0; font-size:13px; color:var(--mute); }
+      .empty { color:var(--mute); font-size:14px; margin:6px 0 0; }
+      details { margin-top:22px; background:var(--card); border-radius:14px; padding:14px 18px; }
+      summary { cursor:pointer; font-weight:600; }
+      details p, details li { color:var(--mute); font-size:14px; }
+      footer { margin-top:28px; color:var(--mute); font-size:13px; }
+      a { color: var(--brand); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="/pwa-192.png" alt="" />
+        <div>
+          <h1>HM Ideas</h1>
+        </div>
+      </header>
+      <p class="sub">Quadro branco, mapas mentais e caderno de anotações com caneta. Use no navegador ou instale no seu aparelho — o app se atualiza sozinho.</p>
+
+      <section class="hero" aria-live="polite">
+        <div>
+          <h2 id="hero-title">Procurando a versão mais recente…</h2>
+          <p id="hero-sub"></p>
+        </div>
+        <a class="cta" id="hero-cta" href="./">Abrir no navegador</a>
+      </section>
+
+      <section class="grid" id="grid" aria-label="Todos os downloads"></section>
+
+      <details>
+        <summary>Como instalar</summary>
+        <ul>
+          <li><b>Windows:</b> abra o instalador (.exe). Se o SmartScreen avisar, “Mais informações” → “Executar assim mesmo” (o app ainda não tem certificado pago).</li>
+          <li><b>Linux:</b> AppImage: <code>chmod +x HM*.AppImage</code> e execute — atualiza sozinho. .deb/.rpm: instale pelo gerenciador de pacotes; o app avisa quando houver versão nova.</li>
+          <li><b>Android:</b> baixe o APK e permita “instalar apps desconhecidos” para o navegador. O app avisa quando houver versão nova.</li>
+          <li><b>iPhone / iPad:</b> abra o app no navegador (Safari) → Compartilhar → “Adicionar à Tela de Início”.</li>
+          <li><b>Qualquer sistema:</b> a versão web também é instalável (Chrome/Edge: ícone de instalar na barra de endereço) e funciona offline.</li>
+        </ul>
+      </details>
+
+      <footer id="footer"></footer>
+    </main>
+    <script type="module" src="/src/site/download.ts"></script>
+  </body>
+</html>

@@ -109,6 +109,8 @@ export function eraseStep(elements: HirakuElement[], cx: number, cy: number, rad
         out.push(...res);
         if (!res.length) removedIds.add(el.id);
       }
+    } else if (el.type === "node" || el.type === "frame") {
+      out.push(el); // nós e quadros têm estrutura: a borracha não os apaga (use Delete)
     } else if (elementHit(el, cx, cy, radius)) {
       changed = true;
       removedIds.add(el.id);

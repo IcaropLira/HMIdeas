@@ -1,6 +1,6 @@
 [package]
 name = "hm-ideas"
-version = "0.3.0"
+version = "0.3.2"
 description = "HM Ideas (Hiraku Manager Ideas): quadro branco e caderno de anotações com caneta"
 edition = "2021"
 

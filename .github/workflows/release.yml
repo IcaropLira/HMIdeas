@@ -11,7 +11,24 @@ permissions:
   contents: write
 
 jobs:
+  # Falha em segundos (e não depois de 20 min de build) se a tag foi criada sem o commit de versão.
+  # O site (Vercel/Pages) lê a versão do package.json da main: tag sem bump = site mostrando versão velha.
+  check-version:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versão do package.json precisa ser a da tag
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::A tag é v$tag, mas o package.json está em $pkg. Use 'npm run release -- $tag' (ele faz o commit da versão antes de criar a tag) e envie o commit junto com a tag."
+            exit 1
+          fi
+
   desktop:
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:

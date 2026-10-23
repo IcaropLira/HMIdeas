@@ -1,0 +1,47 @@
+From 344e6168a0ca2eb3d85bdf42803461a35dd20680 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 23 Oct 2026 19:53:37 -0300
+Subject: [PATCH 2/2] =?UTF-8?q?ci:=20falhar=20cedo=20se=20a=20vers=C3=A3o?=
+ =?UTF-8?q?=20do=20package.json=20n=C3=A3o=20bater=20com=20a=20tag?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Evita publicar release com o site preso em versão antiga: o job check-version compara a tag
+com o package.json antes de gastar o build dos instaladores.
+---
+ .github/workflows/release.yml | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index f190c1d..ad562e0 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -11,7 +11,24 @@ permissions:
+   contents: write
+ 
+ jobs:
++  # Falha em segundos (e não depois de 20 min de build) se a tag foi criada sem o commit de versão.
++  # O site (Vercel/Pages) lê a versão do package.json da main: tag sem bump = site mostrando versão velha.
++  check-version:
++    runs-on: ubuntu-22.04
++    steps:
++      - uses: actions/checkout@v4
++      - name: Versão do package.json precisa ser a da tag
++        shell: bash
++        run: |
++          tag="${GITHUB_REF_NAME#v}"
++          pkg="$(node -p "require('./package.json').version")"
++          if [ "$tag" != "$pkg" ]; then
++            echo "::error::A tag é v$tag, mas o package.json está em $pkg. Use 'npm run release -- $tag' (ele faz o commit da versão antes de criar a tag) e envie o commit junto com a tag."
++            exit 1
++          fi
++
+   desktop:
++    needs: check-version
+     strategy:
+       fail-fast: false
+       matrix:
+-- 
+2.43.0
+

@@ -1,0 +1,112 @@
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -478,7 +478,7 @@
+             v.setCamera(zoomAt(v.camera, factor, cx, cy));
+           },
+ 
+-          contextTap() {
++          contextTap(s) {
+             // Com algo selecionado: configurações do que está selecionado. Sem seleção: da ferramenta atual.
+             const ids = useSel.getState().ids;
+             let panel = "paper";
+@@ -492,7 +492,7 @@
+                 tl === "pen" ? "brush" : tl === "eraser" ? "eraser" : tl === "text" ? "text" :
+                 tl === "mindmap" || tl === "frame" ? "map" : isShapeTool(tl) || isLinearTool(tl) ? "shape" : "paper";
+             }
+-            useUI.getState().requestPanel(panel);
++            useUI.getState().requestPanel(panel, s.clientX, s.clientY);
+           },
+ 
+           hover(s) {
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -45,6 +45,7 @@
+   const zoom = useView((s) => s.camera.zoom);
+   const selCount = useSel((s) => s.ids.length);
+   const [panel, setPanel] = useState<Panel>(null);
++  const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
+   const fileRef = useRef<HTMLInputElement>(null);
+   const dockRef = useRef<HTMLDivElement>(null);
+ 
+@@ -66,10 +67,19 @@
+   // Botão direito no canvas pede um painel (ver CanvasView.contextTap).
+   const panelRequest = useUI((s) => s.panelRequest);
+   useEffect(() => {
+-    if (panelRequest) setPanel(panelRequest.panel as Exclude<Panel, null>);
++    if (!panelRequest) return;
++    setPanel(panelRequest.panel as Exclude<Panel, null>);
++    // Mantém o painel dentro da janela; estimativa conservadora para o tamanho máximo.
++    const margin = 8;
++    const width = Math.min(376, window.innerWidth - margin * 2);
++    const height = Math.min(680, window.innerHeight - margin * 2);
++    setPanelPosition({
++      x: Math.max(margin, Math.min(panelRequest.x, window.innerWidth - width - margin)),
++      y: Math.max(margin, Math.min(panelRequest.y, window.innerHeight - height - margin)),
++    });
+   }, [panelRequest]);
+ 
+-  const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
++  const toggle = (p: Exclude<Panel, null>) => { setPanel((cur) => (cur === p ? null : p)); setPanelPosition(null); };
+ 
+   const open = async (file: File | undefined) => {
+     if (!file) return;
+@@ -107,7 +117,11 @@
+         <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
+       </div>
+ 
+-      <div className="dock" ref={dockRef}>
++      <div
++        className={panelPosition && panel ? "dock dock-context" : "dock"}
++        ref={dockRef}
++        style={panelPosition && panel ? { left: panelPosition.x, top: panelPosition.y, bottom: "auto", transform: "none", alignItems: "flex-start" } : undefined}
++      >
+         {panel === "paper" && (
+           <div className="panel" role="dialog" aria-label="Papel">
+             <div className="row" role="radiogroup" aria-label="Estilo da folha">
+diff --git a/src/core/ui.ts b/src/core/ui.ts
+--- a/src/core/ui.ts
++++ b/src/core/ui.ts
+@@ -4,8 +4,8 @@
+   sidebarOpen: boolean;
+   toast: { id: number; msg: string } | null;
+   /** Pedido para abrir um painel de configurações da barra (botão direito no canvas). */
+-  panelRequest: { panel: string; n: number } | null;
+-  requestPanel: (panel: string) => void;
++  panelRequest: { panel: string; x: number; y: number; n: number } | null;
++  requestPanel: (panel: string, x: number, y: number) => void;
+   setSidebar: (open: boolean) => void;
+   showToast: (msg: string) => void;
+ }
+@@ -17,7 +17,7 @@
+   sidebarOpen: typeof window !== "undefined" ? window.innerWidth >= 900 : false,
+   toast: null,
+   panelRequest: null,
+-  requestPanel: (panel) => set((s) => ({ panelRequest: { panel, n: (s.panelRequest?.n ?? 0) + 1 } })),
++  requestPanel: (panel, x, y) => set((s) => ({ panelRequest: { panel, x, y, n: (s.panelRequest?.n ?? 0) + 1 } })),
+   setSidebar: (sidebarOpen) => set({ sidebarOpen }),
+   showToast: (msg) => {
+     clearTimeout(toastTimer);
+diff --git a/src/input/InputController.ts b/src/input/InputController.ts
+--- a/src/input/InputController.ts
++++ b/src/input/InputController.ts
+@@ -6,6 +6,9 @@
+   /** Coordenadas em pixels CSS relativos ao canvas. */
+   x: number;
+   y: number;
++  /** Coordenadas da janela, para posicionar menus contextuais. */
++  clientX: number;
++  clientY: number;
+   /** 0..1 */
+   pressure: number;
+   tiltX: number;
+@@ -99,6 +102,8 @@
+     return {
+       x: e.clientX - this.rect.left,
+       y: e.clientY - this.rect.top,
++      clientX: e.clientX,
++      clientY: e.clientY,
+       // Mouse reporta 0.5 com botão pressionado; caneta reporta pressão real.
+       pressure: e.pressure > 0 ? e.pressure : 0.5,
+       tiltX: e.tiltX,

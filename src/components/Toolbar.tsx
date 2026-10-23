@@ -45,6 +45,7 @@ export function Toolbar() {
   const zoom = useView((s) => s.camera.zoom);
   const selCount = useSel((s) => s.ids.length);
   const [panel, setPanel] = useState<Panel>(null);
+  const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
 
@@ -66,10 +67,19 @@ export function Toolbar() {
   // Botão direito no canvas pede um painel (ver CanvasView.contextTap).
   const panelRequest = useUI((s) => s.panelRequest);
   useEffect(() => {
-    if (panelRequest) setPanel(panelRequest.panel as Exclude<Panel, null>);
+    if (!panelRequest) return;
+    setPanel(panelRequest.panel as Exclude<Panel, null>);
+    // Mantém o painel dentro da janela; estimativa conservadora para o tamanho máximo.
+    const margin = 8;
+    const width = Math.min(376, window.innerWidth - margin * 2);
+    const height = Math.min(680, window.innerHeight - margin * 2);
+    setPanelPosition({
+      x: Math.max(margin, Math.min(panelRequest.x, window.innerWidth - width - margin)),
+      y: Math.max(margin, Math.min(panelRequest.y, window.innerHeight - height - margin)),
+    });
   }, [panelRequest]);
 
-  const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
+  const toggle = (p: Exclude<Panel, null>) => { setPanel((cur) => (cur === p ? null : p)); setPanelPosition(null); };
 
   const open = async (file: File | undefined) => {
     if (!file) return;
@@ -107,7 +117,11 @@ export function Toolbar() {
         <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
 
-      <div className="dock" ref={dockRef}>
+      <div
+        className={panelPosition && panel ? "dock dock-context" : "dock"}
+        ref={dockRef}
+        style={panelPosition && panel ? { left: panelPosition.x, top: panelPosition.y, bottom: "auto", transform: "none", alignItems: "flex-start" } : undefined}
+      >
         {panel === "paper" && (
           <div className="panel" role="dialog" aria-label="Papel">
             <div className="row" role="radiogroup" aria-label="Estilo da folha">

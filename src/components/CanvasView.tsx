@@ -478,7 +478,7 @@ export function CanvasView() {
             v.setCamera(zoomAt(v.camera, factor, cx, cy));
           },
 
-          contextTap() {
+          contextTap(s) {
             // Com algo selecionado: configurações do que está selecionado. Sem seleção: da ferramenta atual.
             const ids = useSel.getState().ids;
             let panel = "paper";
@@ -492,7 +492,7 @@ export function CanvasView() {
                 tl === "pen" ? "brush" : tl === "eraser" ? "eraser" : tl === "text" ? "text" :
                 tl === "mindmap" || tl === "frame" ? "map" : isShapeTool(tl) || isLinearTool(tl) ? "shape" : "paper";
             }
-            useUI.getState().requestPanel(panel);
+            useUI.getState().requestPanel(panel, s.clientX, s.clientY);
           },
 
           hover(s) {

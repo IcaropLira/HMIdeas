@@ -55,6 +55,9 @@ export function LabelEditor() {
         commitLabel(session.token);
       }}
       onKeyDown={(e) => {
+        // O editor deve receber todos os caracteres (inclusive espaço) sem que
+        // atalhos globais ou handlers do canvas interfiram na edição do rótulo.
+        e.stopPropagation();
         if (e.key === "Escape") { e.preventDefault(); commitLabel(session.token); return; }
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();

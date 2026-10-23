@@ -6,6 +6,9 @@ export interface Sample {
   /** Coordenadas em pixels CSS relativos ao canvas. */
   x: number;
   y: number;
+  /** Coordenadas da janela, para posicionar menus contextuais. */
+  clientX: number;
+  clientY: number;
   /** 0..1 */
   pressure: number;
   tiltX: number;
@@ -99,6 +102,8 @@ export class InputController {
     return {
       x: e.clientX - this.rect.left,
       y: e.clientY - this.rect.top,
+      clientX: e.clientX,
+      clientY: e.clientY,
       // Mouse reporta 0.5 com botão pressionado; caneta reporta pressão real.
       pressure: e.pressure > 0 ? e.pressure : 0.5,
       tiltX: e.tiltX,

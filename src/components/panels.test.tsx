@@ -6,6 +6,7 @@ import { listBrushes } from "../core/brushes";
 import { PALETTES } from "../core/color";
 import { BrushPanel } from "./BrushPanel";
 import { ColorPicker } from "./ColorPicker";
+import { WebGLNotice, WebGLNoticeView } from "./WebGLNotice";
 
 describe("BrushPanel", () => {
   const html = renderToString(<BrushPanel />);
@@ -35,5 +36,19 @@ describe("ColorPicker", () => {
 
   it("não mostra 'Recentes' enquanto não há cores recentes", () => {
     expect(html).not.toContain("Recentes");
+  });
+});
+
+describe("WebGLNotice", () => {
+  it("explica o problema e como ligar a aceleração gráfica", () => {
+    const html = renderToString(<WebGLNoticeView problem="no-webgl" downloadHref="/download.html" />);
+    expect(html).toContain("WebGL");
+    expect(html).toContain("aceleração de hardware");
+    expect(html).toContain("chrome://gpu");
+    expect(html).toContain("/download.html");
+  });
+
+  it("não aparece quando está tudo bem (sem problema registrado)", () => {
+    expect(renderToString(<WebGLNotice />)).toBe("");
   });
 });

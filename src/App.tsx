@@ -3,6 +3,7 @@ import { CanvasView } from "./components/CanvasView";
 import { TextEditor } from "./components/TextEditor";
 import { LabelEditor } from "./components/LabelEditor";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { WebGLNotice } from "./components/WebGLNotice";
 import { initAutosave } from "./core/autosave";
 import { initUpdates } from "./core/updater";
 import { PageNav, Sidebar, Toast } from "./components/Pages";
@@ -109,6 +110,7 @@ export default function App() {
       <LabelEditor />
       <Toast />
       <UpdateBanner />
+      <WebGLNotice />
     </>
   );
 }

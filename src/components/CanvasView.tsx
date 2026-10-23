@@ -17,6 +17,7 @@ import { InkStyle } from "../render/strokeDraw";
 import { addChildTo, createFrameFromBox, createRootAt } from "../core/mapActions";
 import { createSelectController } from "../tools/selectTool";
 import { useUI } from "../core/ui";
+import { detectWebGL, useGfx } from "../core/webgl";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
 type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
@@ -202,7 +203,19 @@ export function CanvasView() {
     };
 
     (async () => {
-      await renderer.init(canvas, host);
+      // Sem WebGL o Pixi não desenha nada: avisa em vez de deixar o quadro em branco (components/WebGLNotice).
+      if (!detectWebGL()) {
+        useGfx.setState({ problem: "no-webgl" });
+        return;
+      }
+      try {
+        await renderer.init(canvas, host);
+      } catch (e) {
+        console.error("Falha ao iniciar o renderer", e);
+        useGfx.setState({ problem: "init-failed" });
+        try { renderer.destroy(); } catch { /* já estava quebrado */ }
+        return;
+      }
       if (disposed) {
         renderer.destroy();
         return;

@@ -1,0 +1,239 @@
+From 6fa72838fc572a1a747dc227035780f9918fade7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 23 Oct 2026 20:26:51 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20avisar=20quando=20o=20navegador=20est?=
+ =?UTF-8?q?=C3=A1=20sem=20WebGL?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O desenho usa PixiJS (WebGL). Com a aceleração gráfica desligada (ex.: Chrome no Linux com a GPU
+bloqueada) o quadro ficava em branco sem nenhuma explicação. Agora o app testa se há contexto WebGL
+(WebGL por software conta) e, se não houver ou se o renderer falhar ao iniciar, mostra um aviso com
+o passo a passo para ligar a aceleração, link para o app desktop e botão para tentar de novo.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TfD136kyaxf1h4iZmA9QTd
+---
+ src/App.tsx                    |  2 ++
+ src/components/CanvasView.tsx  | 15 ++++++++++++-
+ src/components/WebGLNotice.tsx | 40 ++++++++++++++++++++++++++++++++++
+ src/components/panels.test.tsx | 15 +++++++++++++
+ src/core/webgl.test.ts         | 25 +++++++++++++++++++++
+ src/core/webgl.ts              | 26 ++++++++++++++++++++++
+ src/styles.css                 |  7 ++++++
+ 7 files changed, 129 insertions(+), 1 deletion(-)
+ create mode 100644 src/components/WebGLNotice.tsx
+ create mode 100644 src/core/webgl.test.ts
+ create mode 100644 src/core/webgl.ts
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 888234a..ba81427 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -3,6 +3,7 @@ import { CanvasView } from "./components/CanvasView";
+ import { TextEditor } from "./components/TextEditor";
+ import { LabelEditor } from "./components/LabelEditor";
+ import { UpdateBanner } from "./components/UpdateBanner";
++import { WebGLNotice } from "./components/WebGLNotice";
+ import { initAutosave } from "./core/autosave";
+ import { initUpdates } from "./core/updater";
+ import { PageNav, Sidebar, Toast } from "./components/Pages";
+@@ -109,6 +110,7 @@ export default function App() {
+       <LabelEditor />
+       <Toast />
+       <UpdateBanner />
++      <WebGLNotice />
+     </>
+   );
+ }
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 418c2d1..6b16ece 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -17,6 +17,7 @@ import { InkStyle } from "../render/strokeDraw";
+ import { addChildTo, createFrameFromBox, createRootAt } from "../core/mapActions";
+ import { createSelectController } from "../tools/selectTool";
+ import { useUI } from "../core/ui";
++import { detectWebGL, useGfx } from "../core/webgl";
+ 
+ interface Smoothed { x: number; y: number; p: number; t: number }
+ type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
+@@ -202,7 +203,19 @@ export function CanvasView() {
+     };
+ 
+     (async () => {
+-      await renderer.init(canvas, host);
++      // Sem WebGL o Pixi não desenha nada: avisa em vez de deixar o quadro em branco (components/WebGLNotice).
++      if (!detectWebGL()) {
++        useGfx.setState({ problem: "no-webgl" });
++        return;
++      }
++      try {
++        await renderer.init(canvas, host);
++      } catch (e) {
++        console.error("Falha ao iniciar o renderer", e);
++        useGfx.setState({ problem: "init-failed" });
++        try { renderer.destroy(); } catch { /* já estava quebrado */ }
++        return;
++      }
+       if (disposed) {
+         renderer.destroy();
+         return;
+diff --git a/src/components/WebGLNotice.tsx b/src/components/WebGLNotice.tsx
+new file mode 100644
+index 0000000..35293da
+--- /dev/null
++++ b/src/components/WebGLNotice.tsx
+@@ -0,0 +1,40 @@
++import { isTauri } from "../core/updater";
++import { GfxProblem, useGfx } from "../core/webgl";
++
++/** Texto do aviso (puro, para testar sem DOM). */
++export function WebGLNoticeView({ problem, downloadHref }: { problem: GfxProblem; downloadHref?: string }) {
++  return (
++    <div className="gfx-notice" role="alert">
++      <div className="gfx-card">
++        <strong>
++          {problem === "no-webgl" ? "O WebGL está desativado neste navegador" : "Não consegui iniciar o desenho"}
++        </strong>
++        <p>
++          O HM Ideas desenha com WebGL (aceleração gráfica). Sem ele o quadro fica em branco, mesmo com o site
++          carregado normalmente.
++        </p>
++        <p>
++          <b>Chrome / Edge:</b> em Configurações → Sistema, ative “Usar aceleração de hardware quando disponível” e
++          reinicie o navegador. Depois confira em <code>chrome://gpu</code> se a linha “WebGL” aparece como ativa.
++        </p>
++        <p>
++          <b>Firefox / Safari:</b> costumam funcionar de fábrica. Se não funcionar, atualize o navegador e os drivers
++          de vídeo.
++        </p>
++        {downloadHref && (
++          <p>
++            Outra opção: <a href={downloadHref}>instalar o app para desktop ou Android</a>.
++          </p>
++        )}
++        <button className="btn text" onClick={() => window.location.reload()}>Tentar de novo</button>
++      </div>
++    </div>
++  );
++}
++
++/** Aparece por cima do quadro quando o WebGL não está disponível (ver core/webgl.ts). */
++export function WebGLNotice() {
++  const problem = useGfx((s) => s.problem);
++  if (!problem) return null;
++  return <WebGLNoticeView problem={problem} downloadHref={isTauri() ? undefined : `${import.meta.env.BASE_URL}download.html`} />;
++}
+diff --git a/src/components/panels.test.tsx b/src/components/panels.test.tsx
+index 571e1b6..5b5e1e8 100644
+--- a/src/components/panels.test.tsx
++++ b/src/components/panels.test.tsx
+@@ -6,6 +6,7 @@ import { listBrushes } from "../core/brushes";
+ import { PALETTES } from "../core/color";
+ import { BrushPanel } from "./BrushPanel";
+ import { ColorPicker } from "./ColorPicker";
++import { WebGLNotice, WebGLNoticeView } from "./WebGLNotice";
+ 
+ describe("BrushPanel", () => {
+   const html = renderToString(<BrushPanel />);
+@@ -37,3 +38,17 @@ describe("ColorPicker", () => {
+     expect(html).not.toContain("Recentes");
+   });
+ });
++
++describe("WebGLNotice", () => {
++  it("explica o problema e como ligar a aceleração gráfica", () => {
++    const html = renderToString(<WebGLNoticeView problem="no-webgl" downloadHref="/download.html" />);
++    expect(html).toContain("WebGL");
++    expect(html).toContain("aceleração de hardware");
++    expect(html).toContain("chrome://gpu");
++    expect(html).toContain("/download.html");
++  });
++
++  it("não aparece quando está tudo bem (sem problema registrado)", () => {
++    expect(renderToString(<WebGLNotice />)).toBe("");
++  });
++});
+diff --git a/src/core/webgl.test.ts b/src/core/webgl.test.ts
+new file mode 100644
+index 0000000..149e06d
+--- /dev/null
++++ b/src/core/webgl.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, it, vi } from "vitest";
++import { detectWebGL } from "./webgl";
++
++describe("detectWebGL", () => {
++  it("é verdadeiro com WebGL2 e devolve o contexto ao navegador", () => {
++    const loseContext = vi.fn();
++    const gl = { getExtension: () => ({ loseContext }) };
++    expect(detectWebGL(() => ({ getContext: (id) => (id === "webgl2" ? gl : null) }))).toBe(true);
++    expect(loseContext).toHaveBeenCalled();
++  });
++
++  it("cai para WebGL1 quando não há WebGL2", () => {
++    const gl = { getExtension: () => null };
++    expect(detectWebGL(() => ({ getContext: (id) => (id === "webgl" ? gl : null) }))).toBe(true);
++  });
++
++  it("é falso quando o navegador não cria contexto (aceleração desligada)", () => {
++    expect(detectWebGL(() => ({ getContext: () => null }))).toBe(false);
++  });
++
++  it("é falso (e não quebra) se criar o canvas ou o contexto lançar erro", () => {
++    expect(detectWebGL(() => { throw new Error("sem canvas"); })).toBe(false);
++    expect(detectWebGL(() => ({ getContext: () => { throw new Error("bloqueado"); } }))).toBe(false);
++  });
++});
+diff --git a/src/core/webgl.ts b/src/core/webgl.ts
+new file mode 100644
+index 0000000..7cd7b25
+--- /dev/null
++++ b/src/core/webgl.ts
+@@ -0,0 +1,26 @@
++// O desenho (PixiJS) precisa de WebGL. Sem ele o quadro ficaria em branco sem explicação:
++// aqui detectamos isso e guardamos o motivo para a UI mostrar um aviso (components/WebGLNotice.tsx).
++import { create } from "zustand";
++
++export type GfxProblem = "no-webgl" | "init-failed";
++
++export const useGfx = create<{ problem: GfxProblem | null }>(() => ({ problem: null }));
++
++type Probe = { getContext: (id: string) => unknown };
++
++/**
++ * O navegador consegue criar um contexto WebGL? Testa num canvas descartável (o canvas real só pode
++ * receber um contexto) e pede o mesmo que o Pixi: WebGL2 e, se não houver, WebGL1.
++ * WebGL por software conta como disponível: o que importa é o app conseguir desenhar.
++ */
++export function detectWebGL(make: () => Probe = () => document.createElement("canvas") as unknown as Probe): boolean {
++  try {
++    const canvas = make();
++    const gl = (canvas.getContext("webgl2") ?? canvas.getContext("webgl")) as WebGLRenderingContext | null;
++    if (!gl) return false;
++    gl.getExtension("WEBGL_lose_context")?.loseContext(); // devolve o contexto (o navegador limita quantos existem)
++    return true;
++  } catch {
++    return false;
++  }
++}
+diff --git a/src/styles.css b/src/styles.css
+index 8df3f0d..8c1b7c6 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -395,3 +395,10 @@ body[data-sidebar="open"] { --side: 256px; }
+ .update-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
+ .update-text span { color: #5E6B7E; }
+ .update-bar { width: 100%; height: 6px; }
++
++/* Aviso de WebGL indisponível (components/WebGLNotice.tsx) */
++.gfx-notice { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px; background: rgba(237, 240, 244, .92); }
++.gfx-card { max-width: 480px; display: flex; flex-direction: column; gap: 10px; padding: 20px 22px; background: #fff; border-radius: 16px; box-shadow: 0 10px 36px rgba(27, 34, 51, .24); font-size: 14px; line-height: 1.45; }
++.gfx-card strong { font-size: 16px; }
++.gfx-card p { margin: 0; color: #3B4658; }
++.gfx-card button { align-self: flex-start; }
+-- 
+2.43.0
+

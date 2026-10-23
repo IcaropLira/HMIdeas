@@ -1,0 +1,92 @@
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -1,7 +1,7 @@
+ import { ReactNode, useEffect, useRef, useState } from "react";
+ import { Icon } from "./Icon";
+ import { defaultCamera } from "../core/camera";
+-import { ARROW_HEADS, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES } from "../core/model";
++import { ARROW_HEADS, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
+ import { resetPageCameras } from "../core/pageView";
+ import { downloadDoc, parseDoc } from "../core/serialize";
+ import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
+@@ -36,6 +36,63 @@
+ };
+ 
+ type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map";
++
++type InsertKind = "postit" | "table" | "timeline" | "kanban" | "doc" | "slides";
++
++/** Insere modelos iniciais editáveis usando os elementos nativos do documento. */
++function insertTemplate(kind: InsertKind) {
++  const state = useDoc.getState();
++  const page = selectActivePage(state);
++  const x = 120 + (page.elements.length % 5) * 24;
++  const y = 100 + (page.elements.length % 5) * 24;
++  const bg = (id: string, x: number, y: number, w: number, h: number, fill: string): ShapeElement => ({
++    id, type: "rect", x, y, w, h, angle: 0, stroke: "#D5B95C", strokeWidth: 1,
++    strokeStyle: "solid", fill, rounded: true, opacity: 1,
++  });
++  const txt = (x: number, y: number, text: string, size = 20, color = "#29251C"): TextElement => ({
++    id: newId(), type: "text", x, y, w: Math.max(80, text.length * size * 0.6), h: size * 1.5,
++    angle: 0, text, fontSize: size, fontFamily: "sans", align: "left", color, opacity: 1,
++  });
++  const elements: (ShapeElement | TextElement)[] = [];
++  if (kind === "postit") {
++    elements.push(bg(newId(), x, y, 220, 180, "#FFF2A8"), txt(x + 14, y + 14, "Novo post-it", 22), txt(x + 14, y + 52, "Clique duas vezes no texto para editar.", 14));
++  } else if (kind === "table") {
++    elements.push(txt(x, y, "TABELA", 24));
++    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
++      elements.push(bg(newId(), x + c * 150, y + 42 + r * 52, 144, 46, r === 0 ? "#DCE8FF" : "#FFFFFF"));
++      elements.push(txt(x + c * 150 + 8, y + 54 + r * 52, r === 0 ? ["Coluna 1", "Coluna 2", "Coluna 3"][c] : "Editar célula", 14));
++    }
++  } else if (kind === "timeline") {
++    elements.push(txt(x, y, "TIMELINE", 24));
++    elements.push({ id: newId(), type: "line", points: [{x, y: y + 100}, {x: x + 600, y: y + 100}], stroke: "#4776C5", strokeWidth: 3, strokeStyle: "solid", startHead: "none", endHead: "arrow", curved: false, opacity: 1 });
++    for (let i = 0; i < 4; i++) {
++      elements.push(bg(newId(), x + i * 155, y + 70, 130, 60, ["#DCE8FF", "#DDF4E4", "#FFF2A8", "#FBE0DE"][i]));
++      elements.push(txt(x + i * 155 + 8, y + 88, `Etapa ${i + 1}`, 16));
++    }
++  } else if (kind === "kanban") {
++    elements.push(txt(x, y, "KANBAN", 24));
++    const cols = [{name:"A fazer", color:"#DCE8FF"}, {name:"Em andamento", color:"#FFF2A8"}, {name:"Concluído", color:"#DDF4E4"}];
++    cols.forEach((col, i) => {
++      elements.push(bg(newId(), x + i * 210, y + 42, 196, 260, col.color));
++      elements.push(txt(x + i * 210 + 12, y + 54, col.name, 18));
++      elements.push(bg(newId(), x + i * 210 + 10, y + 92, 176, 68, "#FFFFFF"));
++      elements.push(txt(x + i * 210 + 18, y + 105, "Nova tarefa", 15));
++    });
++  } else if (kind === "doc") {
++    elements.push(bg(newId(), x, y, 520, 620, "#FFFFFF"), txt(x + 24, y + 24, "Novo documento", 30), txt(x + 24, y + 82, "Escreva suas ideias aqui…", 18));
++  } else {
++    elements.push(txt(x, y, "SLIDES", 24));
++    for (let i = 0; i < 3; i++) {
++      elements.push(bg(newId(), x + i * 230, y + 50, 210, 135, "#FFFFFF"));
++      elements.push(bg(newId(), x + i * 230 + 12, y + 62, 186, 8, ["#8B6BDE", "#E36B5D", "#2C9B83"][i]));
++      elements.push(txt(x + i * 230 + 14, y + 84, `Slide ${i + 1}`, 20));
++      elements.push(txt(x + i * 230 + 14, y + 118, "Adicionar conteúdo", 13));
++    }
++  }
++  state.addElements(elements);
++  useSel.getState().set(elements.map((e) => e.id));
++  useTool.getState().setTool("select");
++}
+ 
+ export function Toolbar() {
+   const t = useTool();
+@@ -335,6 +392,16 @@
+             </button>
+           </div>
+ 
++          <div className="group" role="toolbar" aria-label="Inserir modelos">
++            {([
++              ["postit", "Post-it", "Inserir post-it"], ["table", "Tabela", "Inserir grade de tabela"],
++              ["timeline", "Timeline", "Inserir linha do tempo"], ["kanban", "Kanban", "Inserir quadro Kanban"],
++              ["doc", "Doc", "Inserir documento"], ["slides", "Slides", "Inserir cartões de slides"],
++            ] as const).map(([kind, label, hint]) => (
++              <button key={kind} className="btn text" onClick={() => insertTemplate(kind)} title={hint}>{label}</button>
++            ))}
++          </div>
++
+           <div className="group" role="radiogroup" aria-label="Cor do traço" data-text-ui onMouseDown={(e) => e.preventDefault()}>
+             {COLORS.map((c) => (
+               <button

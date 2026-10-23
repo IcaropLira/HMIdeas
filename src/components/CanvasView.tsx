@@ -16,6 +16,7 @@ import { Renderer } from "../render/Renderer";
 import { InkStyle } from "../render/strokeDraw";
 import { addChildTo, createFrameFromBox, createRootAt } from "../core/mapActions";
 import { createSelectController } from "../tools/selectTool";
+import { useUI } from "../core/ui";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
 type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
@@ -475,6 +476,23 @@ export function CanvasView() {
           zoom(factor, cx, cy) {
             const v = useView.getState();
             v.setCamera(zoomAt(v.camera, factor, cx, cy));
+          },
+
+          contextTap() {
+            // Com algo selecionado: configurações do que está selecionado. Sem seleção: da ferramenta atual.
+            const ids = useSel.getState().ids;
+            let panel = "paper";
+            if (ids.length) {
+              const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
+              const type = el?.type;
+              panel = type === "text" ? "text" : type === "node" || type === "frame" ? "map" : type === "stroke" ? "brush" : "shape";
+            } else {
+              const tl = useTool.getState().tool;
+              panel =
+                tl === "pen" ? "brush" : tl === "eraser" ? "eraser" : tl === "text" ? "text" :
+                tl === "mindmap" || tl === "frame" ? "map" : isShapeTool(tl) || isLinearTool(tl) ? "shape" : "paper";
+            }
+            useUI.getState().requestPanel(panel);
           },
 
           hover(s) {

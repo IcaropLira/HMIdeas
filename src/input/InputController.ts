@@ -30,6 +30,8 @@ export interface InputHandlers {
   /** Mouse/caneta pairando sem tocar (para mostrar o anel da borracha). */
   hover?(s: Sample): void;
   hoverEnd?(): void;
+  /** Botão direito solto sem ter arrastado (arrastar com ele continua sendo "mover a tela"). */
+  contextTap?(s: Sample): void;
 }
 
 export interface InputConfig {
@@ -52,6 +54,7 @@ export class InputController {
   private lastPan = { x: 0, y: 0 };
   private spaceDown = false;
   private rect: DOMRect;
+  private rightStart: { x: number; y: number } | null = null;
 
   constructor(
     private el: HTMLElement,
@@ -146,6 +149,7 @@ export class InputController {
 
     // Mouse / caneta
     this.el.setPointerCapture(e.pointerId);
+    this.rightStart = e.button === 2 ? { x: e.clientX, y: e.clientY } : null;
     const wantsPan =
       e.button === 1 || e.button === 2 || this.spaceDown || this.cfg.getTool() === "hand";
     if (wantsPan) this.beginPan(e, s);
@@ -223,6 +227,9 @@ export class InputController {
       this.h.drawEnd(this.sample(e));
       this.reset();
     } else if (this.mode === "pan" && e.pointerId === this.panPointerId) {
+      const rs = this.rightStart;
+      this.rightStart = null;
+      if (e.button === 2 && rs && Math.hypot(e.clientX - rs.x, e.clientY - rs.y) < 5) this.h.contextTap?.(this.sample(e));
       this.reset();
     } else if (this.mode === "pinch" && this.touches.size < 2) {
       this.reset();

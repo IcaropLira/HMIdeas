@@ -54,9 +54,20 @@ export function Toolbar() {
     const close = (e: PointerEvent) => {
       if (!dockRef.current?.contains(e.target as Node)) setPanel(null);
     };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPanel(null);
     document.addEventListener("pointerdown", close, true);
-    return () => document.removeEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("pointerdown", close, true);
+      document.removeEventListener("keydown", esc);
+    };
   }, [panel]);
+
+  // Botão direito no canvas pede um painel (ver CanvasView.contextTap).
+  const panelRequest = useUI((s) => s.panelRequest);
+  useEffect(() => {
+    if (panelRequest) setPanel(panelRequest.panel as Exclude<Panel, null>);
+  }, [panelRequest]);
 
   const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
 

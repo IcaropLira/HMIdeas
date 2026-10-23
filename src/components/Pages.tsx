@@ -74,7 +74,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar" aria-label="Páginas">
       <div className="brand">
-        <img src="/icon.svg" alt="" width={28} height={28} />
+        <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" width={28} height={28} />
         <div className="brand-text">
           <strong>HM Ideas</strong>
           <span>Hiraku Manager Ideas</span>

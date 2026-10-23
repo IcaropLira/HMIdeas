@@ -1,0 +1,138 @@
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 93913bf..fc670f8 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -16,6 +16,7 @@ import { Renderer } from "../render/Renderer";
+ import { InkStyle } from "../render/strokeDraw";
+ import { addChildTo, createFrameFromBox, createRootAt } from "../core/mapActions";
+ import { createSelectController } from "../tools/selectTool";
++import { useUI } from "../core/ui";
+ 
+ interface Smoothed { x: number; y: number; p: number; t: number }
+ type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
+@@ -477,6 +478,23 @@ export function CanvasView() {
+             v.setCamera(zoomAt(v.camera, factor, cx, cy));
+           },
+ 
++          contextTap() {
++            // Com algo selecionado: configurações do que está selecionado. Sem seleção: da ferramenta atual.
++            const ids = useSel.getState().ids;
++            let panel = "paper";
++            if (ids.length) {
++              const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
++              const type = el?.type;
++              panel = type === "text" ? "text" : type === "node" || type === "frame" ? "map" : type === "stroke" ? "brush" : "shape";
++            } else {
++              const tl = useTool.getState().tool;
++              panel =
++                tl === "pen" ? "brush" : tl === "eraser" ? "eraser" : tl === "text" ? "text" :
++                tl === "mindmap" || tl === "frame" ? "map" : isShapeTool(tl) || isLinearTool(tl) ? "shape" : "paper";
++            }
++            useUI.getState().requestPanel(panel);
++          },
++
+           hover(s) {
+             const t = useTool.getState();
+             if (t.tool === "eraser" || s.eraserTip) renderer.drawEraserCursor(s.x, s.y, t.eraserSize / 2);
+diff --git a/src/components/Pages.tsx b/src/components/Pages.tsx
+index 3f67d21..d5597a3 100644
+--- a/src/components/Pages.tsx
++++ b/src/components/Pages.tsx
+@@ -74,7 +74,7 @@ export function Sidebar() {
+   return (
+     <aside className="sidebar" aria-label="Páginas">
+       <div className="brand">
+-        <img src="/icon.svg" alt="" width={28} height={28} />
++        <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" width={28} height={28} />
+         <div className="brand-text">
+           <strong>HM Ideas</strong>
+           <span>Hiraku Manager Ideas</span>
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index f1379d4..996727c 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -54,10 +54,21 @@ export function Toolbar() {
+     const close = (e: PointerEvent) => {
+       if (!dockRef.current?.contains(e.target as Node)) setPanel(null);
+     };
++    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPanel(null);
+     document.addEventListener("pointerdown", close, true);
+-    return () => document.removeEventListener("pointerdown", close, true);
++    document.addEventListener("keydown", esc);
++    return () => {
++      document.removeEventListener("pointerdown", close, true);
++      document.removeEventListener("keydown", esc);
++    };
+   }, [panel]);
+ 
++  // Botão direito no canvas pede um painel (ver CanvasView.contextTap).
++  const panelRequest = useUI((s) => s.panelRequest);
++  useEffect(() => {
++    if (panelRequest) setPanel(panelRequest.panel as Exclude<Panel, null>);
++  }, [panelRequest]);
++
+   const toggle = (p: Exclude<Panel, null>) => setPanel((cur) => (cur === p ? null : p));
+ 
+   const open = async (file: File | undefined) => {
+diff --git a/src/core/ui.ts b/src/core/ui.ts
+index c5eac01..5406c14 100644
+--- a/src/core/ui.ts
++++ b/src/core/ui.ts
+@@ -3,6 +3,9 @@ import { create } from "zustand";
+ interface UIState {
+   sidebarOpen: boolean;
+   toast: { id: number; msg: string } | null;
++  /** Pedido para abrir um painel de configurações da barra (botão direito no canvas). */
++  panelRequest: { panel: string; n: number } | null;
++  requestPanel: (panel: string) => void;
+   setSidebar: (open: boolean) => void;
+   showToast: (msg: string) => void;
+ }
+@@ -13,6 +16,8 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
+ export const useUI = create<UIState>((set) => ({
+   sidebarOpen: typeof window !== "undefined" ? window.innerWidth >= 900 : false,
+   toast: null,
++  panelRequest: null,
++  requestPanel: (panel) => set((s) => ({ panelRequest: { panel, n: (s.panelRequest?.n ?? 0) + 1 } })),
+   setSidebar: (sidebarOpen) => set({ sidebarOpen }),
+   showToast: (msg) => {
+     clearTimeout(toastTimer);
+diff --git a/src/input/InputController.ts b/src/input/InputController.ts
+index 9008ea8..e73e4c9 100644
+--- a/src/input/InputController.ts
++++ b/src/input/InputController.ts
+@@ -30,6 +30,8 @@ export interface InputHandlers {
+   /** Mouse/caneta pairando sem tocar (para mostrar o anel da borracha). */
+   hover?(s: Sample): void;
+   hoverEnd?(): void;
++  /** Botão direito solto sem ter arrastado (arrastar com ele continua sendo "mover a tela"). */
++  contextTap?(s: Sample): void;
+ }
+ 
+ export interface InputConfig {
+@@ -52,6 +54,7 @@ export class InputController {
+   private lastPan = { x: 0, y: 0 };
+   private spaceDown = false;
+   private rect: DOMRect;
++  private rightStart: { x: number; y: number } | null = null;
+ 
+   constructor(
+     private el: HTMLElement,
+@@ -146,6 +149,7 @@ export class InputController {
+ 
+     // Mouse / caneta
+     this.el.setPointerCapture(e.pointerId);
++    this.rightStart = e.button === 2 ? { x: e.clientX, y: e.clientY } : null;
+     const wantsPan =
+       e.button === 1 || e.button === 2 || this.spaceDown || this.cfg.getTool() === "hand";
+     if (wantsPan) this.beginPan(e, s);
+@@ -223,6 +227,9 @@ export class InputController {
+       this.h.drawEnd(this.sample(e));
+       this.reset();
+     } else if (this.mode === "pan" && e.pointerId === this.panPointerId) {
++      const rs = this.rightStart;
++      this.rightStart = null;
++      if (e.button === 2 && rs && Math.hypot(e.clientX - rs.x, e.clientY - rs.y) < 5) this.h.contextTap?.(this.sample(e));
+       this.reset();
+     } else if (this.mode === "pinch" && this.touches.size < 2) {
+       this.reset();

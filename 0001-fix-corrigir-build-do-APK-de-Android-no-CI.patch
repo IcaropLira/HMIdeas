@@ -1,0 +1,33 @@
+From d858765e79f74559378189d38be048083aeb00e2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8Dcaro=20Lira?= <icaroplira@gmail.com>
+Date: Fri, 23 Oct 2026 14:49:10 -0300
+Subject: [PATCH 1/2] fix: corrigir build do APK de Android no CI
+
+---
+ .github/workflows/release.yml | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index c63bebb..f190c1d 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -95,6 +95,8 @@ jobs:
+           java-version: 17
+ 
+       - uses: android-actions/setup-android@v3
++        with:
++          packages: "platform-tools"
+ 
+       - uses: dtolnay/rust-toolchain@stable
+         with:
+@@ -134,6 +136,7 @@ jobs:
+           set -euo pipefail
+           BT="$ANDROID_HOME/build-tools/34.0.0"
+           IN="$(find src-tauri/gen/android -name '*universal*release*.apk' | head -n1)"
++          [ -n "$IN" ] || IN="$(find src-tauri/gen/android -name '*release*.apk' | head -n1)"
+           [ -n "$IN" ] || { echo "::error::APK não encontrado"; exit 1; }
+           VERSION="${GITHUB_REF_NAME#v}"
+           OUT="HM-Ideas_${VERSION}.apk"
+-- 
+2.56.0
+

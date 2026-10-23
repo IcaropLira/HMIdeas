@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { defaultCamera } from "../core/camera";
-import { ARROW_HEADS, LineStyle, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
+import { ARROW_HEADS, LineStyle, LinearElement, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
 import { resetPageCameras } from "../core/pageView";
 import { downloadDoc, parseDoc } from "../core/serialize";
 import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
@@ -53,7 +53,7 @@ function insertTemplate(kind: InsertKind) {
     id: newId(), type: "text", x, y, w: Math.max(80, text.length * size * 0.6), h: size * 1.5,
     angle: 0, text, fontSize: size, fontFamily: "sans", align: "left", color, opacity: 1,
   });
-  const elements: (ShapeElement | TextElement)[] = [];
+  const elements: (ShapeElement | TextElement | LinearElement)[] = [];
   if (kind === "postit") {
     elements.push(bg(newId(), x, y, 220, 180, "#FFF2A8"), txt(x + 14, y + 14, "Novo post-it", 22), txt(x + 14, y + 52, "Clique duas vezes no texto para editar.", 14));
   } else if (kind === "table") {

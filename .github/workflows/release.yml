@@ -74,7 +74,7 @@ jobs:
           releaseBody: "Baixe o instalador do seu sistema abaixo (ou na página de download do site). Quem já tem o app instalado recebe esta versão sozinho."
           releaseDraft: false
           prerelease: false
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
   android:

@@ -1,0 +1,118 @@
+From 5c72c7347de146f0cc1e2cf6b10e4d6d9a202ceb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 23 Oct 2026 20:40:41 -0300
+Subject: [PATCH] =?UTF-8?q?fix:=20fechar=20pain=C3=A9is=20ao=20clicar=20em?=
+ =?UTF-8?q?=20qualquer=20lugar=20fora=20deles?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O dock tem a largura da barra de ferramentas, bem maior que o painel. As faixas vazias ao lado do
+painel contavam como 'dentro': o clique não fechava o painel e ainda não chegava ao canvas. Agora
+o espaço vazio do dock conta como fora (core/outside.ts) e deixa o clique passar (pointer-events).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TfD136kyaxf1h4iZmA9QTd
+---
+ src/components/Toolbar.tsx |  5 +++--
+ src/core/outside.test.ts   | 27 +++++++++++++++++++++++++++
+ src/core/outside.ts        | 11 +++++++++++
+ src/styles.css             |  3 +++
+ 4 files changed, 44 insertions(+), 2 deletions(-)
+ create mode 100644 src/core/outside.test.ts
+ create mode 100644 src/core/outside.ts
+
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index 874ed16..d2f89b9 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -13,6 +13,7 @@ import { ColorPicker } from "./ColorPicker";
+ import { MapPanel } from "./MapPanel";
+ import { APP_VERSION } from "../core/repo";
+ import { checkForUpdates, isTauri } from "../core/updater";
++import { isInsideDock } from "../core/outside";
+ 
+ const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
+ const FILLS: { value: string | null; label: string }[] = [
+@@ -130,11 +131,11 @@ export function Toolbar() {
+   const fileRef = useRef<HTMLInputElement>(null);
+   const dockRef = useRef<HTMLDivElement>(null);
+ 
+-  // Fecha o painel ao tocar fora (inclusive no canvas).
++  // Fecha o painel ao tocar fora (inclusive no canvas e nas faixas vazias ao lado do painel).
+   useEffect(() => {
+     if (!panel) return;
+     const close = (e: PointerEvent) => {
+-      if (!dockRef.current?.contains(e.target as Node)) setPanel(null);
++      if (!isInsideDock(e.target as Node | null, dockRef.current)) setPanel(null);
+     };
+     const esc = (e: KeyboardEvent) => e.key === "Escape" && setPanel(null);
+     document.addEventListener("pointerdown", close, true);
+diff --git a/src/core/outside.test.ts b/src/core/outside.test.ts
+new file mode 100644
+index 0000000..b0ff788
+--- /dev/null
++++ b/src/core/outside.test.ts
+@@ -0,0 +1,27 @@
++import { describe, expect, it } from "vitest";
++import { isInsideDock } from "./outside";
++
++const node = (name: string) => ({ name }) as unknown as Node;
++
++describe("isInsideDock", () => {
++  const panelBtn = node("botão dentro do painel");
++  const outside = node("canvas");
++  const dock = { contains: (n: Node) => n === panelBtn || (n as unknown) === dock };
++
++  it("clicar num elemento dentro do dock é 'dentro'", () => {
++    expect(isInsideDock(panelBtn, dock)).toBe(true);
++  });
++
++  it("clicar no canvas (fora do dock) é 'fora'", () => {
++    expect(isInsideDock(outside, dock)).toBe(false);
++  });
++
++  it("clicar no espaço vazio do próprio dock (ao lado do painel) é 'fora', mesmo o dock se contendo", () => {
++    expect(isInsideDock(dock as unknown as Node, dock)).toBe(false);
++  });
++
++  it("sem alvo ou sem dock montado conta como 'fora'", () => {
++    expect(isInsideDock(null, dock)).toBe(false);
++    expect(isInsideDock(panelBtn, null)).toBe(false);
++  });
++});
+diff --git a/src/core/outside.ts b/src/core/outside.ts
+new file mode 100644
+index 0000000..b4de999
+--- /dev/null
++++ b/src/core/outside.ts
+@@ -0,0 +1,11 @@
++// "Clicar fora" de um painel: o alvo está DENTRO de verdade (num painel/botão) ou só no espaço vazio do contêiner?
++// O `.dock` ocupa a largura da barra de ferramentas, bem mais larga que o painel; as faixas vazias ao lado
++// do painel pertencem ao `.dock` mas não são parte da interface, então clicar nelas tem que fechar o painel.
++
++type Container = { contains(node: Node): boolean };
++
++export function isInsideDock(target: Node | null, dock: Container | null): boolean {
++  if (!target || !dock) return false;
++  if ((target as unknown) === dock) return false; // espaço vazio do próprio contêiner
++  return dock.contains(target);
++}
+diff --git a/src/styles.css b/src/styles.css
+index 8c1b7c6..753a3ef 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -42,7 +42,10 @@ html, body, #root {
+   align-items: center;
+   gap: 8px;
+   max-width: calc(100vw - var(--side) - 16px);
++  /* O dock é tão largo quanto a barra; o espaço vazio ao lado do painel não pode bloquear o canvas. */
++  pointer-events: none;
+ }
++.dock > * { pointer-events: auto; }
+ 
+ .toolbar, .panel {
+   background: var(--chrome);
+-- 
+2.43.0
+

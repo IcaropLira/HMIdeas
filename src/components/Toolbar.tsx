@@ -13,6 +13,7 @@ import { ColorPicker } from "./ColorPicker";
 import { MapPanel } from "./MapPanel";
 import { APP_VERSION } from "../core/repo";
 import { checkForUpdates, isTauri } from "../core/updater";
+import { isInsideDock } from "../core/outside";
 
 const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
 const FILLS: { value: string | null; label: string }[] = [
@@ -130,11 +131,11 @@ export function Toolbar() {
   const fileRef = useRef<HTMLInputElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
 
-  // Fecha o painel ao tocar fora (inclusive no canvas).
+  // Fecha o painel ao tocar fora (inclusive no canvas e nas faixas vazias ao lado do painel).
   useEffect(() => {
     if (!panel) return;
     const close = (e: PointerEvent) => {
-      if (!dockRef.current?.contains(e.target as Node)) setPanel(null);
+      if (!isInsideDock(e.target as Node | null, dockRef.current)) setPanel(null);
     };
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setPanel(null);
     document.addEventListener("pointerdown", close, true);

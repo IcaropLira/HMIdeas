@@ -42,7 +42,10 @@ html, body, #root {
   align-items: center;
   gap: 8px;
   max-width: calc(100vw - var(--side) - 16px);
+  /* O dock é tão largo quanto a barra; o espaço vazio ao lado do painel não pode bloquear o canvas. */
+  pointer-events: none;
 }
+.dock > * { pointer-events: auto; }
 
 .toolbar, .panel {
   background: var(--chrome);

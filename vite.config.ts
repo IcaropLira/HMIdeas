@@ -7,12 +7,16 @@ import { VitePWA } from "vite-plugin-pwa";
 // Definido pelo Tauri em `tauri dev` / `tauri build` (e no Android via TAURI_DEV_HOST).
 const host = process.env.TAURI_DEV_HOST;
 const insideTauri = !!process.env.TAURI_ENV_PLATFORM;
-const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string; repository?: string | { url?: string } };
+// "dono/repositório" do GitHub (campo repository do package.json): vale para QUALQUER hospedagem (Vercel, domínio próprio…),
+// onde o endereço do site não revela de onde vêm as releases. O workflow ainda pode sobrescrever com VITE_GH_REPO.
+const repoUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url ?? "";
+const ghRepo = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(repoUrl)?.[1] ?? /^github:([\w.-]+\/[\w.-]+)$/.exec(repoUrl)?.[1] ?? "";
 
 export default defineConfig({
   // Site no GitHub Pages: o workflow define VITE_BASE=/repositorio/. No Tauri e no dev fica "/".
   base: process.env.VITE_BASE || "/",
-  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+  define: { __APP_VERSION__: JSON.stringify(pkg.version), __GH_REPO__: JSON.stringify(ghRepo) },
   plugins: [
     react(),
     // PWA só na versão web (instalável no iPad/Android/PC). Dentro do Tauri fica desligado (o módulo virtual vira um no-op).

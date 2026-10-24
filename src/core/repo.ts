@@ -1,12 +1,18 @@
 // Em qual repositório do GitHub estão as versões (releases)? Usado pela página de download e pelo aviso de atualização.
-// Ordem: variável VITE_GH_REPO (definida no build pelo workflow) → deduzido do endereço do GitHub Pages (dono.github.io/repo).
+// Ordem: variável VITE_GH_REPO (definida no build pelo workflow) → deduzido do endereço do GitHub Pages (dono.github.io/repo)
+// → repositório do package.json (vale em qualquer hospedagem, como o Vercel).
+
+const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
 /** "dono/repositório" ou null se não der para saber. */
-export function releasesRepo(loc: Pick<Location, "hostname" | "pathname"> = window.location): string | null {
+export function releasesRepo(
+  loc: Pick<Location, "hostname" | "pathname"> = window.location,
+  fallback: string = typeof __GH_REPO__ === "string" ? __GH_REPO__ : "",
+): string | null {
   const env = (import.meta.env.VITE_GH_REPO as string | undefined)?.trim();
-  if (env && /^[\w.-]+\/[\w.-]+$/.test(env)) return env;
+  if (env && REPO_RE.test(env)) return env;
   const m = /^([\w-]+)\.github\.io$/i.exec(loc.hostname);
-  if (!m) return null;
+  if (!m) return REPO_RE.test(fallback) ? fallback : null;
   const first = loc.pathname.split("/").filter(Boolean)[0];
   return `${m[1]}/${first && !/\.\w+$/.test(first) ? first : `${m[1]}.github.io`}`;
 }

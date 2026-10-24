@@ -1,0 +1,180 @@
+From 3e9241ce85d485b7022409b606234ac016b86ba8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 24 Oct 2026 02:14:08 -0300
+Subject: [PATCH] =?UTF-8?q?fix:=20p=C3=A1gina=20de=20download=20mostra=20t?=
+ =?UTF-8?q?odas=20as=20plataformas=20tamb=C3=A9m=20no=20Vercel?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A página descobria o repositório das releases só por VITE_GH_REPO (definida nos workflows do GitHub)
+ou pelo endereço dono.github.io/repo. No Vercel nenhum dos dois existe: releasesRepo() dava null e a
+grade ficava vazia. Agora o build lê o repositório do package.json (campo repository) como último
+recurso. Além disso, se a lista de releases não puder ser lida, as quatro plataformas continuam
+aparecendo, cada uma levando à página de releases do GitHub.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TfD136kyaxf1h4iZmA9QTd
+---
+ package.json          |  1 +
+ src/core/repo.test.ts |  8 +++++++-
+ src/core/repo.ts      | 14 ++++++++++----
+ src/site/download.ts  | 23 +++++++++++++++--------
+ src/vite-env.d.ts     |  1 +
+ vite.config.ts        |  8 ++++++--
+ 6 files changed, 40 insertions(+), 15 deletions(-)
+
+diff --git a/package.json b/package.json
+index 0ef879d..f11dc8e 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,7 @@
+ {
+   "name": "hm-ideas",
+   "private": true,
++  "repository": { "type": "git", "url": "https://github.com/IcaropLira/HMIdeas.git" },
+   "version": "0.3.7",
+   "type": "module",
+   "scripts": {
+diff --git a/src/core/repo.test.ts b/src/core/repo.test.ts
+index 5ec5128..a74331e 100644
+--- a/src/core/repo.test.ts
++++ b/src/core/repo.test.ts
+@@ -6,8 +6,14 @@ describe("repositório de releases", () => {
+     expect(releasesRepo({ hostname: "ana.github.io", pathname: "/hm-ideas/download.html" })).toBe("ana/hm-ideas");
+     expect(releasesRepo({ hostname: "ana.github.io", pathname: "/" })).toBe("ana/ana.github.io");
+     expect(releasesRepo({ hostname: "ana.github.io", pathname: "/download.html" })).toBe("ana/ana.github.io");
+-    expect(releasesRepo({ hostname: "localhost", pathname: "/" })).toBeNull();
++    expect(releasesRepo({ hostname: "localhost", pathname: "/" }, "")).toBeNull();
+   });
++
++  it("em outra hospedagem (Vercel, domínio próprio) usa o repositório do package.json", () => {
++    expect(releasesRepo({ hostname: "hm-ideas.vercel.app", pathname: "/download.html" }, "ana/hm-ideas")).toBe("ana/hm-ideas");
++    expect(releasesRepo({ hostname: "hm-ideas.vercel.app", pathname: "/" }, "valor inválido")).toBeNull();
++  });
++
+ });
+ 
+ describe("versões", () => {
+diff --git a/src/core/repo.ts b/src/core/repo.ts
+index d6f1ca4..5702ef8 100644
+--- a/src/core/repo.ts
++++ b/src/core/repo.ts
+@@ -1,12 +1,18 @@
+ // Em qual repositório do GitHub estão as versões (releases)? Usado pela página de download e pelo aviso de atualização.
+-// Ordem: variável VITE_GH_REPO (definida no build pelo workflow) → deduzido do endereço do GitHub Pages (dono.github.io/repo).
++// Ordem: variável VITE_GH_REPO (definida no build pelo workflow) → deduzido do endereço do GitHub Pages (dono.github.io/repo)
++// → repositório do package.json (vale em qualquer hospedagem, como o Vercel).
++
++const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+ 
+ /** "dono/repositório" ou null se não der para saber. */
+-export function releasesRepo(loc: Pick<Location, "hostname" | "pathname"> = window.location): string | null {
++export function releasesRepo(
++  loc: Pick<Location, "hostname" | "pathname"> = window.location,
++  fallback: string = typeof __GH_REPO__ === "string" ? __GH_REPO__ : "",
++): string | null {
+   const env = (import.meta.env.VITE_GH_REPO as string | undefined)?.trim();
+-  if (env && /^[\w.-]+\/[\w.-]+$/.test(env)) return env;
++  if (env && REPO_RE.test(env)) return env;
+   const m = /^([\w-]+)\.github\.io$/i.exec(loc.hostname);
+-  if (!m) return null;
++  if (!m) return REPO_RE.test(fallback) ? fallback : null;
+   const first = loc.pathname.split("/").filter(Boolean)[0];
+   return `${m[1]}/${first && !/\.\w+$/.test(first) ? first : `${m[1]}.github.io`}`;
+ }
+diff --git a/src/site/download.ts b/src/site/download.ts
+index fc8418e..44efda1 100644
+--- a/src/site/download.ts
++++ b/src/site/download.ts
+@@ -8,12 +8,15 @@ const ORDER: Platform[] = ["windows", "linux", "android", "macos"];
+ const mb = (n: number) => `${(n / 1048576).toFixed(n > 10485760 ? 0 : 1)} MB`;
+ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+ 
+-function card(p: Platform, items: Download[], me: boolean): string {
++function card(p: Platform, items: Download[], me: boolean, releasesUrl?: string): string {
+   const rows = items
+     .sort((a, b) => Number(b.primary) - Number(a.primary))
+     .map((d) => `<a class="dl" href="${esc(d.asset.url)}" download><span>${esc(d.label)}${d.arch ? ` · ${esc(d.arch)}` : ""}</span><small>${mb(d.asset.size)}</small></a>`)
+     .join("");
+-  return `<article class="card${me ? " me" : ""}"><h3>${NAMES[p]}${me ? " · seu sistema" : ""}</h3>${rows || `<p class="empty">Em breve.</p>`}</article>`;
++  const none = releasesUrl
++    ? `<a class="dl" href="${esc(releasesUrl)}"><span>Ver arquivos no GitHub</span><small>↗</small></a>`
++    : `<p class="empty">Em breve.</p>`;
++  return `<article class="card${me ? " me" : ""}"><h3>${NAMES[p]}${me ? " · seu sistema" : ""}</h3>${rows || none}</article>`;
+ }
+ 
+ function render(rel: Release | null, repo: string | null) {
+@@ -22,12 +25,16 @@ function render(rel: Release | null, repo: string | null) {
+   const downloads = rel ? classifyAssets(rel.assets) : [];
+   const by = (p: Platform) => downloads.filter((d) => d.platform === p);
+ 
++  const browser = `<article class="card"><h3>Navegador</h3><a class="dl" href="./"><span>Abrir o HM Ideas</span><small>sem instalar</small></a><p>Funciona offline depois da primeira visita e se atualiza sozinho.</p></article>`;
+   if (!rel || !downloads.length) {
+-    hero.title.textContent = "Use agora no navegador";
++    hero.title.textContent = "Baixar o HM Ideas";
+     hero.sub.textContent = repo
+-      ? "Os instaladores aparecem aqui assim que a primeira versão for publicada."
++      ? "Não consegui ler a lista de versões agora. Os arquivos de cada sistema estão na página de releases do GitHub."
+       : "Os instaladores aparecem aqui quando o endereço do repositório for configurado.";
+-    $("grid").innerHTML = "";
++    // As quatro plataformas aparecem sempre, mesmo sem a lista: cada uma leva à página de releases.
++    $("grid").innerHTML = repo
++      ? ORDER.map((p) => card(p, [], p === me, `https://github.com/${repo}/releases/latest`)).join("") + browser
++      : "";
+   } else {
+     const mine = me === "ios" || me === "other" ? null : by(me).sort((a, b) => Number(b.primary) - Number(a.primary))[0] ?? null;
+     hero.title.textContent = mine ? `Baixar para ${NAMES[mine.platform]}` : `Versão ${rel.version}`;
+@@ -35,8 +42,7 @@ function render(rel: Release | null, repo: string | null) {
+       ? `Versão ${rel.version} · ${mine.label}${mine.arch ? " · " + mine.arch : ""} · ${mb(mine.asset.size)}`
+       : me === "ios" ? "No iPhone/iPad: abra no Safari e use Compartilhar → Adicionar à Tela de Início." : `Versão ${rel.version} — escolha o seu sistema abaixo.`;
+     if (mine) { hero.cta.textContent = "Baixar"; hero.cta.href = mine.asset.url; }
+-    $("grid").innerHTML = ORDER.map((p) => card(p, by(p), p === me)).join("")
+-      + `<article class="card"><h3>Navegador</h3><a class="dl" href="./"><span>Abrir o HM Ideas</span><small>sem instalar</small></a><p>Funciona offline depois da primeira visita e se atualiza sozinho.</p></article>`;
++    $("grid").innerHTML = ORDER.map((p) => card(p, by(p), p === me)).join("") + browser;
+   }
+   $("footer").innerHTML = rel
+     ? `Versão ${esc(rel.version)}${rel.date ? " · " + new Date(rel.date).toLocaleDateString("pt-BR") : ""} · <a href="${esc(rel.page)}">notas da versão e todos os arquivos</a>`
+@@ -44,5 +50,6 @@ function render(rel: Release | null, repo: string | null) {
+ }
+ 
+ const repo = releasesRepo();
+-render(null, repo);
++// Enquanto busca, fica o "Procurando a versão mais recente…" do HTML (sem piscar um estado de erro).
+ if (repo) void fetchLatestRelease(repo).then((r) => render(r, repo));
++else render(null, null);
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+index 554581f..cfbbd6f 100644
+--- a/src/vite-env.d.ts
++++ b/src/vite-env.d.ts
+@@ -3,3 +3,4 @@
+ 
+ /** Versão do app (package.json), injetada pelo Vite. */
+ declare const __APP_VERSION__: string;
++declare const __GH_REPO__: string;
+diff --git a/vite.config.ts b/vite.config.ts
+index d61c5dc..ee2e4af 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -7,12 +7,16 @@ import { VitePWA } from "vite-plugin-pwa";
+ // Definido pelo Tauri em `tauri dev` / `tauri build` (e no Android via TAURI_DEV_HOST).
+ const host = process.env.TAURI_DEV_HOST;
+ const insideTauri = !!process.env.TAURI_ENV_PLATFORM;
+-const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
++const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string; repository?: string | { url?: string } };
++// "dono/repositório" do GitHub (campo repository do package.json): vale para QUALQUER hospedagem (Vercel, domínio próprio…),
++// onde o endereço do site não revela de onde vêm as releases. O workflow ainda pode sobrescrever com VITE_GH_REPO.
++const repoUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url ?? "";
++const ghRepo = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(repoUrl)?.[1] ?? /^github:([\w.-]+\/[\w.-]+)$/.exec(repoUrl)?.[1] ?? "";
+ 
+ export default defineConfig({
+   // Site no GitHub Pages: o workflow define VITE_BASE=/repositorio/. No Tauri e no dev fica "/".
+   base: process.env.VITE_BASE || "/",
+-  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
++  define: { __APP_VERSION__: JSON.stringify(pkg.version), __GH_REPO__: JSON.stringify(ghRepo) },
+   plugins: [
+     react(),
+     // PWA só na versão web (instalável no iPad/Android/PC). Dentro do Tauri fica desligado (o módulo virtual vira um no-op).
+-- 
+2.43.0
+

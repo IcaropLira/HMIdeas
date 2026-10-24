@@ -1,0 +1,1413 @@
+From 70d8a339a95186eb42d4d0bd417e0888c08a5415 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 24 Oct 2026 02:33:20 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20barra=20enxuta,=20barras=20laterais=20e?=
+ =?UTF-8?q?=20menu=20de=20configura=C3=A7=C3=B5es?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A barra inferior tinha ~30 botões. Agora ela é dividida em blocos (ferramentas, formas, histórico,
+pincéis, cores, espessura, mapa/modelos, papel/ajustes) que o usuário posiciona embaixo, na lateral
+esquerda, na direita ou oculta, pelo novo menu de Configurações (engrenagem no canto superior direito).
+Padrão: embaixo só ferramentas, formas e desfazer/refazer; pincéis, cor e espessura na direita; o resto
+na esquerda. O layout é salvo e validado ao carregar (core/layout.ts). Painéis abertos por um botão
+lateral flutuam junto dele, e clicar fora fecha em qualquer barra. O arrastar pelos 6 pontos fica
+para a etapa 2.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TfD136kyaxf1h4iZmA9QTd
+---
+ AGENTS.md                         |  10 +
+ src/components/LayoutSettings.tsx |  88 ++++
+ src/components/Toolbar.tsx        | 718 +++++++++++++++++-------------
+ src/components/layout.test.tsx    |  95 ++++
+ src/core/layout.test.ts           |  78 ++++
+ src/core/layout.ts                | 127 ++++++
+ src/core/outside.test.ts          |  20 +-
+ src/core/outside.ts               |   5 +
+ src/core/ui.ts                    |   5 +
+ src/styles.css                    |  52 ++-
+ 10 files changed, 878 insertions(+), 320 deletions(-)
+ create mode 100644 src/components/LayoutSettings.tsx
+ create mode 100644 src/components/layout.test.tsx
+ create mode 100644 src/core/layout.test.ts
+ create mode 100644 src/core/layout.ts
+
+diff --git a/AGENTS.md b/AGENTS.md
+index 29925c2..c77f8da 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -126,6 +126,16 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
+ - Android/DEB/RPM: `core/updater.ts` compara a versão com a última release e abre o download (`plugin-opener`). APK assinado no CI com a keystore dos secrets.
+ - `core/autosave.ts` (IndexedDB) restaura a sessão: é o que torna seguro atualizar/recarregar. Não substitui o arquivo `.hiraku`.
+ 
++### Barras personalizáveis (0014)
++- A barra de ferramentas é feita de **blocos** (`core/layout.ts`: ferramentas, formas, histórico, pincéis, cores, espessura, mapa, papel/ajustes).
++  Cada bloco fica embaixo, na lateral esquerda/direita ou oculto; o padrão deixa embaixo só o essencial. O usuário escolhe em
++  Configurações (engrenagem do canto superior direito, que NUNCA some). Layout salvo em localStorage (`hm-ideas-layout-v1`); `normalizeLayout`
++  aceita qualquer JSON (versão futura/corrompido) e devolve um layout válido. Bloco novo = entrada em `BLOCKS` + `DEFAULT_LAYOUT` + JSX em `Toolbar.tsx`.
++- Painéis (pincéis, cores…) abrem em cima da barra de baixo ou, se o botão está numa lateral (ou veio do botão direito), flutuam junto dele (`panel-float`).
++  "Clicar fora fecha" vale para todas as áreas (`core/outside.ts`: `isInsideAny`).
++- **Etapa 2 (a fazer):** arrastar blocos pelo símbolo de 6 pontos (2 colunas × 3) com posição livre (lado `"float"`), atração magnética nas bordas
++  e trava para o bloco nunca sair da tela; subir a `version` do layout e migrar em `normalizeLayout`.
++
+ ## Como rodar
+ 
+ ```bash
+diff --git a/src/components/LayoutSettings.tsx b/src/components/LayoutSettings.tsx
+new file mode 100644
+index 0000000..8efc53b
+--- /dev/null
++++ b/src/components/LayoutSettings.tsx
+@@ -0,0 +1,88 @@
++import { useEffect } from "react";
++import { Icon } from "./Icon";
++import { BLOCKS, BlockId, DockSide, Layout, SIDES, blocksOn, useLayout } from "../core/layout";
++import { useUI } from "../core/ui";
++
++interface ViewProps {
++  layout: Layout;
++  onSide: (id: BlockId, side: DockSide) => void;
++  onMove: (id: BlockId, dir: -1 | 1) => void;
++  onReset: () => void;
++  onClose: () => void;
++}
++
++/** Conteúdo do menu de configurações (puro: recebe o layout e os callbacks, para testar sem DOM). */
++export function LayoutSettingsView({ layout, onSide, onMove, onReset, onClose }: ViewProps) {
++  return (
++    <div className="modal-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
++      <div className="panel settings" role="dialog" aria-modal="true" aria-label="Configurações">
++        <div className="settings-head">
++          <strong>Configurações</strong>
++          <button className="btn sm" onClick={onClose} aria-label="Fechar" title="Fechar (Esc)">
++            <Icon><path d="M6 6l12 12M18 6L6 18" /></Icon>
++          </button>
++        </div>
++
++        <section aria-labelledby="cfg-bars">
++          <h3 id="cfg-bars">Barras de ferramentas</h3>
++          <p className="hint">
++            Escolha onde cada grupo de botões aparece: embaixo, na lateral esquerda, na direita ou oculto. As setas mudam
++            a ordem dentro do mesmo lado. Nada é apagado: um grupo oculto volta quando você escolher um lado de novo.
++          </p>
++          <ul className="blocklist">
++            {BLOCKS.map((b) => {
++              const side = layout.side[b.id];
++              const same = blocksOn(layout, side);
++              const i = same.indexOf(b.id);
++              const hidden = side === "hidden";
++              return (
++                <li key={b.id} className="blockrow">
++                  <div className="blockinfo">
++                    <span className="blockname">{b.label}</span>
++                    <span className="hint">{b.hint}</span>
++                  </div>
++                  <div className="row" role="radiogroup" aria-label={`Onde fica: ${b.label}`}>
++                    {SIDES.map((s) => (
++                      <button key={s.id} role="radio" aria-checked={side === s.id} className={side === s.id ? "chip on" : "chip"} onClick={() => onSide(b.id, s.id)}>
++                        {s.label}
++                      </button>
++                    ))}
++                  </div>
++                  <div className="blockmove">
++                    <button className="btn sm" disabled={hidden || i <= 0} onClick={() => onMove(b.id, -1)} aria-label={`Mover ${b.label} para antes`} title="Mover para antes">
++                      <Icon><path d="M6 14l6-6 6 6" /></Icon>
++                    </button>
++                    <button className="btn sm" disabled={hidden || i < 0 || i >= same.length - 1} onClick={() => onMove(b.id, 1)} aria-label={`Mover ${b.label} para depois`} title="Mover para depois">
++                      <Icon><path d="M6 10l6 6 6-6" /></Icon>
++                    </button>
++                  </div>
++                </li>
++              );
++            })}
++          </ul>
++          <button className="btn text" onClick={onReset}>Restaurar padrão</button>
++        </section>
++      </div>
++    </div>
++  );
++}
++
++/** Menu de configurações: abre pela engrenagem do canto superior direito (que nunca some, para ninguém ficar sem acesso). */
++export function LayoutSettings() {
++  const open = useUI((s) => s.settingsOpen);
++  const layout = useLayout((s) => s.layout);
++  const setSide = useLayout((s) => s.setSide);
++  const move = useLayout((s) => s.move);
++  const reset = useLayout((s) => s.reset);
++  const close = () => useUI.getState().setSettingsOpen(false);
++
++  useEffect(() => {
++    if (!open) return;
++    const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
++    document.addEventListener("keydown", esc);
++    return () => document.removeEventListener("keydown", esc);
++  }, [open]);
++
++  if (!open) return null;
++  return <LayoutSettingsView layout={layout} onSide={setSide} onMove={move} onReset={reset} onClose={close} />;
++}
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index d2f89b9..2bb14fd 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -1,4 +1,4 @@
+-import { ReactNode, useEffect, useRef, useState } from "react";
++import { Fragment, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
+ import { Icon } from "./Icon";
+ import { defaultCamera, screenToWorld } from "../core/camera";
+ import { ARROW_HEADS, LineStyle, LinearElement, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
+@@ -13,7 +13,9 @@ import { ColorPicker } from "./ColorPicker";
+ import { MapPanel } from "./MapPanel";
+ import { APP_VERSION } from "../core/repo";
+ import { checkForUpdates, isTauri } from "../core/updater";
+-import { isInsideDock } from "../core/outside";
++import { isInsideAny } from "../core/outside";
++import { BlockId, DockSide, blocksOn, useLayout } from "../core/layout";
++import { LayoutSettings } from "./LayoutSettings";
+ 
+ const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
+ const FILLS: { value: string | null; label: string }[] = [
+@@ -130,12 +132,22 @@ export function Toolbar() {
+   const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
+   const fileRef = useRef<HTMLInputElement>(null);
+   const dockRef = useRef<HTMLDivElement>(null);
++  const leftRef = useRef<HTMLDivElement>(null);
++  const rightRef = useRef<HTMLDivElement>(null);
++  const floatRef = useRef<HTMLDivElement>(null);
++  const layout = useLayout((s) => s.layout);
++  /** Último botão clicado e em qual barra ele está: o painel que ele abrir aparece junto dele. */
++  const anchorRef = useRef<{ side: DockSide; rect: DOMRect } | null>(null);
++  const noteAnchor = (side: DockSide) => (e: ReactMouseEvent) => {
++    const el = (e.target as HTMLElement).closest?.("button, label, input");
++    anchorRef.current = el ? { side, rect: el.getBoundingClientRect() } : null;
++  };
+ 
+-  // Fecha o painel ao tocar fora (inclusive no canvas e nas faixas vazias ao lado do painel).
++  // Fecha o painel ao tocar fora (inclusive no canvas e nas faixas vazias ao lado do painel); as barras laterais contam como dentro.
+   useEffect(() => {
+     if (!panel) return;
+     const close = (e: PointerEvent) => {
+-      if (!isInsideDock(e.target as Node | null, dockRef.current)) setPanel(null);
++      if (!isInsideAny(e.target as Node | null, [dockRef.current, leftRef.current, rightRef.current, floatRef.current])) setPanel(null);
+     };
+     const esc = (e: KeyboardEvent) => e.key === "Escape" && setPanel(null);
+     document.addEventListener("pointerdown", close, true);
+@@ -146,22 +158,37 @@ export function Toolbar() {
+     };
+   }, [panel]);
+ 
+-  // Botão direito no canvas pede um painel (ver CanvasView.contextTap).
+-  const panelRequest = useUI((s) => s.panelRequest);
+-  useEffect(() => {
+-    if (!panelRequest) return;
+-    setPanel(panelRequest.panel as Exclude<Panel, null>);
+-    // Mantém o painel dentro da janela; estimativa conservadora para o tamanho máximo.
++  /** Põe o painel flutuante em (x, y), mantendo-o dentro da janela (estimativa conservadora do tamanho máximo). */
++  const placePanel = (x: number, y: number) => {
+     const margin = 8;
+     const width = Math.min(376, window.innerWidth - margin * 2);
+     const height = Math.min(680, window.innerHeight - margin * 2);
+     setPanelPosition({
+-      x: Math.max(margin, Math.min(panelRequest.x, window.innerWidth - width - margin)),
+-      y: Math.max(margin, Math.min(panelRequest.y, window.innerHeight - height - margin)),
++      x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
++      y: Math.max(margin, Math.min(y, window.innerHeight - height - margin)),
+     });
++  };
++
++  // Botão direito no canvas pede um painel (ver CanvasView.contextTap).
++  const panelRequest = useUI((s) => s.panelRequest);
++  useEffect(() => {
++    if (!panelRequest) return;
++    setPanel(panelRequest.panel as Exclude<Panel, null>);
++    placePanel(panelRequest.x, panelRequest.y);
+   }, [panelRequest]);
+ 
+-  const toggle = (p: Exclude<Panel, null>) => { setPanel((cur) => (cur === p ? null : p)); setPanelPosition(null); };
++  const toggle = (p: Exclude<Panel, null>) => {
++    const a = anchorRef.current;
++    anchorRef.current = null;
++    setPanel((cur) => (cur === p ? null : p));
++    if (a && a.side !== "bottom") {
++      // Botão de uma barra lateral: o painel abre ao lado dela (à direita da esquerda, à esquerda da direita).
++      const w = Math.min(376, window.innerWidth - 16);
++      placePanel(a.side === "left" ? a.rect.right + 8 : a.rect.left - w - 8, a.rect.top);
++    } else {
++      setPanelPosition(null);
++    }
++  };
+ 
+   const open = async (file: File | undefined) => {
+     if (!file) return;
+@@ -186,224 +213,380 @@ export function Toolbar() {
+     </button>
+   );
+ 
+-  return (
+-    <>
+-      <div className="topbar">
+-        <button className="btn text" onClick={() => useView.getState().setCamera(defaultCamera())} title="Voltar para 100%">
+-          {Math.round(zoom * 100)}%
++  // Cada BLOCO é um grupo de botões que o usuário posiciona (embaixo, esquerda, direita ou oculto) em Configurações.
++  const blocks: Record<BlockId, ReactNode> = {
++    tools: (
++      <>
++        <div className="group">
++          {toolBtn("select", "Selecionar", <path d="M5 3l14 7-6 2-2 6L5 3z" />, "Selecionar (V)")}
++          {toolBtn("lasso", "Laço", <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>, "Laço (L)")}
++          {toolBtn("pen", "Caneta", <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>, "Caneta (P)")}
++          {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
++          {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
++          {erasing && (
++            <button className={panel === "eraser" ? "btn on" : "btn"} onClick={() => toggle("eraser")} aria-expanded={panel === "eraser"} aria-label="Opções da borracha" title="Opções da borracha">
++              <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
++            </button>
++          )}
++          {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
++        </div>
++        {t.tool === "lasso" && (
++          <div className="group">
++            <button
++              className="btn text"
++              onClick={() => t.set({ lassoMode: t.lassoMode === "inside" ? "touch" : "inside" })}
++              title="Alternar o que o laço seleciona"
++            >
++              {t.lassoMode === "inside" ? "Só dentro" : "Tocando"}
++            </button>
++          </div>
++        )}
++      </>
++    ),
++    shapes: (
++      <div className="group">
++        {SHAPE_TYPES.map((s) => toolBtn(s, SHAPE_META[s].label, SHAPE_META[s].icon, `${SHAPE_META[s].label} (${SHAPE_META[s].key})`))}
++        {toolBtn("arrow", "Seta", <><path d="M5 19L19 5" /><path d="M10 5h9v9" /></>, "Seta (A ou 5)")}
++        {toolBtn("line", "Linha", <path d="M5 19L19 5" />, "Linha (6)")}
++        <button className={panel === "shape" ? "btn on" : "btn"} onClick={() => toggle("shape")} aria-expanded={panel === "shape"} aria-label="Estilo das formas" title="Estilo das formas">
++          <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+         </button>
+-        {!isTauri() && <a className="btn text" href={`${import.meta.env.BASE_URL}download.html`} title="Instalar para Windows, Linux, Android e macOS">Baixar app</a>}
+-        <button className="btn text" onClick={() => void checkForUpdates(true)} title="Verificar atualizações">v{APP_VERSION}</button>
+-        <button className="btn text" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar</button>
+-        <button className="btn text" onClick={() => fileRef.current?.click()}>Abrir</button>
+-        <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
+       </div>
++    ),
++    history: (
++      <div className="group">
++        <button className="btn" disabled={!canUndo} onClick={() => useDoc.getState().undo()} aria-label="Desfazer" title="Desfazer (Ctrl+Z)">
++          <Icon><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-3" /></Icon>
++        </button>
++        <button className="btn" disabled={!canRedo} onClick={() => useDoc.getState().redo()} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)">
++          <Icon><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 000 12h3" /></Icon>
++        </button>
++      </div>
++    ),
++    brush: (
++      <div className="group">
++                  <button className={panel === "brush" ? "btn on" : "btn"} onClick={() => toggle("brush")} aria-expanded={panel === "brush"} aria-label="Pincéis" title="Pincéis">
++                    <Icon><path d="M20 4l-8.5 8.5" /><path d="M11.5 12.5c-2.5-.5-4.5 1-4.5 3.5 0 1.5-1 2.5-3 3 2.5 2 7.5 1 8-1.5.4-2-.2-3.8-.5-5z" /></Icon>
++                  </button>
++      </div>
++    ),
++    colors: (
++      <div className="group" role="radiogroup" aria-label="Cor do traço" data-text-ui onMouseDown={(e) => e.preventDefault()}>
++        {COLORS.map((c) => (
++          <button
++            key={c}
++            role="radio"
++            aria-checked={t.color.toUpperCase() === c}
++            aria-label={`Cor ${c}`}
++            className={t.color.toUpperCase() === c ? "swatch on" : "swatch"}
++            style={{ background: c }}
++            onClick={() => applyColor(c, { remember: false })}
++          />
++        ))}
++        {!COLORS.includes(t.color.toUpperCase()) && (
++          <button role="radio" aria-checked aria-label={`Cor ${t.color}`} title={t.color} className="swatch on" style={{ background: t.color }} onClick={() => toggle("color")} />
++        )}
++        <button className={panel === "color" ? "swatch more on" : "swatch more"} onClick={() => toggle("color")} aria-expanded={panel === "color"} aria-label="Mais cores" title="Mais cores" />
++      </div>
++    ),
++    size: (
++      <label className="group size">
++        <span className="sr">{erasing ? "Tamanho da borracha" : "Espessura do traço"}</span>
++        <input
++          type="range"
++          min={sizeMin}
++          max={sizeMax}
++          step={sizeStep}
++          value={sizeValue}
++          disabled={t.tool === "hand"}
++          onChange={(e) => t.set(erasing ? { eraserSize: +e.target.value } : { width: +e.target.value })}
++        />
++        <span className="preview">
++          {erasing ? (
++            <span className="ring" style={{ width: Math.min(sizeValue, 36), height: Math.min(sizeValue, 36) }} />
++          ) : (
++            <span className="dot" style={{ width: sizeValue + 4, height: sizeValue + 4, background: t.color }} />
++          )}
++        </span>
++      </label>
++    ),
++    map: (
++      <div className="group">
++        {toolBtn("mindmap", "Mapa mental", <><circle cx="12" cy="12" r="2.5" /><circle cx="5" cy="6" r="1.8" /><circle cx="5" cy="18" r="1.8" /><circle cx="19" cy="9" r="1.8" /><circle cx="19" cy="16" r="1.8" /><path d="M10 11L6.5 7M10 13l-3.5 4M14.4 11l3-1.4M14.4 13l3 2" /></>, "Mapa mental (M): clique no vazio = novo mapa; clique num nó = filho")}
++        {toolBtn("frame", "Quadro", <><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3" /><rect x="8" y="9" width="8" height="6" rx="1" /></>, "Quadro (F): arraste para criar; o que ficar dentro entra")}
++        <button className={panel === "map" ? "btn on" : "btn"} onClick={() => toggle("map")} aria-expanded={panel === "map"} aria-label="Mapa e quadros" title="Mapa & quadros: layout, formas, códigos de cor, recolher">
++          <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
++        </button>
++        <button className={panel === "templates" ? "btn on" : "btn"} onClick={() => toggle("templates")} aria-expanded={panel === "templates"} aria-label="Modelos prontos" title="Modelos: Post-it, Tabela, Timeline, Kanban, Doc, Slides">
++          <Icon><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></Icon>
++        </button>
++      </div>
++    ),
++    page: (
++      <div className="group">
++        <button className={panel === "paper" ? "btn on" : "btn"} onClick={() => toggle("paper")} aria-expanded={panel === "paper"} aria-label="Papel" title="Papel">
++          <Icon><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10h16M4 15h16M10 4v16M15 4v16" /></Icon>
++        </button>
++        <button className={panel === "feel" ? "btn on" : "btn"} onClick={() => toggle("feel")} aria-expanded={panel === "feel"} aria-label="Ajustes da caneta" title="Ajustes da caneta">
++          <Icon><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M3 22h5" /></Icon>
++        </button>
++        <button className={panel === "text" ? "btn on" : "btn"} onClick={() => toggle("text")} aria-expanded={panel === "text"} aria-label="Estilo do texto" title="Estilo do texto">
++          <Icon><path d="M3 18l4.5-11L12 18M4.8 14h5.4" /><path d="M14 18l3-7 3 7M15 16h4" /></Icon>
++        </button>
++        <button className={t.fingerDraws ? "btn on" : "btn"} onClick={() => t.set({ fingerDraws: !t.fingerDraws })} aria-pressed={t.fingerDraws} aria-label="Desenhar com o dedo" title={t.fingerDraws ? "Dedo desenha" : "Dedo só move a tela"}>
++          <Icon><path d="M9 11V6a1.5 1.5 0 013 0v5m0 0V8a1.5 1.5 0 013 0v5a6 6 0 01-6 6 6 6 0 01-5-3l-1.5-2.5A1.5 1.5 0 016.4 12L9 14" /></Icon>
++        </button>
++      </div>
++    ),
++  };
+ 
+-      <div
+-        className={panelPosition && panel ? "dock dock-context" : "dock"}
+-        ref={dockRef}
+-        style={panelPosition && panel ? { left: panelPosition.x, top: panelPosition.y, bottom: "auto", transform: "none", alignItems: "flex-start" } : undefined}
+-      >
+-        {panel === "paper" && (
+-          <div className="panel" role="dialog" aria-label="Papel">
+-            <div className="row" role="radiogroup" aria-label="Estilo da folha">
+-              {PAPER_KINDS.map((k) => (
+-                <button key={k.id} role="radio" aria-checked={page.paper === k.id} className={page.paper === k.id ? "chip on" : "chip"} onClick={() => useDoc.getState().setPaper({ paper: k.id })}>
+-                  {k.label}
+-                </button>
+-              ))}
+-            </div>
+-            <div className="row" role="radiogroup" aria-label="Cor da folha">
+-              {PAPER_COLORS.map((c) => (
+-                <button key={c.value} role="radio" aria-checked={page.background === c.value} aria-label={c.label} title={c.label} className={page.background === c.value ? "swatch on" : "swatch"} style={{ background: c.value }} onClick={() => useDoc.getState().setPaper({ background: c.value })} />
+-              ))}
+-            </div>
++  const renderBlocks = (side: "bottom" | "left" | "right") =>
++    blocksOn(layout, side).map((id) => <Fragment key={id}>{blocks[id]}</Fragment>);
++  const leftIds = blocksOn(layout, "left");
++  const rightIds = blocksOn(layout, "right");
++  const bottomIds = blocksOn(layout, "bottom");
++
++  // As barras laterais empurram a barra de baixo para não ficarem uma em cima da outra (ver .dock no CSS).
++  useEffect(() => {
++    const s = document.body.style;
++    s.setProperty("--railL", leftIds.length ? "72px" : "0px");
++    s.setProperty("--railR", rightIds.length ? "72px" : "0px");
++  }, [leftIds.length, rightIds.length]);
++
++  // Painéis (pincéis, cores, borracha…): ficam em cima da barra de baixo ou, se abertos por um botão da lateral/botão direito, junto dele.
++  const panelsNode = (
++    <>
++      {panel === "paper" && (
++        <div className="panel" role="dialog" aria-label="Papel">
++          <div className="row" role="radiogroup" aria-label="Estilo da folha">
++            {PAPER_KINDS.map((k) => (
++              <button key={k.id} role="radio" aria-checked={page.paper === k.id} className={page.paper === k.id ? "chip on" : "chip"} onClick={() => useDoc.getState().setPaper({ paper: k.id })}>
++                {k.label}
++              </button>
++            ))}
+           </div>
+-        )}
++          <div className="row" role="radiogroup" aria-label="Cor da folha">
++            {PAPER_COLORS.map((c) => (
++              <button key={c.value} role="radio" aria-checked={page.background === c.value} aria-label={c.label} title={c.label} className={page.background === c.value ? "swatch on" : "swatch"} style={{ background: c.value }} onClick={() => useDoc.getState().setPaper({ background: c.value })} />
++            ))}
++          </div>
++        </div>
++      )}
+ 
+-        {panel === "brush" && <BrushPanel />}
+-        {panel === "map" && <MapPanel />}
++      {panel === "brush" && <BrushPanel />}
++      {panel === "map" && <MapPanel />}
+ 
+-        {panel === "eraser" && (
+-          <div className="panel" role="dialog" aria-label="Borracha">
+-            <div className="row" role="radiogroup" aria-label="Modo da borracha">
+-              <button role="radio" aria-checked={t.eraserMode === "stroke"} className={t.eraserMode === "stroke" ? "chip on" : "chip"} onClick={() => t.set({ eraserMode: "stroke" })}>Traço inteiro</button>
+-              <button role="radio" aria-checked={t.eraserMode === "pixel"} className={t.eraserMode === "pixel" ? "chip on" : "chip"} onClick={() => t.set({ eraserMode: "pixel" })}>Só o trecho (pixel)</button>
+-            </div>
+-            <label className="slider">
+-              <span>Tamanho</span>
+-              <input type="range" min={10} max={80} step={2} value={t.eraserSize} onChange={(e) => t.set({ eraserSize: +e.target.value })} />
+-              <output>{t.eraserSize}px</output>
+-            </label>
+-            <div className="row" role="radiogroup" aria-label="Pressão da caneta">
+-              <button role="radio" aria-checked={t.eraserPressure} className={t.eraserPressure ? "chip on" : "chip"} onClick={() => t.set({ eraserPressure: true })}>Pressão muda o tamanho</button>
+-              <button role="radio" aria-checked={!t.eraserPressure} className={!t.eraserPressure ? "chip on" : "chip"} onClick={() => t.set({ eraserPressure: false })}>Tamanho fixo</button>
+-            </div>
+-            <p className="hint">Traço inteiro (como no Excalidraw) apaga o desenho todo que o anel tocar. “Só o trecho” (como no Photoshop) corta o traço onde o anel passa e deixa o resto; um gesto = um passo de desfazer. A ponta-borracha da caneta usa o mesmo modo. Formas e textos são apagados inteiros nos dois modos.</p>
++      {panel === "eraser" && (
++        <div className="panel" role="dialog" aria-label="Borracha">
++          <div className="row" role="radiogroup" aria-label="Modo da borracha">
++            <button role="radio" aria-checked={t.eraserMode === "stroke"} className={t.eraserMode === "stroke" ? "chip on" : "chip"} onClick={() => t.set({ eraserMode: "stroke" })}>Traço inteiro</button>
++            <button role="radio" aria-checked={t.eraserMode === "pixel"} className={t.eraserMode === "pixel" ? "chip on" : "chip"} onClick={() => t.set({ eraserMode: "pixel" })}>Só o trecho (pixel)</button>
+           </div>
+-        )}
++          <label className="slider">
++            <span>Tamanho</span>
++            <input type="range" min={10} max={80} step={2} value={t.eraserSize} onChange={(e) => t.set({ eraserSize: +e.target.value })} />
++            <output>{t.eraserSize}px</output>
++          </label>
++          <div className="row" role="radiogroup" aria-label="Pressão da caneta">
++            <button role="radio" aria-checked={t.eraserPressure} className={t.eraserPressure ? "chip on" : "chip"} onClick={() => t.set({ eraserPressure: true })}>Pressão muda o tamanho</button>
++            <button role="radio" aria-checked={!t.eraserPressure} className={!t.eraserPressure ? "chip on" : "chip"} onClick={() => t.set({ eraserPressure: false })}>Tamanho fixo</button>
++          </div>
++          <p className="hint">Traço inteiro (como no Excalidraw) apaga o desenho todo que o anel tocar. “Só o trecho” (como no Photoshop) corta o traço onde o anel passa e deixa o resto; um gesto = um passo de desfazer. A ponta-borracha da caneta usa o mesmo modo. Formas e textos são apagados inteiros nos dois modos.</p>
++        </div>
++      )}
+ 
+-        {panel === "color" && (
+-          <ColorPicker
+-            onEyedropper={() => {
+-              setPanel(null);
+-              t.set({ picking: true });
+-              useUI.getState().showToast("Toque num desenho para pegar a cor dele (ou na folha, para pegar a cor do papel).");
+-            }}
+-          />
+-        )}
++      {panel === "color" && (
++        <ColorPicker
++          onEyedropper={() => {
++            setPanel(null);
++            t.set({ picking: true });
++            useUI.getState().showToast("Toque num desenho para pegar a cor dele (ou na folha, para pegar a cor do papel).");
++          }}
++        />
++      )}
+ 
+-        {panel === "feel" && (
+-          <div className="panel" role="dialog" aria-label="Ajustes da caneta">
+-            <label className="slider">
+-              <span>Sensibilidade à pressão</span>
+-              <input type="range" min={0} max={1} step={0.05} value={t.pressureSens} onChange={(e) => t.set({ pressureSens: +e.target.value })} />
+-              <output>{Math.round(t.pressureSens * 100)}%</output>
+-            </label>
+-            <label className="slider">
+-              <span>Estabilização do traço</span>
+-              <input type="range" min={0} max={0.9} step={0.05} value={t.smoothing} onChange={(e) => t.set({ smoothing: +e.target.value })} />
+-              <output>{Math.round((t.smoothing / 0.9) * 100)}%</output>
+-            </label>
+-            <label className="slider">
+-              <span>Afilamento das pontas</span>
+-              <input type="range" min={0} max={1} step={0.05} value={t.taper} onChange={(e) => t.set({ taper: +e.target.value })} />
+-              <output>{Math.round(t.taper * 100)}%</output>
+-            </label>
+-            <p className="hint">Mouse e dedo não enviam pressão: nesses casos a espessura varia só com a velocidade do traço.</p>
++      {panel === "feel" && (
++        <div className="panel" role="dialog" aria-label="Ajustes da caneta">
++          <label className="slider">
++            <span>Sensibilidade à pressão</span>
++            <input type="range" min={0} max={1} step={0.05} value={t.pressureSens} onChange={(e) => t.set({ pressureSens: +e.target.value })} />
++            <output>{Math.round(t.pressureSens * 100)}%</output>
++          </label>
++          <label className="slider">
++            <span>Estabilização do traço</span>
++            <input type="range" min={0} max={0.9} step={0.05} value={t.smoothing} onChange={(e) => t.set({ smoothing: +e.target.value })} />
++            <output>{Math.round((t.smoothing / 0.9) * 100)}%</output>
++          </label>
++          <label className="slider">
++            <span>Afilamento das pontas</span>
++            <input type="range" min={0} max={1} step={0.05} value={t.taper} onChange={(e) => t.set({ taper: +e.target.value })} />
++            <output>{Math.round(t.taper * 100)}%</output>
++          </label>
++          <p className="hint">Mouse e dedo não enviam pressão: nesses casos a espessura varia só com a velocidade do traço.</p>
++        </div>
++      )}
++
++      {panel === "text" && (
++        <div className="panel" role="dialog" aria-label="Estilo do texto" data-text-ui onMouseDown={(e) => e.preventDefault()}>
++          <div className="row" role="radiogroup" aria-label="Fonte">
++            {FONTS.map((f) => (
++              <button
++                key={f.id}
++                role="radio"
++                aria-checked={t.fontFamily === f.id}
++                className={t.fontFamily === f.id ? "chip on" : "chip"}
++                style={{ fontFamily: f.css }}
++                onClick={() => { t.set({ fontFamily: f.id }); restyleText({ fontFamily: f.id }); }}
++              >
++                {f.label}
++              </button>
++            ))}
+           </div>
+-        )}
++          <div className="row" role="radiogroup" aria-label="Tamanho">
++            <span className="rowlabel">Tamanho</span>
++            {FONT_SIZES.map((z) => (
++              <button
++                key={z.value}
++                role="radio"
++                aria-checked={t.fontSize === z.value}
++                className={t.fontSize === z.value ? "chip on" : "chip"}
++                onClick={() => { t.set({ fontSize: z.value }); restyleText({ fontSize: z.value }); }}
++              >
++                {z.label}
++              </button>
++            ))}
++          </div>
++          <div className="row" role="radiogroup" aria-label="Alinhamento">
++            <span className="rowlabel">Alinhar</span>
++            {([["left", "Esquerda"], ["center", "Centro"], ["right", "Direita"]] as const).map(([id, label]) => (
++              <button
++                key={id}
++                role="radio"
++                aria-checked={t.textAlign === id}
++                className={t.textAlign === id ? "chip on" : "chip"}
++                onClick={() => { t.set({ textAlign: id }); restyleText({ align: id }); }}
++              >
++                {label}
++              </button>
++            ))}
++          </div>
++          <p className="hint">Com a ferramenta Texto, clique no canvas para escrever. Enter quebra a linha; Esc, Ctrl+Enter ou clicar fora confirma. Com Selecionar: duplo toque num texto edita e no vazio cria. Estilo e cor mudam o texto selecionado.</p>
++        </div>
++      )}
+ 
+-        {panel === "text" && (
+-          <div className="panel" role="dialog" aria-label="Estilo do texto" data-text-ui onMouseDown={(e) => e.preventDefault()}>
+-            <div className="row" role="radiogroup" aria-label="Fonte">
+-              {FONTS.map((f) => (
+-                <button
+-                  key={f.id}
+-                  role="radio"
+-                  aria-checked={t.fontFamily === f.id}
+-                  className={t.fontFamily === f.id ? "chip on" : "chip"}
+-                  style={{ fontFamily: f.css }}
+-                  onClick={() => { t.set({ fontFamily: f.id }); restyleText({ fontFamily: f.id }); }}
+-                >
+-                  {f.label}
+-                </button>
+-              ))}
+-            </div>
+-            <div className="row" role="radiogroup" aria-label="Tamanho">
+-              <span className="rowlabel">Tamanho</span>
+-              {FONT_SIZES.map((z) => (
+-                <button
+-                  key={z.value}
+-                  role="radio"
+-                  aria-checked={t.fontSize === z.value}
+-                  className={t.fontSize === z.value ? "chip on" : "chip"}
+-                  onClick={() => { t.set({ fontSize: z.value }); restyleText({ fontSize: z.value }); }}
+-                >
+-                  {z.label}
+-                </button>
+-              ))}
+-            </div>
+-            <div className="row" role="radiogroup" aria-label="Alinhamento">
+-              <span className="rowlabel">Alinhar</span>
+-              {([["left", "Esquerda"], ["center", "Centro"], ["right", "Direita"]] as const).map(([id, label]) => (
++      {panel === "shape" && (
++        <div className="panel" role="dialog" aria-label="Estilo das formas">
++          <div className="row" role="radiogroup" aria-label="Estilo do contorno">
++            {LINE_STYLES.map((l) => (
++              <button key={l.id} role="radio" aria-checked={t.lineStyle === l.id} className={t.lineStyle === l.id ? "chip on" : "chip"} onClick={() => t.set({ lineStyle: l.id })}>
++                {l.label}
++              </button>
++            ))}
++          </div>
++          <div className="row" role="radiogroup" aria-label="Preenchimento">
++            {FILLS.map((f) => (
++              <button
++                key={f.label}
++                role="radio"
++                aria-checked={t.fill === f.value}
++                aria-label={f.label}
++                title={f.label}
++                className={(t.fill === f.value ? "swatch on" : "swatch") + (f.value === null ? " none" : "")}
++                style={f.value ? { background: f.value } : undefined}
++                onClick={() => t.set({ fill: f.value })}
++              />
++            ))}
++          </div>
++          <div className="row" role="radiogroup" aria-label="Cantos do retângulo">
++            <button role="radio" aria-checked={!t.rounded} className={!t.rounded ? "chip on" : "chip"} onClick={() => t.set({ rounded: false })}>Cantos retos</button>
++            <button role="radio" aria-checked={t.rounded} className={t.rounded ? "chip on" : "chip"} onClick={() => t.set({ rounded: true })}>Arredondados</button>
++          </div>
++          {(["startHead", "endHead"] as const).map((key) => (
++            <div key={key} className="row" role="radiogroup" aria-label={key === "startHead" ? "Ponta inicial da seta" : "Ponta final da seta"}>
++              <span className="rowlabel">{key === "startHead" ? "Início" : "Fim"}</span>
++              {ARROW_HEADS.map((h) => (
+                 <button
+-                  key={id}
++                  key={h.id}
+                   role="radio"
+-                  aria-checked={t.textAlign === id}
+-                  className={t.textAlign === id ? "chip on" : "chip"}
+-                  onClick={() => { t.set({ textAlign: id }); restyleText({ align: id }); }}
++                  aria-checked={t[key] === h.id}
++                  className={t[key] === h.id ? "chip on" : "chip"}
++                  onClick={() => t.set(key === "startHead" ? { startHead: h.id } : { endHead: h.id })}
+                 >
+-                  {label}
++                  {h.label}
+                 </button>
+               ))}
+             </div>
+-            <p className="hint">Com a ferramenta Texto, clique no canvas para escrever. Enter quebra a linha; Esc, Ctrl+Enter ou clicar fora confirma. Com Selecionar: duplo toque num texto edita e no vazio cria. Estilo e cor mudam o texto selecionado.</p>
++          ))}
++          <div className="row" role="radiogroup" aria-label="Forma da linha">
++            <span className="rowlabel">Linha</span>
++            <button role="radio" aria-checked={!t.curved} className={!t.curved ? "chip on" : "chip"} onClick={() => t.set({ curved: false })}>Reta</button>
++            <button role="radio" aria-checked={t.curved} className={t.curved ? "chip on" : "chip"} onClick={() => t.set({ curved: true })}>Curva</button>
+           </div>
+-        )}
++          <p className="hint">Shift: quadrado, círculo ou ângulo de 15°. Alt: desenha a partir do centro. Solte a ponta de uma seta sobre uma forma para conectá-la. Selecione uma linha para arrastar os pontos; arraste a bolinha do meio para criar um ponto novo e use Alt+clique num ponto para remover.</p>
++        </div>
++      )}
+ 
+-        {panel === "shape" && (
+-          <div className="panel" role="dialog" aria-label="Estilo das formas">
+-            <div className="row" role="radiogroup" aria-label="Estilo do contorno">
+-              {LINE_STYLES.map((l) => (
+-                <button key={l.id} role="radio" aria-checked={t.lineStyle === l.id} className={t.lineStyle === l.id ? "chip on" : "chip"} onClick={() => t.set({ lineStyle: l.id })}>
+-                  {l.label}
+-                </button>
+-              ))}
+-            </div>
+-            <div className="row" role="radiogroup" aria-label="Preenchimento">
+-              {FILLS.map((f) => (
+-                <button
+-                  key={f.label}
+-                  role="radio"
+-                  aria-checked={t.fill === f.value}
+-                  aria-label={f.label}
+-                  title={f.label}
+-                  className={(t.fill === f.value ? "swatch on" : "swatch") + (f.value === null ? " none" : "")}
+-                  style={f.value ? { background: f.value } : undefined}
+-                  onClick={() => t.set({ fill: f.value })}
+-                />
+-              ))}
+-            </div>
+-            <div className="row" role="radiogroup" aria-label="Cantos do retângulo">
+-              <button role="radio" aria-checked={!t.rounded} className={!t.rounded ? "chip on" : "chip"} onClick={() => t.set({ rounded: false })}>Cantos retos</button>
+-              <button role="radio" aria-checked={t.rounded} className={t.rounded ? "chip on" : "chip"} onClick={() => t.set({ rounded: true })}>Arredondados</button>
+-            </div>
+-            {(["startHead", "endHead"] as const).map((key) => (
+-              <div key={key} className="row" role="radiogroup" aria-label={key === "startHead" ? "Ponta inicial da seta" : "Ponta final da seta"}>
+-                <span className="rowlabel">{key === "startHead" ? "Início" : "Fim"}</span>
+-                {ARROW_HEADS.map((h) => (
+-                  <button
+-                    key={h.id}
+-                    role="radio"
+-                    aria-checked={t[key] === h.id}
+-                    className={t[key] === h.id ? "chip on" : "chip"}
+-                    onClick={() => t.set(key === "startHead" ? { startHead: h.id } : { endHead: h.id })}
+-                  >
+-                    {h.label}
+-                  </button>
+-                ))}
+-              </div>
++      {panel === "templates" && (
++        <div className="panel" role="dialog" aria-label="Modelos prontos">
++          <div className="row" role="toolbar" aria-label="Inserir modelos">
++            {([
++              ["postit", "Post-it", "Inserir post-it editável"],
++              ["table", "Tabela", "Inserir grade de tabela"],
++              ["timeline", "Timeline", "Inserir linha do tempo"],
++              ["kanban", "Kanban", "Inserir quadro Kanban"],
++              ["doc", "Documento", "Inserir página de documento"],
++              ["slides", "Slides", "Inserir cartões de slides"],
++            ] as const).map(([kind, label, hint]) => (
++              <button
++                key={kind}
++                className="chip"
++                onClick={() => {
++                  insertTemplate(kind);
++                  setPanel(null);
++                }}
++                title={hint}
++              >
++                {label}
++              </button>
+             ))}
+-            <div className="row" role="radiogroup" aria-label="Forma da linha">
+-              <span className="rowlabel">Linha</span>
+-              <button role="radio" aria-checked={!t.curved} className={!t.curved ? "chip on" : "chip"} onClick={() => t.set({ curved: false })}>Reta</button>
+-              <button role="radio" aria-checked={t.curved} className={t.curved ? "chip on" : "chip"} onClick={() => t.set({ curved: true })}>Curva</button>
+-            </div>
+-            <p className="hint">Shift: quadrado, círculo ou ângulo de 15°. Alt: desenha a partir do centro. Solte a ponta de uma seta sobre uma forma para conectá-la. Selecione uma linha para arrastar os pontos; arraste a bolinha do meio para criar um ponto novo e use Alt+clique num ponto para remover.</p>
+           </div>
+-        )}
++          <p className="hint">Modelos prontos adicionam blocos editáveis diretamente no centro da visualização atual.</p>
++        </div>
++      )}
++    </>
++  );
+ 
+-        {panel === "templates" && (
+-          <div className="panel" role="dialog" aria-label="Modelos prontos">
+-            <div className="row" role="toolbar" aria-label="Inserir modelos">
+-              {([
+-                ["postit", "Post-it", "Inserir post-it editável"],
+-                ["table", "Tabela", "Inserir grade de tabela"],
+-                ["timeline", "Timeline", "Inserir linha do tempo"],
+-                ["kanban", "Kanban", "Inserir quadro Kanban"],
+-                ["doc", "Documento", "Inserir página de documento"],
+-                ["slides", "Slides", "Inserir cartões de slides"],
+-              ] as const).map(([kind, label, hint]) => (
+-                <button
+-                  key={kind}
+-                  className="chip"
+-                  onClick={() => {
+-                    insertTemplate(kind);
+-                    setPanel(null);
+-                  }}
+-                  title={hint}
+-                >
+-                  {label}
+-                </button>
+-              ))}
+-            </div>
+-            <p className="hint">Modelos prontos adicionam blocos editáveis diretamente no centro da visualização atual.</p>
+-          </div>
+-        )}
++  return (
++    <>
++      <div className="topbar">
++        <button className="btn text" onClick={() => useView.getState().setCamera(defaultCamera())} title="Voltar para 100%">
++          {Math.round(zoom * 100)}%
++        </button>
++        {!isTauri() && <a className="btn text" href={`${import.meta.env.BASE_URL}download.html`} title="Instalar para Windows, Linux, Android e macOS">Baixar app</a>}
++        <button className="btn text" onClick={() => void checkForUpdates(true)} title="Verificar atualizações">v{APP_VERSION}</button>
++        <button className="btn text" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar</button>
++        <button className="btn text" onClick={() => fileRef.current?.click()}>Abrir</button>
++        <button className="btn" onClick={() => useUI.getState().setSettingsOpen(true)} aria-label="Configurações" title="Configurações: personalizar as barras">
++          <Icon><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></Icon>
++        </button>
++        <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
++      </div>
+ 
++      {leftIds.length > 0 && (
++        <div className="toolbar rail rail-left" ref={leftRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (esquerda)" onClickCapture={noteAnchor("left")}>
++          {renderBlocks("left")}
++        </div>
++      )}
++      {rightIds.length > 0 && (
++        <div className="toolbar rail rail-right" ref={rightRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (direita)" onClickCapture={noteAnchor("right")}>
++          {renderBlocks("right")}
++        </div>
++      )}
++
++      <div className="dock" ref={dockRef}>
++        {!panelPosition && panelsNode}
+         {selCount > 0 && (
+-          <div className="toolbar selbar" role="toolbar" aria-label="Ações da seleção">
++          <div className="toolbar selbar" role="toolbar" aria-label="Ações da seleção" onClickCapture={() => { anchorRef.current = null; }}>
+             <span className="count">{selCount} {selCount === 1 ? "selecionado" : "selecionados"}</span>
+             <button className="btn text" onClick={() => toggle("map")}>Mapa…</button>
+             <button className="btn text" onClick={duplicateSelection}>Duplicar</button>
+@@ -412,119 +595,20 @@ export function Toolbar() {
+           </div>
+         )}
+ 
+-        <div className="toolbar" role="toolbar" aria-label="Ferramentas">
+-          <div className="group">
+-            {toolBtn("select", "Selecionar", <path d="M5 3l14 7-6 2-2 6L5 3z" />, "Selecionar (V)")}
+-            {toolBtn("lasso", "Laço", <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>, "Laço (L)")}
+-            {toolBtn("pen", "Caneta", <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>, "Caneta (P)")}
+-            <button className={panel === "brush" ? "btn on" : "btn"} onClick={() => toggle("brush")} aria-expanded={panel === "brush"} aria-label="Pincéis" title="Pincéis">
+-              <Icon><path d="M20 4l-8.5 8.5" /><path d="M11.5 12.5c-2.5-.5-4.5 1-4.5 3.5 0 1.5-1 2.5-3 3 2.5 2 7.5 1 8-1.5.4-2-.2-3.8-.5-5z" /></Icon>
+-            </button>
+-            {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
+-            {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
+-            {erasing && (
+-              <button className={panel === "eraser" ? "btn on" : "btn"} onClick={() => toggle("eraser")} aria-expanded={panel === "eraser"} aria-label="Opções da borracha" title="Opções da borracha">
+-                <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+-              </button>
+-            )}
+-            {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
+-          </div>
+-
+-          {t.tool === "lasso" && (
+-            <div className="group">
+-              <button
+-                className="btn text"
+-                onClick={() => t.set({ lassoMode: t.lassoMode === "inside" ? "touch" : "inside" })}
+-                title="Alternar o que o laço seleciona"
+-              >
+-                {t.lassoMode === "inside" ? "Só dentro" : "Tocando"}
+-              </button>
+-            </div>
+-          )}
+-
+-          <div className="group">
+-            {SHAPE_TYPES.map((s) => toolBtn(s, SHAPE_META[s].label, SHAPE_META[s].icon, `${SHAPE_META[s].label} (${SHAPE_META[s].key})`))}
+-            {toolBtn("arrow", "Seta", <><path d="M5 19L19 5" /><path d="M10 5h9v9" /></>, "Seta (A ou 5)")}
+-            {toolBtn("line", "Linha", <path d="M5 19L19 5" />, "Linha (6)")}
+-            <button className={panel === "shape" ? "btn on" : "btn"} onClick={() => toggle("shape")} aria-expanded={panel === "shape"} aria-label="Estilo das formas" title="Estilo das formas">
+-              <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+-            </button>
+-          </div>
+-
+-          <div className="group">
+-            {toolBtn("mindmap", "Mapa mental", <><circle cx="12" cy="12" r="2.5" /><circle cx="5" cy="6" r="1.8" /><circle cx="5" cy="18" r="1.8" /><circle cx="19" cy="9" r="1.8" /><circle cx="19" cy="16" r="1.8" /><path d="M10 11L6.5 7M10 13l-3.5 4M14.4 11l3-1.4M14.4 13l3 2" /></>, "Mapa mental (M): clique no vazio = novo mapa; clique num nó = filho")}
+-            {toolBtn("frame", "Quadro", <><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3" /><rect x="8" y="9" width="8" height="6" rx="1" /></>, "Quadro (F): arraste para criar; o que ficar dentro entra")}
+-            <button className={panel === "map" ? "btn on" : "btn"} onClick={() => toggle("map")} aria-expanded={panel === "map"} aria-label="Mapa e quadros" title="Mapa & quadros: layout, formas, códigos de cor, recolher">
+-              <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+-            </button>
+-            <button className={panel === "templates" ? "btn on" : "btn"} onClick={() => toggle("templates")} aria-expanded={panel === "templates"} aria-label="Modelos prontos" title="Modelos: Post-it, Tabela, Timeline, Kanban, Doc, Slides">
+-              <Icon><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></Icon>
+-            </button>
+-          </div>
+-
+-          <div className="group" role="radiogroup" aria-label="Cor do traço" data-text-ui onMouseDown={(e) => e.preventDefault()}>
+-            {COLORS.map((c) => (
+-              <button
+-                key={c}
+-                role="radio"
+-                aria-checked={t.color.toUpperCase() === c}
+-                aria-label={`Cor ${c}`}
+-                className={t.color.toUpperCase() === c ? "swatch on" : "swatch"}
+-                style={{ background: c }}
+-                onClick={() => applyColor(c, { remember: false })}
+-              />
+-            ))}
+-            {!COLORS.includes(t.color.toUpperCase()) && (
+-              <button role="radio" aria-checked aria-label={`Cor ${t.color}`} title={t.color} className="swatch on" style={{ background: t.color }} onClick={() => toggle("color")} />
+-            )}
+-            <button className={panel === "color" ? "swatch more on" : "swatch more"} onClick={() => toggle("color")} aria-expanded={panel === "color"} aria-label="Mais cores" title="Mais cores" />
+-          </div>
+-
+-          <label className="group size">
+-            <span className="sr">{erasing ? "Tamanho da borracha" : "Espessura do traço"}</span>
+-            <input
+-              type="range"
+-              min={sizeMin}
+-              max={sizeMax}
+-              step={sizeStep}
+-              value={sizeValue}
+-              disabled={t.tool === "hand"}
+-              onChange={(e) => t.set(erasing ? { eraserSize: +e.target.value } : { width: +e.target.value })}
+-            />
+-            <span className="preview">
+-              {erasing ? (
+-                <span className="ring" style={{ width: Math.min(sizeValue, 36), height: Math.min(sizeValue, 36) }} />
+-              ) : (
+-                <span className="dot" style={{ width: sizeValue + 4, height: sizeValue + 4, background: t.color }} />
+-              )}
+-            </span>
+-          </label>
+-
+-          <div className="group">
+-            <button className="btn" disabled={!canUndo} onClick={() => useDoc.getState().undo()} aria-label="Desfazer" title="Desfazer (Ctrl+Z)">
+-              <Icon><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-3" /></Icon>
+-            </button>
+-            <button className="btn" disabled={!canRedo} onClick={() => useDoc.getState().redo()} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)">
+-              <Icon><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 000 12h3" /></Icon>
+-            </button>
++        {bottomIds.length > 0 && (
++          <div className="toolbar" role="toolbar" aria-label="Ferramentas" onClickCapture={noteAnchor("bottom")}>
++            {renderBlocks("bottom")}
+           </div>
++        )}
++      </div>
+ 
+-          <div className="group">
+-            <button className={panel === "paper" ? "btn on" : "btn"} onClick={() => toggle("paper")} aria-expanded={panel === "paper"} aria-label="Papel" title="Papel">
+-              <Icon><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10h16M4 15h16M10 4v16M15 4v16" /></Icon>
+-            </button>
+-            <button className={panel === "feel" ? "btn on" : "btn"} onClick={() => toggle("feel")} aria-expanded={panel === "feel"} aria-label="Ajustes da caneta" title="Ajustes da caneta">
+-              <Icon><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M3 22h5" /></Icon>
+-            </button>
+-            <button className={panel === "text" ? "btn on" : "btn"} onClick={() => toggle("text")} aria-expanded={panel === "text"} aria-label="Estilo do texto" title="Estilo do texto">
+-              <Icon><path d="M3 18l4.5-11L12 18M4.8 14h5.4" /><path d="M14 18l3-7 3 7M15 16h4" /></Icon>
+-            </button>
+-            <button className={t.fingerDraws ? "btn on" : "btn"} onClick={() => t.set({ fingerDraws: !t.fingerDraws })} aria-pressed={t.fingerDraws} aria-label="Desenhar com o dedo" title={t.fingerDraws ? "Dedo desenha" : "Dedo só move a tela"}>
+-              <Icon><path d="M9 11V6a1.5 1.5 0 013 0v5m0 0V8a1.5 1.5 0 013 0v5a6 6 0 01-6 6 6 6 0 01-5-3l-1.5-2.5A1.5 1.5 0 016.4 12L9 14" /></Icon>
+-            </button>
+-          </div>
++      {panel && panelPosition && (
++        <div className="panel-float" ref={floatRef} style={{ left: panelPosition.x, top: panelPosition.y }}>
++          {panelsNode}
+         </div>
+-      </div>
++      )}
++
++      <LayoutSettings />
+     </>
+   );
+ }
+diff --git a/src/components/layout.test.tsx b/src/components/layout.test.tsx
+new file mode 100644
+index 0000000..14dbd9f
+--- /dev/null
++++ b/src/components/layout.test.tsx
+@@ -0,0 +1,95 @@
++// Fumaça das barras personalizáveis: onde cada botão cai no layout padrão e o menu de configurações.
++// Renderização no servidor (sem DOM): o zustand lê o estado inicial, então aqui valem os padrões.
++import { renderToString } from "react-dom/server";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { BLOCKS, DEFAULT_LAYOUT, Layout, placeBlock } from "../core/layout";
++import { LayoutSettingsView } from "./LayoutSettings";
++import { Toolbar } from "./Toolbar";
++
++// No servidor o zustand ignora setState e lê sempre o estado INICIAL; por isso o hook do layout é trocado por um que lê daqui.
++const mock = vi.hoisted(() => ({ layout: undefined as Layout | undefined }));
++vi.mock("../core/layout", async (importOriginal) => {
++  const real = await importOriginal<typeof import("../core/layout")>();
++  const useLayout = (sel: (s: unknown) => unknown) => sel({ layout: mock.layout ?? real.DEFAULT_LAYOUT, setSide() {}, move() {}, reset() {} });
++  return { ...real, useLayout };
++});
++
++afterEach(() => { mock.layout = undefined; });
++
++const at = (html: string, needle: string) => {
++  const i = html.indexOf(needle);
++  expect(i, `não achei ${needle}`).toBeGreaterThanOrEqual(0);
++  return i;
++};
++
++describe("Toolbar em blocos", () => {
++  it("no padrão: ferramentas e formas embaixo, mapa/papel na esquerda, pincéis/cor/espessura na direita", () => {
++    const html = renderToString(<Toolbar />);
++    const left = at(html, "rail-left");
++    const right = at(html, "rail-right");
++    const dock = at(html, 'class="dock"');
++    expect(left).toBeLessThan(right);
++    expect(right).toBeLessThan(dock);
++    // esquerda: mapa mental e papel
++    expect(at(html, 'aria-label="Mapa mental"')).toBeGreaterThan(left);
++    expect(at(html, 'aria-label="Mapa mental"')).toBeLessThan(right);
++    expect(at(html, 'aria-label="Papel"')).toBeLessThan(right);
++    // direita: pincéis, cores e espessura
++    expect(at(html, 'aria-label="Pincéis"')).toBeGreaterThan(right);
++    expect(at(html, 'aria-label="Pincéis"')).toBeLessThan(dock);
++    expect(at(html, 'aria-label="Mais cores"')).toBeLessThan(dock);
++    expect(at(html, "Espessura do traço")).toBeLessThan(dock);
++    // embaixo: ferramentas, formas e histórico
++    for (const nome of ["Selecionar", "Caneta", "Borracha", "Texto", "Mover tela", "Retângulo", "Seta", "Desfazer", "Refazer"]) {
++      expect(at(html, `aria-label="${nome}"`), nome).toBeGreaterThan(dock);
++    }
++  });
++
++  it("bloco oculto some da tela; lado vazio não gera barra", () => {
++    mock.layout = placeBlock(placeBlock(placeBlock(DEFAULT_LAYOUT, "brush", "hidden"), "colors", "hidden"), "size", "hidden");
++    const html = renderToString(<Toolbar />);
++    expect(html).not.toContain("rail-right");
++    expect(html).not.toContain('aria-label="Pincéis"');
++    expect(html).not.toContain('aria-label="Mais cores"');
++  });
++
++  it("mover um bloco para a esquerda coloca os botões dele na barra da esquerda", () => {
++    mock.layout = placeBlock(DEFAULT_LAYOUT, "history", "left");
++    const html = renderToString(<Toolbar />);
++    expect(at(html, 'aria-label="Desfazer"')).toBeLessThan(at(html, "rail-right"));
++  });
++
++  it("a engrenagem de configurações sempre existe, mesmo com tudo oculto", () => {
++    let l = DEFAULT_LAYOUT;
++    for (const b of BLOCKS) l = placeBlock(l, b.id, "hidden");
++    mock.layout = l;
++    const html = renderToString(<Toolbar />);
++    expect(html).toContain('aria-label="Configurações"');
++    expect(html).not.toContain("rail-left");
++  });
++});
++
++describe("LayoutSettingsView", () => {
++  const view = (layout = DEFAULT_LAYOUT) =>
++    renderToString(<LayoutSettingsView layout={layout} onSide={vi.fn()} onMove={vi.fn()} onReset={vi.fn()} onClose={vi.fn()} />);
++
++  it("lista todos os blocos, cada um com as quatro posições, e o botão de restaurar", () => {
++    const html = view();
++    for (const b of BLOCKS) expect(html).toContain(b.label);
++    for (const lado of ["Embaixo", "Esquerda", "Direita", "Oculto"]) expect((html.match(new RegExp(`>${lado}<`, "g")) ?? []).length).toBe(BLOCKS.length);
++    expect(html).toContain("Restaurar padrão");
++    expect(html).toContain('role="dialog"');
++  });
++
++  it("marca a posição atual de cada bloco", () => {
++    const html = view(placeBlock(DEFAULT_LAYOUT, "colors", "hidden"));
++    expect(html).toMatch(/aria-label="Onde fica: Cores"[^>]*>(?:(?!<\/div>).)*aria-checked="true" class="chip on"[^>]*>Oculto</s);
++  });
++
++  it("não deixa mover para cima o primeiro bloco de um lado, nem bloco oculto", () => {
++    const html = view(placeBlock(DEFAULT_LAYOUT, "colors", "hidden"));
++    expect(html).toMatch(/disabled=""[^>]*aria-label="Mover Ferramentas para antes"/);
++    expect(html).toMatch(/disabled=""[^>]*aria-label="Mover Cores para antes"/);
++    expect(html).toMatch(/disabled=""[^>]*aria-label="Mover Cores para depois"/);
++  });
++});
+diff --git a/src/core/layout.test.ts b/src/core/layout.test.ts
+new file mode 100644
+index 0000000..d388318
+--- /dev/null
++++ b/src/core/layout.test.ts
+@@ -0,0 +1,78 @@
++import { describe, expect, it } from "vitest";
++import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, loadLayout, moveBlock, normalizeLayout, placeBlock, saveLayout } from "./layout";
++
++const memory = () => {
++  const m = new Map<string, string>();
++  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
++};
++
++describe("layout das barras", () => {
++  it("o padrão tem só o essencial embaixo, cor/espessura/pincéis na direita e o resto na esquerda", () => {
++    expect(blocksOn(DEFAULT_LAYOUT, "bottom")).toEqual(["tools", "shapes", "history"]);
++    expect(blocksOn(DEFAULT_LAYOUT, "right")).toEqual(["brush", "colors", "size"]);
++    expect(blocksOn(DEFAULT_LAYOUT, "left")).toEqual(["map", "page"]);
++    expect(blocksOn(DEFAULT_LAYOUT, "hidden")).toEqual([]);
++  });
++
++  it("todo bloco tem nome e aparece uma única vez na ordem", () => {
++    expect(new Set(DEFAULT_LAYOUT.order).size).toBe(BLOCKS.length);
++    for (const b of BLOCKS) expect(b.label.length).toBeGreaterThan(0);
++  });
++
++  it("placeBlock leva o bloco para o fim do outro lado, sem mexer no resto", () => {
++    const l = placeBlock(DEFAULT_LAYOUT, "tools", "right");
++    expect(blocksOn(l, "right")).toEqual(["brush", "colors", "size", "tools"]);
++    expect(blocksOn(l, "bottom")).toEqual(["shapes", "history"]);
++    expect(placeBlock(DEFAULT_LAYOUT, "tools", "bottom")).toBe(DEFAULT_LAYOUT); // nada a fazer
++  });
++
++  it("placeBlock para um lado vazio funciona (e oculto tira da tela)", () => {
++    const l = placeBlock(DEFAULT_LAYOUT, "colors", "hidden");
++    expect(blocksOn(l, "hidden")).toEqual(["colors"]);
++    expect(blocksOn(l, "right")).toEqual(["brush", "size"]);
++  });
++
++  it("moveBlock troca com o vizinho do MESMO lado e para nas pontas", () => {
++    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", -1), "right")).toEqual(["colors", "brush", "size"]);
++    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", 1), "right")).toEqual(["brush", "size", "colors"]);
++    expect(moveBlock(DEFAULT_LAYOUT, "tools", -1)).toBe(DEFAULT_LAYOUT);
++    expect(moveBlock(DEFAULT_LAYOUT, "history", 1)).toBe(DEFAULT_LAYOUT);
++  });
++
++  it("não muda o layout original (imutável)", () => {
++    const before = JSON.stringify(DEFAULT_LAYOUT);
++    placeBlock(DEFAULT_LAYOUT, "tools", "left");
++    moveBlock(DEFAULT_LAYOUT, "colors", -1);
++    expect(JSON.stringify(DEFAULT_LAYOUT)).toBe(before);
++  });
++});
++
++describe("normalizeLayout / persistência", () => {
++  it("lixo ou vazio vira o padrão", () => {
++    expect(normalizeLayout(null)).toEqual(DEFAULT_LAYOUT);
++    expect(normalizeLayout("oi")).toEqual(DEFAULT_LAYOUT);
++    expect(normalizeLayout({ order: 3, side: [] })).toEqual(DEFAULT_LAYOUT);
++  });
++
++  it("descarta ids e lados inválidos, tira repetidos e devolve os blocos que faltam", () => {
++    const l = normalizeLayout({ order: ["colors", "colors", "fantasma", "tools"], side: { colors: "left", tools: "cima", fantasma: "left" } });
++    expect(l.order.slice(0, 2)).toEqual(["colors", "tools"]);
++    expect(new Set(l.order).size).toBe(BLOCKS.length);
++    expect(l.side.colors).toBe("left");
++    expect(l.side.tools).toBe("bottom"); // lado inválido volta ao padrão
++    expect("fantasma" in l.side).toBe(false);
++  });
++
++  it("salva e carrega; JSON quebrado ou storage ausente caem no padrão sem lançar erro", () => {
++    const s = memory();
++    const l = placeBlock(DEFAULT_LAYOUT, "tools", "left");
++    saveLayout(l, s);
++    expect(loadLayout(s)).toEqual(l);
++    s.setItem(LAYOUT_KEY, "{quebrado");
++    expect(loadLayout(s)).toEqual(DEFAULT_LAYOUT);
++    expect(loadLayout(null)).toEqual(DEFAULT_LAYOUT);
++    expect(() => saveLayout(l, null)).not.toThrow();
++    const cheio = { ...memory(), setItem: () => { throw new Error("cota"); } };
++    expect(() => saveLayout(l, cheio)).not.toThrow();
++  });
++});
+diff --git a/src/core/layout.ts b/src/core/layout.ts
+new file mode 100644
+index 0000000..5563956
+--- /dev/null
++++ b/src/core/layout.ts
+@@ -0,0 +1,127 @@
++// Layout das barras de ferramentas: cada BLOCO de botões (ferramentas, formas, cores…) fica embaixo, na lateral
++// esquerda/direita ou oculto, e o usuário escolhe pelo menu de configurações. Puro e testável; só `useLayout`
++// toca no localStorage (preferência de interface, não é o documento — ver AGENTS.md, regra 9).
++// Etapa 2 (arrastar pelos 6 pontos): entra um lado "float" com posição livre, atração magnética nas bordas
++// e trava para não sair da tela. O formato abaixo já tem `version` para essa migração.
++import { create } from "zustand";
++
++export type BlockId = "tools" | "shapes" | "history" | "brush" | "colors" | "size" | "map" | "page";
++export type DockSide = "bottom" | "left" | "right" | "hidden";
++
++export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
++  { id: "tools", label: "Ferramentas", hint: "Selecionar, laço, caneta, texto, borracha e mão" },
++  { id: "shapes", label: "Formas e linhas", hint: "Retângulo, elipse, losango, seta e linha" },
++  { id: "history", label: "Desfazer e refazer", hint: "Os dois botões de histórico" },
++  { id: "brush", label: "Pincéis", hint: "Abre o painel de pincéis" },
++  { id: "colors", label: "Cores", hint: "Cores rápidas e seletor completo" },
++  { id: "size", label: "Espessura", hint: "Controle de espessura do traço ou da borracha" },
++  { id: "map", label: "Mapa mental e modelos", hint: "Mapa mental, quadros e modelos prontos" },
++  { id: "page", label: "Papel e ajustes", hint: "Papel, ajustes da caneta, estilo do texto e dedo" },
++];
++
++export const SIDES: { id: DockSide; label: string }[] = [
++  { id: "bottom", label: "Embaixo" },
++  { id: "left", label: "Esquerda" },
++  { id: "right", label: "Direita" },
++  { id: "hidden", label: "Oculto" },
++];
++
++export interface Layout {
++  version: 1;
++  /** Ordem global; dentro de cada lado vale a ordem em que os blocos aparecem aqui. */
++  order: BlockId[];
++  side: Record<BlockId, DockSide>;
++}
++
++/** Padrão: embaixo só o essencial; cor, espessura e pincéis na direita; o resto na esquerda. */
++export const DEFAULT_LAYOUT: Layout = {
++  version: 1,
++  order: ["tools", "shapes", "history", "brush", "colors", "size", "map", "page"],
++  side: { tools: "bottom", shapes: "bottom", history: "bottom", brush: "right", colors: "right", size: "right", map: "left", page: "left" },
++};
++
++const IDS = BLOCKS.map((b) => b.id);
++const isBlockId = (v: unknown): v is BlockId => typeof v === "string" && (IDS as string[]).includes(v);
++const isSide = (v: unknown): v is DockSide => v === "bottom" || v === "left" || v === "right" || v === "hidden";
++
++/** Blocos de um lado, na ordem. */
++export function blocksOn(layout: Layout, side: DockSide): BlockId[] {
++  return layout.order.filter((id) => layout.side[id] === side);
++}
++
++/**
++ * Aceita qualquer coisa (JSON antigo, corrompido, de versão futura) e devolve um layout válido:
++ * ids e lados desconhecidos caem no padrão, blocos que faltam voltam, repetidos somem.
++ */
++export function normalizeLayout(raw: unknown): Layout {
++  const r = (raw && typeof raw === "object" ? raw : {}) as { order?: unknown; side?: unknown };
++  const sideIn = (r.side && typeof r.side === "object" ? r.side : {}) as Record<string, unknown>;
++  const side = {} as Record<BlockId, DockSide>;
++  for (const id of IDS) side[id] = isSide(sideIn[id]) ? (sideIn[id] as DockSide) : DEFAULT_LAYOUT.side[id];
++  const order: BlockId[] = [];
++  for (const id of Array.isArray(r.order) ? r.order : []) if (isBlockId(id) && !order.includes(id)) order.push(id);
++  for (const id of DEFAULT_LAYOUT.order) if (!order.includes(id)) order.push(id);
++  return { version: 1, order, side };
++}
++
++/** Move o bloco para outro lado, no fim dele (depois do último bloco que já está lá). */
++export function placeBlock(layout: Layout, id: BlockId, side: DockSide): Layout {
++  if (layout.side[id] === side) return layout;
++  const rest = layout.order.filter((x) => x !== id);
++  let at = rest.length;
++  for (let i = rest.length - 1; i >= 0; i--) {
++    if (layout.side[rest[i]] === side) { at = i + 1; break; }
++  }
++  const order = [...rest.slice(0, at), id, ...rest.slice(at)];
++  return { ...layout, order, side: { ...layout.side, [id]: side } };
++}
++
++/** Sobe (-1) ou desce (+1) o bloco entre os vizinhos do MESMO lado. */
++export function moveBlock(layout: Layout, id: BlockId, dir: -1 | 1): Layout {
++  const same = blocksOn(layout, layout.side[id]);
++  const i = same.indexOf(id);
++  const other = same[i + dir];
++  if (i < 0 || !other) return layout;
++  const order = [...layout.order];
++  const a = order.indexOf(id);
++  const b = order.indexOf(other);
++  [order[a], order[b]] = [order[b], order[a]];
++  return { ...layout, order };
++}
++
++export const LAYOUT_KEY = "hm-ideas-layout-v1";
++
++type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">;
++const browserStorage = (): Storage | null => {
++  try { return typeof localStorage === "undefined" ? null : localStorage; } catch { return null; }
++};
++
++export function loadLayout(storage: Storage | null = browserStorage()): Layout {
++  try {
++    const raw = storage?.getItem(LAYOUT_KEY);
++    return raw ? normalizeLayout(JSON.parse(raw)) : normalizeLayout(DEFAULT_LAYOUT);
++  } catch {
++    return normalizeLayout(DEFAULT_LAYOUT);
++  }
++}
++
++export function saveLayout(layout: Layout, storage: Storage | null = browserStorage()): void {
++  try { storage?.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* navegação privada / cota: só não persiste */ }
++}
++
++interface LayoutState {
++  layout: Layout;
++  setSide: (id: BlockId, side: DockSide) => void;
++  move: (id: BlockId, dir: -1 | 1) => void;
++  reset: () => void;
++}
++
++export const useLayout = create<LayoutState>((set, get) => {
++  const apply = (layout: Layout) => { saveLayout(layout); set({ layout }); };
++  return {
++    layout: loadLayout(),
++    setSide: (id, side) => apply(placeBlock(get().layout, id, side)),
++    move: (id, dir) => apply(moveBlock(get().layout, id, dir)),
++    reset: () => apply(normalizeLayout(DEFAULT_LAYOUT)),
++  };
++});
+diff --git a/src/core/outside.test.ts b/src/core/outside.test.ts
+index b0ff788..f5e99fa 100644
+--- a/src/core/outside.test.ts
++++ b/src/core/outside.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from "vitest";
+-import { isInsideDock } from "./outside";
++import { isInsideAny, isInsideDock } from "./outside";
+ 
+ const node = (name: string) => ({ name }) as unknown as Node;
+ 
+@@ -25,3 +25,21 @@ describe("isInsideDock", () => {
+     expect(isInsideDock(panelBtn, null)).toBe(false);
+   });
+ });
++
++describe("isInsideAny", () => {
++  const a = node("botão da barra de baixo");
++  const b = node("botão da barra lateral");
++  const baixo = { contains: (n: Node) => n === a };
++  const lateral = { contains: (n: Node) => n === b };
++
++  it("é 'dentro' se estiver em qualquer uma das áreas", () => {
++    expect(isInsideAny(a, [baixo, lateral])).toBe(true);
++    expect(isInsideAny(b, [baixo, lateral])).toBe(true);
++  });
++
++  it("é 'fora' se não estiver em nenhuma, ou se as áreas nem existirem", () => {
++    expect(isInsideAny(node("canvas"), [baixo, lateral])).toBe(false);
++    expect(isInsideAny(a, [null, null])).toBe(false);
++    expect(isInsideAny(a, [])).toBe(false);
++  });
++});
+diff --git a/src/core/outside.ts b/src/core/outside.ts
+index b4de999..2ecb1cc 100644
+--- a/src/core/outside.ts
++++ b/src/core/outside.ts
+@@ -9,3 +9,8 @@ export function isInsideDock(target: Node | null, dock: Container | null): boole
+   if ((target as unknown) === dock) return false; // espaço vazio do próprio contêiner
+   return dock.contains(target);
+ }
++
++/** Dentro de QUALQUER uma das áreas de interface (barra de baixo, barras laterais, painel flutuante…). */
++export function isInsideAny(target: Node | null, containers: (Container | null)[]): boolean {
++  return containers.some((c) => isInsideDock(target, c));
++}
+diff --git a/src/core/ui.ts b/src/core/ui.ts
+index 662ebbd..8dfbf93 100644
+--- a/src/core/ui.ts
++++ b/src/core/ui.ts
+@@ -2,6 +2,9 @@ import { create } from "zustand";
+ 
+ interface UIState {
+   sidebarOpen: boolean;
++  /** Menu de configurações aberto (personalizar as barras). */
++  settingsOpen: boolean;
++  setSettingsOpen: (open: boolean) => void;
+   toast: { id: number; msg: string } | null;
+   /** Pedido para abrir um painel de configurações da barra (botão direito no canvas). */
+   panelRequest: { panel: string; x: number; y: number; n: number } | null;
+@@ -15,6 +18,8 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
+ /** Estado de interface (não persiste, não entra no desfazer). */
+ export const useUI = create<UIState>((set) => ({
+   sidebarOpen: typeof window !== "undefined" ? window.innerWidth >= 900 : false,
++  settingsOpen: false,
++  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+   toast: null,
+   panelRequest: null,
+   requestPanel: (panel, x, y) => set((s) => ({ panelRequest: { panel, x, y, n: (s.panelRequest?.n ?? 0) + 1 } })),
+diff --git a/src/styles.css b/src/styles.css
+index 753a3ef..d822636 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -34,14 +34,15 @@ html, body, #root {
+ .dock {
+   position: fixed;
+   z-index: 5;
+-  left: calc(50% + var(--side) / 2);
++  /* Se há barras laterais (--railL/--railR, definidas pelo Toolbar), a barra de baixo fica entre elas. */
++  left: calc(50% + (var(--side) + var(--railL, 0px) - var(--railR, 0px)) / 2);
+   bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+   transform: translateX(-50%);
+   display: flex;
+   flex-direction: column;
+   align-items: center;
+   gap: 8px;
+-  max-width: calc(100vw - var(--side) - 16px);
++  max-width: calc(100vw - var(--side) - var(--railL, 0px) - var(--railR, 0px) - 16px);
+   /* O dock é tão largo quanto a barra; o espaço vazio ao lado do painel não pode bloquear o canvas. */
+   pointer-events: none;
+ }
+@@ -405,3 +406,50 @@ body[data-sidebar="open"] { --side: 256px; }
+ .gfx-card strong { font-size: 16px; }
+ .gfx-card p { margin: 0; color: #3B4658; }
+ .gfx-card button { align-self: flex-start; }
++
++/* ---- barras laterais: blocos movidos para a esquerda/direita em Configurações ---- */
++.rail {
++  position: fixed;
++  z-index: 5;
++  top: 50%;
++  transform: translateY(-50%);
++  flex-direction: column;
++  align-items: center;
++  gap: 0;
++  max-width: none;
++  max-height: calc(100vh - 190px);
++  overflow-x: hidden;
++  overflow-y: auto;
++  padding: 8px 6px;
++}
++.rail-left { left: calc(8px + var(--side) + env(safe-area-inset-left, 0px)); }
++.rail-right { right: calc(8px + env(safe-area-inset-right, 0px)); }
++.rail .group { flex-direction: column; padding: 6px 0; gap: 2px; }
++.rail .group + .group { border-left: 0; border-top: 1px solid var(--line); }
++.rail .swatch { margin: 3px 0; }
++.rail .btn.text { height: auto; min-height: 44px; padding: 4px; font-size: 11px; text-align: center; }
++/* Espessura na vertical: o controle é girado e as margens reservam o espaço que ele ocupa depois de girar. */
++.rail .size { gap: 8px; }
++.rail .size input { width: 110px; margin: 41px -41px; transform: rotate(-90deg); }
++
++/* Painel aberto por um botão da lateral (ou botão direito): flutua junto do botão, sem mexer nas barras. */
++.panel-float { position: fixed; z-index: 7; }
++
++/* ---- menu de configurações ---- */
++.modal-backdrop {
++  position: fixed;
++  inset: 0;
++  z-index: 90;
++  display: grid;
++  place-items: center;
++  padding: 12px;
++  background: rgba(27, 34, 51, 0.35);
++}
++.settings { width: min(560px, 100%); max-height: calc(100vh - 24px); overflow-y: auto; gap: 14px; }
++.settings-head { display: flex; align-items: center; justify-content: space-between; font-size: 16px; }
++.settings h3 { margin: 0 0 4px; font-size: 14px; }
++.blocklist { list-style: none; margin: 10px 0; padding: 0; }
++.blockrow { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
++.blockinfo { grid-column: 1 / -1; display: flex; flex-direction: column; }
++.blockname { font-weight: 600; font-size: 14px; }
++.blockmove { display: flex; gap: 2px; }
+-- 
+2.43.0
+

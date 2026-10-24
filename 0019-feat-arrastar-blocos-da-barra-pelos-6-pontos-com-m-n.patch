@@ -1,0 +1,1096 @@
+From eda5b9b7895133b6c5c3e8fdbfea675a80f7e7e5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 24 Oct 2026 12:28:35 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20arrastar=20blocos=20da=20barra=20pelos?=
+ =?UTF-8?q?=206=20pontos,=20com=20=C3=ADm=C3=A3=20nas=20bordas?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Cada bloco da barra ganha uma alça de 6 pontos (2 colunas × 3). Arrastando, ele passa a flutuar em
+qualquer lugar da tela; perto das bordas e do centro ele gruda (barra vertical nas laterais, horizontal
+em cima/embaixo) e nunca sai da janela, mesmo se a janela encolher. Duplo clique gira o bloco.
+Configurações ganha 'Flutuante', 'Girar' e 'Travar posições' (esconde as alças). Layout sobe para a
+versão 2 e continua lendo o da versão 1.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TfD136kyaxf1h4iZmA9QTd
+---
+ AGENTS.md                         |   8 +-
+ src/components/BlockHandle.tsx    | 109 ++++++++++++++++++++
+ src/components/LayoutSettings.tsx |  25 ++++-
+ src/components/Toolbar.tsx        |  70 +++++++++++--
+ src/components/blockDrag.test.ts  | 165 ++++++++++++++++++++++++++++++
+ src/components/layout.test.tsx    |  66 +++++++++++-
+ src/core/layout.test.ts           | 140 ++++++++++++++++++++++++-
+ src/core/layout.ts                | 142 +++++++++++++++++++++----
+ src/styles.css                    |  56 +++++++---
+ 9 files changed, 733 insertions(+), 48 deletions(-)
+ create mode 100644 src/components/BlockHandle.tsx
+ create mode 100644 src/components/blockDrag.test.ts
+
+diff --git a/AGENTS.md b/AGENTS.md
+index c77f8da..7578b57 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -133,8 +133,12 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
+   aceita qualquer JSON (versão futura/corrompido) e devolve um layout válido. Bloco novo = entrada em `BLOCKS` + `DEFAULT_LAYOUT` + JSX em `Toolbar.tsx`.
+ - Painéis (pincéis, cores…) abrem em cima da barra de baixo ou, se o botão está numa lateral (ou veio do botão direito), flutuam junto dele (`panel-float`).
+   "Clicar fora fecha" vale para todas as áreas (`core/outside.ts`: `isInsideAny`).
+-- **Etapa 2 (a fazer):** arrastar blocos pelo símbolo de 6 pontos (2 colunas × 3) com posição livre (lado `"float"`), atração magnética nas bordas
+-  e trava para o bloco nunca sair da tela; subir a `version` do layout e migrar em `normalizeLayout`.
++- **Etapa 2 (feita):** cada bloco tem uma alça de 6 pontos (2 colunas × 3) que o arrasta (`components/BlockHandle.tsx`). Ele vira `"float"` com posição
++  em pixels (`floats`), segue o ponteiro com ímã nas bordas e no centro (`snapPosition`: 24px, cola em barra vertical nas laterais e horizontal em cima/embaixo,
++  respeita a barra de páginas aberta) e **nunca sai da tela** (`clampPosition`, reaplicado ao abrir e ao redimensionar a janela). A orientação só muda ao soltar
++  (trocar no meio mudaria o tamanho e tremeria). Duplo clique na alça gira o bloco flutuante. Configurações: "Flutuante", "Girar" e "Travar posições"
++  (esconde as alças). O gesto usa listeners na JANELA (o bloco troca de contêiner no meio do arraste e o React recria o botão). Layout subiu para `version: 2`;
++  `normalizeLayout` aceita o formato 1. Alça é só para ponteiro; teclado/leitor de tela usam o menu de Configurações.
+ 
+ ## Como rodar
+ 
+diff --git a/src/components/BlockHandle.tsx b/src/components/BlockHandle.tsx
+new file mode 100644
+index 0000000..3285b42
+--- /dev/null
++++ b/src/components/BlockHandle.tsx
+@@ -0,0 +1,109 @@
++import { PointerEvent as ReactPointerEvent } from "react";
++import { BLOCKS, BlockId, FloatPos, snapPosition, useLayout } from "../core/layout";
++import { useUI } from "../core/ui";
++
++/** Margem da barra flutuante (padding 6px + borda 1px no CSS `.fbar`): o conteúdo não pula ao começar a arrastar. */
++const FLOAT_PAD = 7;
++
++const label = (id: BlockId) => BLOCKS.find((b) => b.id === id)?.label ?? id;
++const viewport = () => ({ w: window.innerWidth, h: window.innerHeight });
++/** Espaço ocupado pela barra de páginas (quando aberta em tela larga): o ímã da esquerda cola depois dela. */
++const insetLeft = () => (useUI.getState().sidebarOpen && window.innerWidth > 760 ? 256 : 0);
++
++const floatBar = (id: BlockId) => document.querySelector<HTMLElement>(`[data-fbar="${id}"]`);
++const sizeOf = (el: Element | null | undefined, fallback: { w: number; h: number }) => {
++  const r = el?.getBoundingClientRect();
++  return r && r.width > 0 ? { w: r.width, h: r.height } : fallback;
++};
++
++/**
++ * Arrasta um bloco: ele vira flutuante no lugar onde está, segue o ponteiro (com ímã nas bordas e limite da tela)
++ * e, ao soltar, grava a posição final. Usa listeners na JANELA, e não captura de ponteiro no botão, porque o bloco
++ * muda de contêiner (barra → flutuante) durante o gesto e o React recria o elemento.
++ */
++export function startBlockDrag(e: ReactPointerEvent<HTMLElement>, id: BlockId) {
++  if (e.pointerType === "mouse" && e.button !== 0) return;
++  const block = (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-block]");
++  if (!block) return;
++  e.preventDefault(); // sem selecionar texto nem rolar a página
++  const store = useLayout.getState();
++  const before = store.layout;
++  const r = block.getBoundingClientRect();
++  const vertical = before.side[id] === "float" ? before.floats[id]?.vertical ?? false : before.side[id] === "left" || before.side[id] === "right";
++  const wasFloat = before.side[id] === "float";
++  const start: FloatPos = wasFloat && before.floats[id] ? before.floats[id]! : { x: r.left - FLOAT_PAD, y: r.top - FLOAT_PAD, vertical };
++  const off = { x: e.clientX - start.x, y: e.clientY - start.y };
++  let size = wasFloat ? sizeOf(floatBar(id), { w: r.width + 2 * FLOAT_PAD, h: r.height + 2 * FLOAT_PAD }) : { w: r.width + 2 * FLOAT_PAD, h: r.height + 2 * FLOAT_PAD };
++  let last: FloatPos = start;
++
++  // Começa a flutuar já (sem gravar): se for só um clique sem mover, volta ao que era no `finish`.
++  let moved = false;
++  const pointerId = e.pointerId;
++  document.body.classList.add("dragging-ui");
++
++  const move = (ev: PointerEvent) => {
++    if (ev.pointerId !== pointerId) return;
++    if (!moved) {
++      if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 4) return; // tolerância: não arrasta por tremor da caneta/dedo
++      moved = true;
++      useLayout.getState().setFloat(id, start, false);
++    }
++    size = sizeOf(floatBar(id), size);
++    // Durante o gesto o ímã vale, mas a orientação só muda ao soltar (a troca mudaria o tamanho no meio do arraste e tremeria).
++    const s = snapPosition({ x: ev.clientX - off.x, y: ev.clientY - off.y }, size, viewport(), last.vertical, { insetLeft: insetLeft() });
++    last = { x: s.x, y: s.y, vertical: last.vertical };
++    useLayout.getState().setFloat(id, last, false);
++  };
++
++  const finish = (ev: PointerEvent, cancelled: boolean) => {
++    if (ev.pointerId !== pointerId) return;
++    window.removeEventListener("pointermove", move);
++    window.removeEventListener("pointerup", up);
++    window.removeEventListener("pointercancel", cancel);
++    document.body.classList.remove("dragging-ui");
++    const st = useLayout.getState();
++    if (!moved) return; // só um toque: nada mudou
++    if (cancelled) {
++      // gesto cancelado pelo sistema: volta para onde estava
++      st.setSide(id, before.side[id]);
++      if (before.side[id] === "float" && before.floats[id]) st.setFloat(id, before.floats[id]!);
++      return;
++    }
++    const final = snapPosition({ x: last.x, y: last.y }, size, viewport(), last.vertical, { insetLeft: insetLeft() });
++    st.setFloat(id, { x: final.x, y: final.y, vertical: final.vertical });
++  };
++  const up = (ev: PointerEvent) => finish(ev, false);
++  const cancel = (ev: PointerEvent) => finish(ev, true);
++
++  window.addEventListener("pointermove", move);
++  window.addEventListener("pointerup", up);
++  window.addEventListener("pointercancel", cancel);
++}
++
++/** Gira (horizontal ↔ vertical) um bloco flutuante. */
++export function rotateBlock(id: BlockId) {
++  const { layout, setFloat } = useLayout.getState();
++  const p = layout.floats[id];
++  if (layout.side[id] === "float" && p) setFloat(id, { ...p, vertical: !p.vertical });
++}
++
++/**
++ * Alça de arrastar: 6 pontos (2 colunas × 3 linhas). Some quando as posições estão travadas.
++ * É só para ponteiro (mouse, caneta, toque); o caminho por teclado e leitor de tela é o menu de Configurações.
++ */
++export function BlockHandle({ id }: { id: BlockId }) {
++  const locked = useLayout((s) => s.layout.locked);
++  if (locked) return null;
++  return (
++    <div
++      className="grip"
++      data-grip={id}
++      title={`Arraste para mover “${label(id)}” (duplo clique gira quando flutuante)`}
++      aria-hidden="true"
++      onPointerDown={(e) => startBlockDrag(e, id)}
++      onDoubleClick={() => rotateBlock(id)}
++    >
++      {[0, 1, 2, 3, 4, 5].map((i) => <i key={i} />)}
++    </div>
++  );
++}
+diff --git a/src/components/LayoutSettings.tsx b/src/components/LayoutSettings.tsx
+index 8efc53b..0a8f538 100644
+--- a/src/components/LayoutSettings.tsx
++++ b/src/components/LayoutSettings.tsx
+@@ -2,17 +2,20 @@ import { useEffect } from "react";
+ import { Icon } from "./Icon";
+ import { BLOCKS, BlockId, DockSide, Layout, SIDES, blocksOn, useLayout } from "../core/layout";
+ import { useUI } from "../core/ui";
++import { rotateBlock } from "./BlockHandle";
+ 
+ interface ViewProps {
+   layout: Layout;
+   onSide: (id: BlockId, side: DockSide) => void;
+   onMove: (id: BlockId, dir: -1 | 1) => void;
++  onRotate: (id: BlockId) => void;
++  onLocked: (locked: boolean) => void;
+   onReset: () => void;
+   onClose: () => void;
+ }
+ 
+ /** Conteúdo do menu de configurações (puro: recebe o layout e os callbacks, para testar sem DOM). */
+-export function LayoutSettingsView({ layout, onSide, onMove, onReset, onClose }: ViewProps) {
++export function LayoutSettingsView({ layout, onSide, onMove, onRotate, onLocked, onReset, onClose }: ViewProps) {
+   return (
+     <div className="modal-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+       <div className="panel settings" role="dialog" aria-modal="true" aria-label="Configurações">
+@@ -26,9 +29,17 @@ export function LayoutSettingsView({ layout, onSide, onMove, onReset, onClose }:
+         <section aria-labelledby="cfg-bars">
+           <h3 id="cfg-bars">Barras de ferramentas</h3>
+           <p className="hint">
+-            Escolha onde cada grupo de botões aparece: embaixo, na lateral esquerda, na direita ou oculto. As setas mudam
+-            a ordem dentro do mesmo lado. Nada é apagado: um grupo oculto volta quando você escolher um lado de novo.
++            Escolha onde cada grupo de botões aparece: embaixo, na lateral esquerda, na direita, flutuando em qualquer
++            lugar da tela ou oculto. Os seis pontinhos de cada grupo servem para arrastá-lo; perto das bordas ele gruda
++            sozinho e nunca sai da tela. As setas mudam a ordem dentro do mesmo lado. Nada é apagado: um grupo oculto
++            volta quando você escolher um lado de novo.
+           </p>
++          <div className="row" role="group" aria-label="Posições">
++            <button className={layout.locked ? "chip on" : "chip"} aria-pressed={layout.locked} onClick={() => onLocked(!layout.locked)}>
++              {layout.locked ? "Posições travadas" : "Travar posições"}
++            </button>
++            <span className="hint">Travado, os pontinhos somem e nada é arrastado sem querer.</span>
++          </div>
+           <ul className="blocklist">
+             {BLOCKS.map((b) => {
+               const side = layout.side[b.id];
+@@ -49,6 +60,11 @@ export function LayoutSettingsView({ layout, onSide, onMove, onReset, onClose }:
+                     ))}
+                   </div>
+                   <div className="blockmove">
++                    {side === "float" && (
++                      <button className="btn sm" onClick={() => onRotate(b.id)} aria-label={`Girar ${b.label}`} title="Girar (horizontal ↔ vertical)">
++                        <Icon><path d="M4 12a8 8 0 0114-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 01-14 5.3L4 15" /><path d="M4 20v-5h5" /></Icon>
++                      </button>
++                    )}
+                     <button className="btn sm" disabled={hidden || i <= 0} onClick={() => onMove(b.id, -1)} aria-label={`Mover ${b.label} para antes`} title="Mover para antes">
+                       <Icon><path d="M6 14l6-6 6 6" /></Icon>
+                     </button>
+@@ -73,6 +89,7 @@ export function LayoutSettings() {
+   const layout = useLayout((s) => s.layout);
+   const setSide = useLayout((s) => s.setSide);
+   const move = useLayout((s) => s.move);
++  const setLocked = useLayout((s) => s.setLocked);
+   const reset = useLayout((s) => s.reset);
+   const close = () => useUI.getState().setSettingsOpen(false);
+ 
+@@ -84,5 +101,5 @@ export function LayoutSettings() {
+   }, [open]);
+ 
+   if (!open) return null;
+-  return <LayoutSettingsView layout={layout} onSide={setSide} onMove={move} onReset={reset} onClose={close} />;
++  return <LayoutSettingsView layout={layout} onSide={setSide} onMove={move} onRotate={rotateBlock} onLocked={setLocked} onReset={reset} onClose={close} />;
+ }
+diff --git a/src/components/Toolbar.tsx b/src/components/Toolbar.tsx
+index 2bb14fd..e35881c 100644
+--- a/src/components/Toolbar.tsx
++++ b/src/components/Toolbar.tsx
+@@ -1,4 +1,4 @@
+-import { Fragment, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
++import { MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
+ import { Icon } from "./Icon";
+ import { defaultCamera, screenToWorld } from "../core/camera";
+ import { ARROW_HEADS, LineStyle, LinearElement, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
+@@ -14,7 +14,8 @@ import { MapPanel } from "./MapPanel";
+ import { APP_VERSION } from "../core/repo";
+ import { checkForUpdates, isTauri } from "../core/updater";
+ import { isInsideAny } from "../core/outside";
+-import { BlockId, DockSide, blocksOn, useLayout } from "../core/layout";
++import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, useLayout } from "../core/layout";
++import { BlockHandle } from "./BlockHandle";
+ import { LayoutSettings } from "./LayoutSettings";
+ 
+ const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
+@@ -135,6 +136,7 @@ export function Toolbar() {
+   const leftRef = useRef<HTMLDivElement>(null);
+   const rightRef = useRef<HTMLDivElement>(null);
+   const floatRef = useRef<HTMLDivElement>(null);
++  const floatsRef = useRef<HTMLDivElement>(null);
+   const layout = useLayout((s) => s.layout);
+   /** Último botão clicado e em qual barra ele está: o painel que ele abrir aparece junto dele. */
+   const anchorRef = useRef<{ side: DockSide; rect: DOMRect } | null>(null);
+@@ -147,7 +149,7 @@ export function Toolbar() {
+   useEffect(() => {
+     if (!panel) return;
+     const close = (e: PointerEvent) => {
+-      if (!isInsideAny(e.target as Node | null, [dockRef.current, leftRef.current, rightRef.current, floatRef.current])) setPanel(null);
++      if (!isInsideAny(e.target as Node | null, [dockRef.current, leftRef.current, rightRef.current, floatsRef.current, floatRef.current])) setPanel(null);
+     };
+     const esc = (e: KeyboardEvent) => e.key === "Escape" && setPanel(null);
+     document.addEventListener("pointerdown", close, true);
+@@ -182,9 +184,10 @@ export function Toolbar() {
+     anchorRef.current = null;
+     setPanel((cur) => (cur === p ? null : p));
+     if (a && a.side !== "bottom") {
+-      // Botão de uma barra lateral: o painel abre ao lado dela (à direita da esquerda, à esquerda da direita).
++      // Botão de uma barra lateral ou flutuante: o painel abre ao lado dele, para o lado onde há mais espaço.
+       const w = Math.min(376, window.innerWidth - 16);
+-      placePanel(a.side === "left" ? a.rect.right + 8 : a.rect.left - w - 8, a.rect.top);
++      const toRight = a.side === "left" || (a.side === "float" && a.rect.left + a.rect.width / 2 < window.innerWidth / 2);
++      placePanel(toRight ? a.rect.right + 8 : a.rect.left - w - 8, a.rect.top);
+     } else {
+       setPanelPosition(null);
+     }
+@@ -340,8 +343,14 @@ export function Toolbar() {
+     ),
+   };
+ 
+-  const renderBlocks = (side: "bottom" | "left" | "right") =>
+-    blocksOn(layout, side).map((id) => <Fragment key={id}>{blocks[id]}</Fragment>);
++  const renderBlock = (id: BlockId) => (
++    <div key={id} className="blk" data-block={id}>
++      <BlockHandle id={id} />
++      {blocks[id]}
++    </div>
++  );
++  const renderBlocks = (side: "bottom" | "left" | "right") => blocksOn(layout, side).map(renderBlock);
++  const floatIds = blocksOn(layout, "float");
+   const leftIds = blocksOn(layout, "left");
+   const rightIds = blocksOn(layout, "right");
+   const bottomIds = blocksOn(layout, "bottom");
+@@ -353,6 +362,27 @@ export function Toolbar() {
+     s.setProperty("--railR", rightIds.length ? "72px" : "0px");
+   }, [leftIds.length, rightIds.length]);
+ 
++  // Blocos flutuantes nunca ficam fora da tela: reajusta ao abrir (a janela pode ser menor que na última vez), ao redimensionar/girar o aparelho
++  // e quando o tamanho do bloco muda (girar o bloco, trocar de ferramenta, abrir a barra de páginas).
++  const floatKey = floatIds.map((id) => `${id}:${layout.floats[id]?.x},${layout.floats[id]?.y},${layout.floats[id]?.vertical}`).join("|");
++  useEffect(() => {
++    if (!floatIds.length) return;
++    const fix = () => {
++      const st = useLayout.getState();
++      for (const id of blocksOn(st.layout, "float")) {
++        const pos = st.layout.floats[id];
++        const el = document.querySelector<HTMLElement>(`[data-fbar="${id}"]`);
++        if (!pos || !el) continue;
++        const r = el.getBoundingClientRect();
++        const c = clampPosition(pos, { w: r.width, h: r.height }, { w: window.innerWidth, h: window.innerHeight });
++        if (Math.abs(c.x - pos.x) > 0.5 || Math.abs(c.y - pos.y) > 0.5) st.setFloat(id, { ...pos, x: c.x, y: c.y });
++      }
++    };
++    fix();
++    window.addEventListener("resize", fix);
++    return () => window.removeEventListener("resize", fix);
++  }, [floatKey]);
++
+   // Painéis (pincéis, cores, borracha…): ficam em cima da barra de baixo ou, se abertos por um botão da lateral/botão direito, junto dele.
+   const panelsNode = (
+     <>
+@@ -573,12 +603,12 @@ export function Toolbar() {
+       </div>
+ 
+       {leftIds.length > 0 && (
+-        <div className="toolbar rail rail-left" ref={leftRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (esquerda)" onClickCapture={noteAnchor("left")}>
++        <div className="toolbar rail vbar rail-left" ref={leftRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (esquerda)" onClickCapture={noteAnchor("left")}>
+           {renderBlocks("left")}
+         </div>
+       )}
+       {rightIds.length > 0 && (
+-        <div className="toolbar rail rail-right" ref={rightRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (direita)" onClickCapture={noteAnchor("right")}>
++        <div className="toolbar rail vbar rail-right" ref={rightRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (direita)" onClickCapture={noteAnchor("right")}>
+           {renderBlocks("right")}
+         </div>
+       )}
+@@ -602,6 +632,28 @@ export function Toolbar() {
+         )}
+       </div>
+ 
++      {floatIds.length > 0 && (
++        <div className="float-layer" ref={floatsRef}>
++          {floatIds.map((id) => {
++            const f = layout.floats[id] ?? defaultFloat(layout);
++            return (
++              <div
++                key={id}
++                data-fbar={id}
++                className={f.vertical ? "toolbar fbar vbar" : "toolbar fbar"}
++                style={{ left: f.x, top: f.y }}
++                role="toolbar"
++                aria-orientation={f.vertical ? "vertical" : "horizontal"}
++                aria-label={`Barra flutuante: ${BLOCKS.find((b) => b.id === id)?.label ?? id}`}
++                onClickCapture={noteAnchor("float")}
++              >
++                {renderBlock(id)}
++              </div>
++            );
++          })}
++        </div>
++      )}
++
+       {panel && panelPosition && (
+         <div className="panel-float" ref={floatRef} style={{ left: panelPosition.x, top: panelPosition.y }}>
+           {panelsNode}
+diff --git a/src/components/blockDrag.test.ts b/src/components/blockDrag.test.ts
+new file mode 100644
+index 0000000..e3dbfca
+--- /dev/null
++++ b/src/components/blockDrag.test.ts
+@@ -0,0 +1,165 @@
++// O gesto de arrastar um bloco pela alça, simulado sem navegador: window/document falsos e eventos de ponteiro.
++import type { PointerEvent as ReactPointerEvent } from "react";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { DEFAULT_LAYOUT, useLayout } from "../core/layout";
++import { rotateBlock, startBlockDrag } from "./BlockHandle";
++
++const rect = (left: number, top: number, width: number, height: number) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
++
++let win: EventTarget & { innerWidth: number; innerHeight: number };
++const body = { classList: { add: vi.fn(), remove: vi.fn() } };
++let fbarSize = { w: 264, h: 58 };
++
++beforeEach(() => {
++  win = Object.assign(new EventTarget(), { innerWidth: 1000, innerHeight: 700 });
++  body.classList.add.mockClear();
++  body.classList.remove.mockClear();
++  fbarSize = { w: 264, h: 58 };
++  vi.stubGlobal("window", win);
++  vi.stubGlobal("document", {
++    body,
++    querySelector: (sel: string) => (sel.startsWith("[data-fbar") ? { getBoundingClientRect: () => rect(0, 0, fbarSize.w, fbarSize.h) } : null),
++  });
++  useLayout.setState({ layout: DEFAULT_LAYOUT });
++});
++afterEach(() => vi.unstubAllGlobals());
++
++/** Clique na alça de um bloco que está na barra de baixo em (300, 620), 250×44; ponteiro a (17, 27) do canto. */
++function press(opts: { pointerType?: string; button?: number; pointerId?: number } = {}) {
++  const block = { getBoundingClientRect: () => rect(300, 620, 250, 44) };
++  const e = {
++    pointerType: opts.pointerType ?? "mouse",
++    button: opts.button ?? 0,
++    pointerId: opts.pointerId ?? 1,
++    clientX: 317,
++    clientY: 647,
++    preventDefault: vi.fn(),
++    currentTarget: { closest: () => block },
++  };
++  startBlockDrag(e as unknown as ReactPointerEvent<HTMLElement>, "tools");
++  return e;
++}
++const fire = (type: "pointermove" | "pointerup" | "pointercancel", x: number, y: number, pointerId = 1) =>
++  win.dispatchEvent(Object.assign(new Event(type), { clientX: x, clientY: y, pointerId }));
++const state = () => useLayout.getState().layout;
++
++describe("arrastar bloco pela alça", () => {
++  it("um toque sem mover não muda nada", () => {
++    const e = press();
++    expect(e.preventDefault).toHaveBeenCalled();
++    fire("pointerup", 317, 647);
++    expect(state()).toBe(DEFAULT_LAYOUT);
++    expect(body.classList.remove).toHaveBeenCalledWith("dragging-ui");
++  });
++
++  it("tremor de poucos pixels não começa o arraste", () => {
++    press();
++    fire("pointermove", 319, 648);
++    expect(state().side.tools).toBe("bottom");
++    fire("pointerup", 319, 648);
++    expect(state()).toBe(DEFAULT_LAYOUT);
++  });
++
++  it("ao mover, o bloco vira flutuante e acompanha o ponteiro mantendo o ponto que foi segurado", () => {
++    press();
++    fire("pointermove", 500, 300);
++    expect(state().side.tools).toBe("float");
++    // início = canto do bloco − margem da barra (7); deslocamento do ponteiro = (317−293, 647−613) = (24, 34)
++    expect(state().floats.tools).toMatchObject({ x: 500 - 24, y: 300 - 34, vertical: false });
++    fire("pointerup", 500, 300);
++    expect(state().floats.tools).toMatchObject({ x: 476, y: 266, vertical: false });
++    expect(state().order.length).toBe(DEFAULT_LAYOUT.order.length);
++    expect(body.classList.add).toHaveBeenCalledWith("dragging-ui");
++  });
++
++  it("soltar perto da borda esquerda gruda nela e vira vertical", () => {
++    press();
++    // o ímã mede a borda do BLOCO, não o ponteiro: ponteiro em x=40 deixa o bloco em x=16, a 8px da borda
++    fire("pointermove", 40, 300);
++    fire("pointerup", 40, 300);
++    expect(state().floats.tools).toMatchObject({ x: 8, vertical: true });
++  });
++
++  it("longe da borda (fora do alcance do ímã) fica onde foi solto", () => {
++    press();
++    fire("pointermove", 90, 300); // bloco em x=66, a 58px da borda
++    fire("pointerup", 90, 300);
++    expect(state().floats.tools).toMatchObject({ x: 66, vertical: false });
++  });
++
++  it("soltar perto da borda de baixo gruda e continua horizontal", () => {
++    press();
++    fire("pointermove", 500, 690);
++    fire("pointerup", 500, 690);
++    expect(state().floats.tools).toMatchObject({ y: 700 - 58 - 8, vertical: false });
++  });
++
++  it("arrastar para fora da janela nunca deixa o bloco fora dela", () => {
++    press();
++    fire("pointermove", 9000, 9000);
++    expect(state().floats.tools!.x + fbarSize.w).toBeLessThanOrEqual(1000 - 8);
++    expect(state().floats.tools!.y + fbarSize.h).toBeLessThanOrEqual(700 - 8);
++    fire("pointermove", -9000, -9000);
++    expect(state().floats.tools!.x).toBeGreaterThanOrEqual(8);
++    expect(state().floats.tools!.y).toBeGreaterThanOrEqual(8);
++    fire("pointerup", -9000, -9000);
++    expect(state().floats.tools!.x).toBeGreaterThanOrEqual(8);
++  });
++
++  it("se o sistema cancela o gesto, o bloco volta para onde estava", () => {
++    press();
++    fire("pointermove", 500, 300);
++    expect(state().side.tools).toBe("float");
++    fire("pointercancel", 500, 300);
++    expect(state().side.tools).toBe("bottom");
++    expect(state().floats.tools).toBeUndefined();
++  });
++
++  it("botão direito do mouse não arrasta", () => {
++    press({ button: 2 });
++    fire("pointermove", 500, 300);
++    expect(state()).toBe(DEFAULT_LAYOUT);
++    expect(body.classList.add).not.toHaveBeenCalled();
++  });
++
++  it("outro dedo/ponteiro durante o gesto é ignorado", () => {
++    press({ pointerType: "touch", pointerId: 7 });
++    fire("pointermove", 500, 300, 9);
++    expect(state().side.tools).toBe("bottom");
++    fire("pointermove", 500, 300, 7);
++    expect(state().side.tools).toBe("float");
++    fire("pointerup", 500, 300, 9); // não é o dedo do arraste: não termina
++    expect(body.classList.remove).not.toHaveBeenCalled();
++    fire("pointerup", 500, 300, 7);
++    expect(body.classList.remove).toHaveBeenCalledWith("dragging-ui");
++  });
++
++  it("depois de soltar, movimentos soltos não mexem mais no bloco", () => {
++    press();
++    fire("pointermove", 500, 300);
++    fire("pointerup", 500, 300);
++    const parado = state().floats.tools;
++    fire("pointermove", 100, 100);
++    expect(state().floats.tools).toEqual(parado);
++  });
++
++  it("reabrir um bloco que já flutua continua de onde ele estava", () => {
++    useLayout.getState().setFloat("tools", { x: 200, y: 100, vertical: false }, false);
++    press();
++    fire("pointermove", 400, 400);
++    // deslocamento = ponteiro (317,647) − posição guardada (200,100) = (117, 547): x = 400−117, e y = 400−547 sai da tela e é limitado a 8
++    expect(state().floats.tools).toMatchObject({ x: 283, y: 8 });
++  });
++});
++
++describe("girar bloco flutuante", () => {
++  it("alterna horizontal ↔ vertical só se o bloco flutua", () => {
++    rotateBlock("tools");
++    expect(state()).toBe(DEFAULT_LAYOUT);
++    useLayout.getState().setFloat("tools", { x: 50, y: 60, vertical: false }, false);
++    rotateBlock("tools");
++    expect(state().floats.tools).toEqual({ x: 50, y: 60, vertical: true });
++    rotateBlock("tools");
++    expect(state().floats.tools!.vertical).toBe(false);
++  });
++});
+diff --git a/src/components/layout.test.tsx b/src/components/layout.test.tsx
+index 14dbd9f..8f0f8df 100644
+--- a/src/components/layout.test.tsx
++++ b/src/components/layout.test.tsx
+@@ -69,14 +69,58 @@ describe("Toolbar em blocos", () => {
+   });
+ });
+ 
++describe("blocos flutuantes e alças", () => {
++  const countGrips = (html: string) => (html.match(/class="grip"/g) ?? []).length;
++
++  it("cada bloco visível tem uma alça de 6 pontos (2 colunas × 3 linhas)", () => {
++    const html = renderToString(<Toolbar />);
++    expect(countGrips(html)).toBe(BLOCKS.length);
++    expect((html.match(/class="grip"[^>]*>((?:<i><\/i>){6})<\/div>/g) ?? []).length).toBe(BLOCKS.length);
++  });
++
++  it("travar as posições esconde todas as alças", () => {
++    mock.layout = { ...DEFAULT_LAYOUT, locked: true };
++    expect(countGrips(renderToString(<Toolbar />))).toBe(0);
++  });
++
++  it("bloco oculto não tem alça", () => {
++    mock.layout = placeBlock(DEFAULT_LAYOUT, "colors", "hidden");
++    expect(countGrips(renderToString(<Toolbar />))).toBe(BLOCKS.length - 1);
++  });
++
++  it("bloco flutuante vira barra solta na posição guardada, com os botões dele", () => {
++    mock.layout = placeBlock(DEFAULT_LAYOUT, "colors", "float", { x: 320, y: 111, vertical: false });
++    const html = renderToString(<Toolbar />);
++    expect(html).toContain('class="float-layer"');
++    expect(html).toMatch(/data-fbar="colors" class="toolbar fbar"[^>]*style="left:320px;top:111px"/);
++    expect(html.indexOf('aria-label="Mais cores"')).toBeGreaterThan(html.indexOf('class="float-layer"'));
++    expect(html).toContain("Barra flutuante: Cores");
++  });
++
++  it("bloco flutuante girado usa a barra vertical", () => {
++    mock.layout = placeBlock(DEFAULT_LAYOUT, "history", "float", { x: 20, y: 200, vertical: true });
++    expect(renderToString(<Toolbar />)).toMatch(/data-fbar="history" class="toolbar fbar vbar"/);
++  });
++
++  it("sem blocos flutuantes não existe a camada", () => {
++    expect(renderToString(<Toolbar />)).not.toContain("float-layer");
++  });
++
++  it("os botões do bloco flutuante saem da barra de origem (sem duplicar)", () => {
++    mock.layout = placeBlock(DEFAULT_LAYOUT, "history", "float", { x: 20, y: 200, vertical: false });
++    const html = renderToString(<Toolbar />);
++    expect((html.match(/aria-label="Desfazer"/g) ?? []).length).toBe(1);
++  });
++});
++
+ describe("LayoutSettingsView", () => {
+   const view = (layout = DEFAULT_LAYOUT) =>
+-    renderToString(<LayoutSettingsView layout={layout} onSide={vi.fn()} onMove={vi.fn()} onReset={vi.fn()} onClose={vi.fn()} />);
++    renderToString(<LayoutSettingsView layout={layout} onSide={vi.fn()} onMove={vi.fn()} onRotate={vi.fn()} onLocked={vi.fn()} onReset={vi.fn()} onClose={vi.fn()} />);
+ 
+   it("lista todos os blocos, cada um com as quatro posições, e o botão de restaurar", () => {
+     const html = view();
+     for (const b of BLOCKS) expect(html).toContain(b.label);
+-    for (const lado of ["Embaixo", "Esquerda", "Direita", "Oculto"]) expect((html.match(new RegExp(`>${lado}<`, "g")) ?? []).length).toBe(BLOCKS.length);
++    for (const lado of ["Embaixo", "Esquerda", "Direita", "Flutuante", "Oculto"]) expect((html.match(new RegExp(`>${lado}<`, "g")) ?? []).length).toBe(BLOCKS.length);
+     expect(html).toContain("Restaurar padrão");
+     expect(html).toContain('role="dialog"');
+   });
+@@ -93,3 +137,21 @@ describe("LayoutSettingsView", () => {
+     expect(html).toMatch(/disabled=""[^>]*aria-label="Mover Cores para depois"/);
+   });
+ });
++
++describe("LayoutSettingsView: flutuante e trava", () => {
++  const view = (layout: Layout) =>
++    renderToString(<LayoutSettingsView layout={layout} onSide={vi.fn()} onMove={vi.fn()} onRotate={vi.fn()} onLocked={vi.fn()} onReset={vi.fn()} onClose={vi.fn()} />);
++
++  it("mostra 'Girar' só para os blocos que flutuam", () => {
++    expect(view(DEFAULT_LAYOUT)).not.toContain("Girar ");
++    const html = view(placeBlock(DEFAULT_LAYOUT, "colors", "float", { x: 10, y: 10, vertical: false }));
++    expect(html).toContain('aria-label="Girar Cores"');
++    expect((html.match(/aria-label="Girar /g) ?? []).length).toBe(1);
++  });
++
++  it("o botão de travar reflete o estado", () => {
++    expect(view(DEFAULT_LAYOUT)).toMatch(/aria-pressed="false"[^>]*>Travar posições</);
++    expect(view({ ...DEFAULT_LAYOUT, locked: true })).toMatch(/aria-pressed="true"[^>]*>Posições travadas</);
++  });
++});
++
+diff --git a/src/core/layout.test.ts b/src/core/layout.test.ts
+index d388318..214a7f9 100644
+--- a/src/core/layout.test.ts
++++ b/src/core/layout.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from "vitest";
+-import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, loadLayout, moveBlock, normalizeLayout, placeBlock, saveLayout } from "./layout";
++import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, clampPosition, loadLayout, moveBlock, normalizeLayout, placeBlock, saveLayout, snapPosition } from "./layout";
+ 
+ const memory = () => {
+   const m = new Map<string, string>();
+@@ -76,3 +76,141 @@ describe("normalizeLayout / persistência", () => {
+     expect(() => saveLayout(l, cheio)).not.toThrow();
+   });
+ });
++
++describe("blocos flutuantes", () => {
++  it("placeBlock para 'float' guarda a posição pedida; sem posição usa uma padrão escalonada", () => {
++    const a = placeBlock(DEFAULT_LAYOUT, "tools", "float", { x: 200, y: 90, vertical: true });
++    expect(a.side.tools).toBe("float");
++    expect(a.floats.tools).toEqual({ x: 200, y: 90, vertical: true });
++    expect(blocksOn(a, "bottom")).toEqual(["shapes", "history"]);
++    const b = placeBlock(a, "shapes", "float");
++    expect(b.floats.shapes).toBeDefined();
++    expect(b.floats.shapes).not.toEqual(b.floats.tools); // não empilha um sobre o outro
++  });
++
++  it("mover um bloco que já flutua só muda a posição (e não mexe na ordem)", () => {
++    const a = placeBlock(DEFAULT_LAYOUT, "tools", "float", { x: 10, y: 10, vertical: false });
++    const b = placeBlock(a, "tools", "float", { x: 300, y: 50, vertical: true });
++    expect(b.floats.tools).toEqual({ x: 300, y: 50, vertical: true });
++    expect(b.order).toEqual(a.order);
++  });
++
++  it("sair do modo flutuante apaga a posição guardada", () => {
++    const a = placeBlock(DEFAULT_LAYOUT, "tools", "float", { x: 10, y: 10, vertical: false });
++    const b = placeBlock(a, "tools", "bottom");
++    expect(b.floats.tools).toBeUndefined();
++    expect(b.side.tools).toBe("bottom");
++  });
++
++  it("layout da versão 1 (sem floats/locked) continua valendo", () => {
++    const v1 = { version: 1, order: DEFAULT_LAYOUT.order, side: { ...DEFAULT_LAYOUT.side, colors: "left" } };
++    const l = normalizeLayout(v1);
++    expect(l.version).toBe(2);
++    expect(l.side.colors).toBe("left");
++    expect(l.floats).toEqual({});
++    expect(l.locked).toBe(false);
++  });
++
++  it("flutuante sem posição válida volta ao lado padrão; posição inválida é descartada", () => {
++    const l = normalizeLayout({ side: { tools: "float", colors: "float" }, floats: { colors: { x: "a", y: 3, vertical: true }, tools: { x: 5, y: 6, vertical: false } } });
++    expect(l.side.tools).toBe("float");
++    expect(l.floats.tools).toEqual({ x: 5, y: 6, vertical: false });
++    expect(l.side.colors).toBe("right"); // padrão do bloco
++    expect(l.floats.colors).toBeUndefined();
++    expect(normalizeLayout({ side: { tools: "float" }, floats: { tools: { x: Infinity, y: 1, vertical: false } } }).side.tools).toBe("bottom");
++  });
++
++  it("'locked' só vale se for exatamente true", () => {
++    expect(normalizeLayout({ locked: true }).locked).toBe(true);
++    expect(normalizeLayout({ locked: "sim" }).locked).toBe(false);
++  });
++
++  it("salva e recarrega posição e trava", () => {
++    const s = memory();
++    const l = { ...placeBlock(DEFAULT_LAYOUT, "colors", "float", { x: 33, y: 44, vertical: true }), locked: true };
++    saveLayout(l, s);
++    expect(loadLayout(s)).toEqual(l);
++  });
++});
++
++describe("clampPosition (nunca sai da tela)", () => {
++  const vp = { w: 1000, h: 700 };
++  const size = { w: 300, h: 60 };
++
++  it("mantém o que já está dentro", () => {
++    expect(clampPosition({ x: 100, y: 100 }, size, vp)).toEqual({ x: 100, y: 100 });
++  });
++
++  it("puxa de volta o que passou de qualquer borda, respeitando a margem", () => {
++    expect(clampPosition({ x: -50, y: -9 }, size, vp)).toEqual({ x: 8, y: 8 });
++    expect(clampPosition({ x: 900, y: 690 }, size, vp)).toEqual({ x: 1000 - 300 - 8, y: 700 - 60 - 8 });
++  });
++
++  it("bloco maior que a janela fica colado no canto de cima/esquerda (e continua alcançável)", () => {
++    expect(clampPosition({ x: 400, y: 400 }, { w: 2000, h: 2000 }, vp)).toEqual({ x: 8, y: 8 });
++  });
++
++  it("janela encolhida (rotação, redimensionar) reposiciona o que ficou para fora", () => {
++    expect(clampPosition({ x: 700, y: 500 }, size, { w: 500, h: 400 })).toEqual({ x: 500 - 300 - 8, y: 400 - 60 - 8 });
++  });
++});
++
++describe("snapPosition (ímã nas bordas)", () => {
++  const vp = { w: 1000, h: 700 };
++  const horiz = { w: 300, h: 60 };
++  const vert = { w: 60, h: 300 };
++
++  it("longe de tudo: não gruda nem muda a orientação", () => {
++    const r = snapPosition({ x: 200, y: 150 }, horiz, vp, false);
++    expect(r).toMatchObject({ x: 200, y: 150, vertical: false, edgeX: null, edgeY: null });
++  });
++
++  it("perto da borda esquerda gruda nela e vira vertical", () => {
++    const r = snapPosition({ x: 20, y: 150 }, vert, vp, false);
++    expect(r).toMatchObject({ x: 8, y: 150, vertical: true, edgeX: "start" });
++  });
++
++  it("perto da borda direita gruda e vira vertical", () => {
++    const r = snapPosition({ x: 1000 - 60 - 8 - 10, y: 150 }, vert, vp, false);
++    expect(r).toMatchObject({ x: 1000 - 60 - 8, vertical: true, edgeX: "end" });
++  });
++
++  it("perto de cima/embaixo gruda e vira horizontal", () => {
++    expect(snapPosition({ x: 200, y: 14 }, horiz, vp, true)).toMatchObject({ y: 8, vertical: false, edgeY: "start" });
++    expect(snapPosition({ x: 200, y: 700 - 60 - 8 - 12 }, horiz, vp, true)).toMatchObject({ y: 700 - 60 - 8, vertical: false, edgeY: "end" });
++  });
++
++  it("num canto (duas bordas) mantém a orientação que tinha", () => {
++    expect(snapPosition({ x: 10, y: 10 }, horiz, vp, false)).toMatchObject({ x: 8, y: 8, vertical: false });
++    expect(snapPosition({ x: 10, y: 10 }, vert, vp, true)).toMatchObject({ x: 8, y: 8, vertical: true });
++  });
++
++  it("o centro da tela também atrai (barra centralizada)", () => {
++    const r = snapPosition({ x: (1000 - 300) / 2 + 9, y: 300 }, horiz, vp, false);
++    expect(r.x).toBe(350);
++    expect(r.edgeX).toBe("center");
++    expect(r.vertical).toBe(false); // centro não muda orientação
++  });
++
++  it("fora do alcance do ímã não gruda", () => {
++    expect(snapPosition({ x: 60, y: 150 }, horiz, vp, false).edgeX).toBeNull();
++  });
++
++  it("soltar fora da tela sempre acaba dentro dela", () => {
++    const r = snapPosition({ x: -500, y: 5000 }, horiz, vp, false);
++    expect(r.x).toBeGreaterThanOrEqual(8);
++    expect(r.y).toBeLessThanOrEqual(700 - 60 - 8);
++    expect(r.x + 300).toBeLessThanOrEqual(1000);
++  });
++
++  it("a barra de páginas aberta (insetLeft) reserva espaço: o ímã da esquerda cola depois dela", () => {
++    expect(snapPosition({ x: 250, y: 150 }, vert, vp, false, { insetLeft: 256 })).toMatchObject({ x: 264, vertical: true, edgeX: "start" });
++  });
++
++  it("janela minúscula (bloco não cabe) não gera posição negativa nem NaN", () => {
++    const r = snapPosition({ x: 50, y: 50 }, { w: 800, h: 900 }, { w: 400, h: 300 }, false);
++    expect(Number.isFinite(r.x) && Number.isFinite(r.y)).toBe(true);
++    expect(r.x).toBeGreaterThanOrEqual(8);
++    expect(r.y).toBeGreaterThanOrEqual(8);
++  });
++});
+diff --git a/src/core/layout.ts b/src/core/layout.ts
+index 5563956..a20c8c7 100644
+--- a/src/core/layout.ts
++++ b/src/core/layout.ts
+@@ -1,12 +1,11 @@
+ // Layout das barras de ferramentas: cada BLOCO de botões (ferramentas, formas, cores…) fica embaixo, na lateral
+-// esquerda/direita ou oculto, e o usuário escolhe pelo menu de configurações. Puro e testável; só `useLayout`
+-// toca no localStorage (preferência de interface, não é o documento — ver AGENTS.md, regra 9).
+-// Etapa 2 (arrastar pelos 6 pontos): entra um lado "float" com posição livre, atração magnética nas bordas
+-// e trava para não sair da tela. O formato abaixo já tem `version` para essa migração.
++// esquerda/direita, FLUTUANDO em qualquer lugar da tela ou oculto. O usuário escolhe pelo menu de configurações
++// ou arrasta pela alça de 6 pontos. Puro e testável; só `useLayout` toca no localStorage (preferência de
++// interface, não é o documento — ver AGENTS.md, regra 9).
+ import { create } from "zustand";
+ 
+ export type BlockId = "tools" | "shapes" | "history" | "brush" | "colors" | "size" | "map" | "page";
+-export type DockSide = "bottom" | "left" | "right" | "hidden";
++export type DockSide = "bottom" | "left" | "right" | "float" | "hidden";
+ 
+ export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
+   { id: "tools", label: "Ferramentas", hint: "Selecionar, laço, caneta, texto, borracha e mão" },
+@@ -23,26 +22,40 @@ export const SIDES: { id: DockSide; label: string }[] = [
+   { id: "bottom", label: "Embaixo" },
+   { id: "left", label: "Esquerda" },
+   { id: "right", label: "Direita" },
++  { id: "float", label: "Flutuante" },
+   { id: "hidden", label: "Oculto" },
+ ];
+ 
++/** Posição de um bloco flutuante: canto superior esquerdo em pixels da janela e se a barra é vertical. */
++export interface FloatPos { x: number; y: number; vertical: boolean }
++
+ export interface Layout {
+-  version: 1;
++  version: 2;
+   /** Ordem global; dentro de cada lado vale a ordem em que os blocos aparecem aqui. */
+   order: BlockId[];
+   side: Record<BlockId, DockSide>;
++  /** Posição de cada bloco cujo lado é "float". */
++  floats: Partial<Record<BlockId, FloatPos>>;
++  /** Trava as posições: esconde as alças de arrastar (evita arrastar sem querer com a caneta). */
++  locked: boolean;
+ }
+ 
+ /** Padrão: embaixo só o essencial; cor, espessura e pincéis na direita; o resto na esquerda. */
+ export const DEFAULT_LAYOUT: Layout = {
+-  version: 1,
++  version: 2,
+   order: ["tools", "shapes", "history", "brush", "colors", "size", "map", "page"],
+   side: { tools: "bottom", shapes: "bottom", history: "bottom", brush: "right", colors: "right", size: "right", map: "left", page: "left" },
++  floats: {},
++  locked: false,
+ };
+ 
+ const IDS = BLOCKS.map((b) => b.id);
+ const isBlockId = (v: unknown): v is BlockId => typeof v === "string" && (IDS as string[]).includes(v);
+-const isSide = (v: unknown): v is DockSide => v === "bottom" || v === "left" || v === "right" || v === "hidden";
++const isSide = (v: unknown): v is DockSide => SIDES.some((s) => s.id === v);
++const isFloatPos = (v: unknown): v is FloatPos => {
++  const p = v as FloatPos | null;
++  return !!p && typeof p === "object" && Number.isFinite(p.x) && Number.isFinite(p.y) && typeof p.vertical === "boolean";
++};
+ 
+ /** Blocos de um lado, na ordem. */
+ export function blocksOn(layout: Layout, side: DockSide): BlockId[] {
+@@ -50,30 +63,54 @@ export function blocksOn(layout: Layout, side: DockSide): BlockId[] {
+ }
+ 
+ /**
+- * Aceita qualquer coisa (JSON antigo, corrompido, de versão futura) e devolve um layout válido:
+- * ids e lados desconhecidos caem no padrão, blocos que faltam voltam, repetidos somem.
++ * Aceita qualquer coisa (JSON da versão 1, corrompido, de versão futura) e devolve um layout válido:
++ * ids e lados desconhecidos caem no padrão, blocos que faltam voltam, repetidos somem, e um bloco
++ * "flutuante" sem posição válida volta para o lado padrão dele.
+  */
+ export function normalizeLayout(raw: unknown): Layout {
+-  const r = (raw && typeof raw === "object" ? raw : {}) as { order?: unknown; side?: unknown };
++  const r = (raw && typeof raw === "object" ? raw : {}) as { order?: unknown; side?: unknown; floats?: unknown; locked?: unknown };
+   const sideIn = (r.side && typeof r.side === "object" ? r.side : {}) as Record<string, unknown>;
++  const floatsIn = (r.floats && typeof r.floats === "object" ? r.floats : {}) as Record<string, unknown>;
+   const side = {} as Record<BlockId, DockSide>;
+-  for (const id of IDS) side[id] = isSide(sideIn[id]) ? (sideIn[id] as DockSide) : DEFAULT_LAYOUT.side[id];
++  const floats: Partial<Record<BlockId, FloatPos>> = {};
++  for (const id of IDS) {
++    let s = isSide(sideIn[id]) ? (sideIn[id] as DockSide) : DEFAULT_LAYOUT.side[id];
++    if (s === "float") {
++      const p = floatsIn[id];
++      if (isFloatPos(p)) floats[id] = { x: p.x, y: p.y, vertical: p.vertical };
++      else s = DEFAULT_LAYOUT.side[id];
++    }
++    side[id] = s;
++  }
+   const order: BlockId[] = [];
+   for (const id of Array.isArray(r.order) ? r.order : []) if (isBlockId(id) && !order.includes(id)) order.push(id);
+   for (const id of DEFAULT_LAYOUT.order) if (!order.includes(id)) order.push(id);
+-  return { version: 1, order, side };
++  return { version: 2, order, side, floats, locked: r.locked === true };
+ }
+ 
+-/** Move o bloco para outro lado, no fim dele (depois do último bloco que já está lá). */
+-export function placeBlock(layout: Layout, id: BlockId, side: DockSide): Layout {
+-  if (layout.side[id] === side) return layout;
++/** Posição inicial de um bloco que passa a flutuar sem posição definida (escalonada para não empilhar). */
++export function defaultFloat(layout: Layout): FloatPos {
++  const n = Object.keys(layout.floats).length;
++  return { x: 140 + 28 * n, y: 140 + 28 * n, vertical: false };
++}
++
++/**
++ * Move o bloco para outro lado, no fim dele (depois do último bloco que já está lá).
++ * Para "float", `pos` define onde; sem `pos` usa a posição que ele já tinha ou uma padrão.
++ */
++export function placeBlock(layout: Layout, id: BlockId, side: DockSide, pos?: FloatPos): Layout {
++  if (layout.side[id] === side && !(side === "float" && pos)) return layout;
++  const floats = { ...layout.floats };
++  if (side === "float") floats[id] = pos ?? floats[id] ?? defaultFloat(layout);
++  else delete floats[id];
++  if (layout.side[id] === side) return { ...layout, floats }; // já flutuava: só muda a posição
+   const rest = layout.order.filter((x) => x !== id);
+   let at = rest.length;
+   for (let i = rest.length - 1; i >= 0; i--) {
+     if (layout.side[rest[i]] === side) { at = i + 1; break; }
+   }
+   const order = [...rest.slice(0, at), id, ...rest.slice(at)];
+-  return { ...layout, order, side: { ...layout.side, [id]: side } };
++  return { ...layout, order, side: { ...layout.side, [id]: side }, floats };
+ }
+ 
+ /** Sobe (-1) ou desce (+1) o bloco entre os vizinhos do MESMO lado. */
+@@ -89,6 +126,68 @@ export function moveBlock(layout: Layout, id: BlockId, dir: -1 | 1): Layout {
+   return { ...layout, order };
+ }
+ 
++// ---------------- posição na tela: limite e ímã ----------------
++
++export interface Size { w: number; h: number }
++export interface Viewport { w: number; h: number }
++export const FLOAT_MARGIN = 8;
++export const SNAP_THRESHOLD = 24;
++
++/** Mantém o bloco inteiro dentro da janela (se for maior que ela, fica colado na margem de cima/esquerda). */
++export function clampPosition(pos: { x: number; y: number }, size: Size, vp: Viewport, margin = FLOAT_MARGIN): { x: number; y: number } {
++  const maxX = Math.max(margin, vp.w - size.w - margin);
++  const maxY = Math.max(margin, vp.h - size.h - margin);
++  return { x: Math.min(Math.max(pos.x, margin), maxX), y: Math.min(Math.max(pos.y, margin), maxY) };
++}
++
++type Edge = "start" | "end" | "center";
++
++function nearest(value: number, targets: { at: number; edge: Edge }[], threshold: number): { at: number; edge: Edge } | null {
++  let best: { at: number; edge: Edge } | null = null;
++  for (const t of targets) {
++    if (Math.abs(value - t.at) <= threshold && (!best || Math.abs(value - t.at) < Math.abs(value - best.at))) best = t;
++  }
++  return best;
++}
++
++export interface SnapResult extends FloatPos {
++  /** Em quais pontos magnéticos encostou (para a interface destacar, se quiser). */
++  edgeX: Edge | null;
++  edgeY: Edge | null;
++}
++
++/**
++ * Posição final de um bloco arrastado: primeiro limita à janela; depois, se chegou perto de uma borda
++ * (ou do centro) em X ou Y, cola nela. Colar numa lateral deixa a barra vertical; colar em cima/embaixo,
++ * horizontal; colar num canto (ou em nenhuma borda) mantém a orientação atual.
++ * `insetLeft` reserva espaço à esquerda (a barra de páginas, quando aberta).
++ */
++export function snapPosition(
++  pos: { x: number; y: number },
++  size: Size,
++  vp: Viewport,
++  vertical: boolean,
++  opts: { margin?: number; threshold?: number; insetLeft?: number } = {},
++): SnapResult {
++  const margin = opts.margin ?? FLOAT_MARGIN;
++  const threshold = opts.threshold ?? SNAP_THRESHOLD;
++  const insetLeft = opts.insetLeft ?? 0;
++  const c = clampPosition(pos, size, vp, margin);
++  const maxX = Math.max(margin, vp.w - size.w - margin);
++  const maxY = Math.max(margin, vp.h - size.h - margin);
++  const minX = Math.min(margin + insetLeft, maxX);
++  const sx = nearest(c.x, [{ at: minX, edge: "start" }, { at: maxX, edge: "end" }, { at: Math.round((minX + maxX) / 2), edge: "center" }], threshold);
++  const sy = nearest(c.y, [{ at: margin, edge: "start" }, { at: maxY, edge: "end" }, { at: Math.round((margin + maxY) / 2), edge: "center" }], threshold);
++  const x = sx ? sx.at : c.x;
++  const y = sy ? sy.at : c.y;
++  const onSideEdge = sx?.edge === "start" || sx?.edge === "end";
++  const onVerticalEdge = sy?.edge === "start" || sy?.edge === "end";
++  const nextVertical = onSideEdge && !onVerticalEdge ? true : onVerticalEdge && !onSideEdge ? false : vertical;
++  return { x, y, vertical: nextVertical, edgeX: sx?.edge ?? null, edgeY: sy?.edge ?? null };
++}
++
++// ---------------- persistência ----------------
++
+ export const LAYOUT_KEY = "hm-ideas-layout-v1";
+ 
+ type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">;
+@@ -112,16 +211,23 @@ export function saveLayout(layout: Layout, storage: Storage | null = browserStor
+ interface LayoutState {
+   layout: Layout;
+   setSide: (id: BlockId, side: DockSide) => void;
++  /** Posiciona um bloco flutuante. `persist: false` durante o arrastar (grava só ao soltar, com `commit`). */
++  setFloat: (id: BlockId, pos: FloatPos, persist?: boolean) => void;
++  setLocked: (locked: boolean) => void;
+   move: (id: BlockId, dir: -1 | 1) => void;
++  commit: () => void;
+   reset: () => void;
+ }
+ 
+ export const useLayout = create<LayoutState>((set, get) => {
+-  const apply = (layout: Layout) => { saveLayout(layout); set({ layout }); };
++  const apply = (layout: Layout, persist = true) => { if (persist) saveLayout(layout); set({ layout }); };
+   return {
+     layout: loadLayout(),
+     setSide: (id, side) => apply(placeBlock(get().layout, id, side)),
++    setFloat: (id, pos, persist = true) => apply(placeBlock(get().layout, id, "float", pos), persist),
++    setLocked: (locked) => apply({ ...get().layout, locked }),
+     move: (id, dir) => apply(moveBlock(get().layout, id, dir)),
++    commit: () => saveLayout(get().layout),
+     reset: () => apply(normalizeLayout(DEFAULT_LAYOUT)),
+   };
+ });
+diff --git a/src/styles.css b/src/styles.css
+index d822636..61abc63 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -408,29 +408,32 @@ body[data-sidebar="open"] { --side: 256px; }
+ .gfx-card button { align-self: flex-start; }
+ 
+ /* ---- barras laterais: blocos movidos para a esquerda/direita em Configurações ---- */
+-.rail {
+-  position: fixed;
+-  z-index: 5;
+-  top: 50%;
+-  transform: translateY(-50%);
++/* Barra vertical (laterais e blocos flutuantes girados). */
++.vbar {
+   flex-direction: column;
+   align-items: center;
+   gap: 0;
+   max-width: none;
+-  max-height: calc(100vh - 190px);
+   overflow-x: hidden;
+   overflow-y: auto;
++}
++.rail {
++  position: fixed;
++  z-index: 5;
++  top: 50%;
++  transform: translateY(-50%);
++  max-height: calc(100vh - 190px);
+   padding: 8px 6px;
+ }
+ .rail-left { left: calc(8px + var(--side) + env(safe-area-inset-left, 0px)); }
+ .rail-right { right: calc(8px + env(safe-area-inset-right, 0px)); }
+-.rail .group { flex-direction: column; padding: 6px 0; gap: 2px; }
+-.rail .group + .group { border-left: 0; border-top: 1px solid var(--line); }
+-.rail .swatch { margin: 3px 0; }
+-.rail .btn.text { height: auto; min-height: 44px; padding: 4px; font-size: 11px; text-align: center; }
++.vbar .group { flex-direction: column; padding: 6px 0; gap: 2px; }
++.vbar .group + .group { border-left: 0; border-top: 1px solid var(--line); }
++.vbar .swatch { margin: 3px 0; }
++.vbar .btn.text { height: auto; min-height: 44px; padding: 4px; font-size: 11px; text-align: center; }
+ /* Espessura na vertical: o controle é girado e as margens reservam o espaço que ele ocupa depois de girar. */
+-.rail .size { gap: 8px; }
+-.rail .size input { width: 110px; margin: 41px -41px; transform: rotate(-90deg); }
++.vbar .size { gap: 8px; }
++.vbar .size input { width: 110px; margin: 41px -41px; transform: rotate(-90deg); }
+ 
+ /* Painel aberto por um botão da lateral (ou botão direito): flutua junto do botão, sem mexer nas barras. */
+ .panel-float { position: fixed; z-index: 7; }
+@@ -453,3 +456,32 @@ body[data-sidebar="open"] { --side: 256px; }
+ .blockinfo { grid-column: 1 / -1; display: flex; flex-direction: column; }
+ .blockname { font-weight: 600; font-size: 14px; }
+ .blockmove { display: flex; gap: 2px; }
++
++/* ---- blocos e alça de arrastar (6 pontos: 2 colunas × 3 linhas) ---- */
++.blk { display: flex; align-items: center; flex: none; }
++.blk + .blk { border-left: 1px solid var(--line); }
++.vbar .blk { flex-direction: column; }
++.vbar .blk + .blk { border-left: 0; border-top: 1px solid var(--line); }
++.grip {
++  display: grid;
++  grid-template-columns: repeat(2, 4px);
++  grid-auto-rows: 4px;
++  gap: 3px;
++  place-content: center;
++  flex: none;
++  width: 22px;
++  min-height: 44px;
++  cursor: grab;
++  touch-action: none;       /* a caneta/dedo arrasta o bloco em vez de rolar a página */
++  user-select: none;
++  -webkit-user-select: none;
++}
++.grip i { display: block; width: 4px; height: 4px; border-radius: 50%; background: var(--ink-soft); opacity: 0.65; }
++.grip:hover i { opacity: 1; background: var(--indigo); }
++.vbar .grip { width: 44px; min-height: 22px; }
++body.dragging-ui, body.dragging-ui * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
++
++/* Blocos flutuantes: camada sobre a tela inteira que não bloqueia cliques fora das próprias barras. */
++.float-layer { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
++.float-layer > * { pointer-events: auto; }
++.fbar { position: absolute; padding: 6px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+-- 
+2.43.0
+

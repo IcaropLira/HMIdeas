@@ -6,8 +6,14 @@ describe("repositório de releases", () => {
     expect(releasesRepo({ hostname: "ana.github.io", pathname: "/hm-ideas/download.html" })).toBe("ana/hm-ideas");
     expect(releasesRepo({ hostname: "ana.github.io", pathname: "/" })).toBe("ana/ana.github.io");
     expect(releasesRepo({ hostname: "ana.github.io", pathname: "/download.html" })).toBe("ana/ana.github.io");
-    expect(releasesRepo({ hostname: "localhost", pathname: "/" })).toBeNull();
+    expect(releasesRepo({ hostname: "localhost", pathname: "/" }, "")).toBeNull();
   });
+
+  it("em outra hospedagem (Vercel, domínio próprio) usa o repositório do package.json", () => {
+    expect(releasesRepo({ hostname: "hm-ideas.vercel.app", pathname: "/download.html" }, "ana/hm-ideas")).toBe("ana/hm-ideas");
+    expect(releasesRepo({ hostname: "hm-ideas.vercel.app", pathname: "/" }, "valor inválido")).toBeNull();
+  });
+
 });
 
 describe("versões", () => {

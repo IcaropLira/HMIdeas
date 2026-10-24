@@ -9,3 +9,8 @@ export function isInsideDock(target: Node | null, dock: Container | null): boole
   if ((target as unknown) === dock) return false; // espaço vazio do próprio contêiner
   return dock.contains(target);
 }
+
+/** Dentro de QUALQUER uma das áreas de interface (barra de baixo, barras laterais, painel flutuante…). */
+export function isInsideAny(target: Node | null, containers: (Container | null)[]): boolean {
+  return containers.some((c) => isInsideDock(target, c));
+}

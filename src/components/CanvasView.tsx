@@ -36,11 +36,10 @@ export function CanvasView() {
     const canvas = canvasRef.current!;
     const renderer = new Renderer();
 
-    // Anexos universais: colar imagens/URLs, ou arrastar imagens, PDFs e outros arquivos.
-    // A posição inicial é o centro visível da página; os anexos continuam sendo elementos normais do documento.
-    const attachmentAtCenter = () => {
+    // Anexos universais: colar imagens/URLs ou arrastar arquivos para a posição do ponteiro.
+    const attachmentAt = (clientX?: number, clientY?: number) => {
       const rect = host.getBoundingClientRect();
-      return screenToWorld(useView.getState().camera, rect.width / 2, rect.height / 2);
+      return screenToWorld(useView.getState().camera, clientX == null ? rect.width / 2 : clientX - rect.left, clientY == null ? rect.height / 2 : clientY - rect.top);
     };
     const readAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -48,12 +47,12 @@ export function CanvasView() {
       reader.onerror = () => reject(reader.error ?? new Error("Falha ao ler arquivo"));
       reader.readAsDataURL(file);
     });
-    const addAttachmentFile = async (file: File) => {
-      if (file.size > 15 * 1024 * 1024) { window.alert("Este anexo ultrapassa 15 MB. Reduza o arquivo antes de incorporá-lo ao caderno."); return; }
-      const p = attachmentAtCenter();
+    const addAttachmentFile = async (file: File, position = attachmentAt()) => {
+      if (file.size > 15 * 1024 * 1024) { useUI.getState().showToast("Este anexo ultrapassa 15 MB. Reduza o arquivo antes de incorporá-lo ao caderno."); return; }
+      const p = position;
       const isImage = file.type.startsWith("image/");
       let data = "";
-      try { data = await readAsDataUrl(file); } catch { window.alert("Não foi possível ler este arquivo."); return; }
+      try { data = await readAsDataUrl(file); } catch { useUI.getState().showToast("Não foi possível ler este arquivo."); return; }
       const image = isImage ? new Image() : null;
       let w = 340, h = 220;
       if (image) {
@@ -63,27 +62,38 @@ export function CanvasView() {
           w = Math.max(80, image.naturalWidth * scale); h = Math.max(60, image.naturalHeight * scale);
         }
       }
-      useDoc.getState().addElement({ id: newId(), type: "attachment", kind: isImage ? "image" : "file", x: p.x - w / 2, y: p.y - h / 2, w, h, title: file.name || "Arquivo anexado", url: file.name || "arquivo", data, mime: file.type || "application/octet-stream", opacity: 1 });
+      const id = newId();
+      useDoc.getState().addElement({ id, type: "attachment", kind: isImage ? "image" : "file", x: p.x - w / 2, y: p.y - h / 2, w, h, title: file.name || "Arquivo anexado", url: file.name || "arquivo", data, mime: file.type || "application/octet-stream", opacity: 1 });
+      useSel.getState().set([id]);
     };
     const onPaste = (ev: ClipboardEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (!target || !host.contains(target) || target.closest("input,textarea,[contenteditable=true]")) return;
       const items = Array.from(ev.clipboardData?.items ?? []);
       const imageItem = items.find((item) => item.kind === "file" && item.type.startsWith("image/"));
-      if (imageItem) { const file = imageItem.getAsFile(); if (file) { ev.preventDefault(); void addAttachmentFile(file); } return; }
+      if (imageItem) { const file = imageItem.getAsFile(); if (file) { ev.preventDefault(); void addAttachmentFile(file, attachmentAt()); } return; }
       const text = ev.clipboardData?.getData("text/uri-list") || ev.clipboardData?.getData("text/plain") || "";
       const url = text.trim().split(/\r?\n/).find((line) => /^https?:\/\//i.test(line.trim()));
       if (url) {
-        ev.preventDefault(); const p = attachmentAtCenter();
+        ev.preventDefault(); const p = attachmentAt();
         const title = url.includes("youtube.com") || url.includes("youtu.be") ? "Vídeo do YouTube" : url.includes("vimeo.com") ? "Vídeo do Vimeo" : "Link anexado";
-        useDoc.getState().addElement({ id: newId(), type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title, url: url.trim(), mime: "text/uri-list", opacity: 1 });
+        const id = newId();
+        useDoc.getState().addElement({ id, type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title, url: url.trim(), mime: "text/uri-list", opacity: 1 });
+        useSel.getState().set([id]);
       }
     };
     const onDragOver = (ev: DragEvent) => { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy"; };
     const onDrop = (ev: DragEvent) => {
       ev.preventDefault();
+      const p = attachmentAt(ev.clientX, ev.clientY);
       const files = Array.from(ev.dataTransfer?.files ?? []);
-      if (files.length) { files.forEach((file) => void addAttachmentFile(file)); return; }
+      if (files.length) { files.forEach((file, i) => void addAttachmentFile(file, { x: p.x + i * 24, y: p.y + i * 24 })); return; }
       const url = ev.dataTransfer?.getData("text/uri-list") || ev.dataTransfer?.getData("text/plain") || "";
-      if (/^https?:\/\//i.test(url.trim())) { const p = screenToWorld(useView.getState().camera, ev.clientX - host.getBoundingClientRect().left, ev.clientY - host.getBoundingClientRect().top); useDoc.getState().addElement({ id: newId(), type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title: "Link anexado", url: url.trim(), mime: "text/uri-list", opacity: 1 }); }
+      if (/^https?:\/\//i.test(url.trim())) {
+        const id = newId();
+        useDoc.getState().addElement({ id, type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title: "Link anexado", url: url.trim(), mime: "text/uri-list", opacity: 1 });
+        useSel.getState().set([id]);
+      }
     };
     window.addEventListener("paste", onPaste as EventListener);
     host.addEventListener("dragover", onDragOver as EventListener);
@@ -591,7 +601,7 @@ export function CanvasView() {
 
   return (
     <div ref={hostRef} className="canvas-host">
-      <canvas ref={canvasRef} className={`canvas ${tool}${picking ? " pick" : ""}`} />
+      <canvas ref={canvasRef} tabIndex={0} className={`canvas ${tool}${picking ? " pick" : ""}`} />
     </div>
   );
 }

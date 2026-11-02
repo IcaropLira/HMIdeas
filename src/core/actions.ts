@@ -82,6 +82,7 @@ export function recolorSelection(color: string) {
   useDoc.getState().updateElements(els.map((e) => {
     if (e.type === "stroke" || e.type === "text" || e.type === "frame") return { ...e, color };
     if (e.type === "node") return { ...e, stroke: e.stroke ? color : e.stroke, fill: e.fill ? tint(color, 0.85) : e.fill, branchColor: color };
+    if (e.type === "attachment") return e;
     return { ...e, stroke: color };
   }));
 }
@@ -110,6 +111,7 @@ export function elementColor(el: HirakuElement): string {
   if (el.type === "stroke" || el.type === "text") return el.color;
   if (el.type === "node") return el.stroke ?? el.branchColor;
   if (el.type === "frame") return el.color;
+  if (el.type === "attachment") return "#1B2233";
   if (isLinear(el)) return el.stroke;
   return el.fill ?? el.stroke;
 }

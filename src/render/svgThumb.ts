@@ -78,6 +78,12 @@ export function thumbPath(el: HirakuElement): ThumbPath {
       stroke: safeColor(nd ? el.stroke ?? el.branchColor : el.color, "#1B2233"),
       sw: el.strokeWidth, dash: null, b: elementBounds(el), alpha: 1,
     };
+  } else if (el.type === "attachment") {
+    const { x, y, w, h } = el;
+    tp = {
+      d: pathFrom([{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }].flatMap((p) => [p.x, p.y])),
+      fill: "#F7F8FC", stroke: "#9AA8C0", sw: 1, dash: null, b: elementBounds(el), alpha: 1,
+    };
   } else {
     const w = el.strokeWidth;
     tp = {

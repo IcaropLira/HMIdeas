@@ -601,7 +601,7 @@ export function CanvasView() {
 
   return (
     <div ref={hostRef} className="canvas-host">
-      <canvas ref={canvasRef} className={`canvas ${tool}${picking ? " pick" : ""}`} />
+      <canvas ref={canvasRef} tabIndex={0} className={`canvas ${tool}${picking ? " pick" : ""}`} />
     </div>
   );
 }

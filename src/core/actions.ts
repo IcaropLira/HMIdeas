@@ -111,6 +111,7 @@ export function elementColor(el: HirakuElement): string {
   if (el.type === "stroke" || el.type === "text") return el.color;
   if (el.type === "node") return el.stroke ?? el.branchColor;
   if (el.type === "frame") return el.color;
+  if (el.type === "attachment") return "#1B2233";
   if (isLinear(el)) return el.stroke;
   return el.fill ?? el.stroke;
 }

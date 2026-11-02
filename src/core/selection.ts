@@ -52,6 +52,11 @@ export function applyXform(el: HirakuElement, x: Xform): HirakuElement {
     const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
     return { ...el, x: c.x - el.w / 2, y: c.y - el.h / 2 };
   }
+  if (el.type === "attachment") {
+    const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
+    const w = el.w * Math.abs(x.sx), h = el.h * Math.abs(x.sy);
+    return { ...el, x: c.x - w / 2, y: c.y - h / 2, w, h };
+  }
   const c = applyAffine(x.m, el.x + el.w / 2, el.y + el.h / 2);
   const w = el.w * Math.abs(x.sx);
   const h = el.h * Math.abs(x.sy);
@@ -80,6 +85,9 @@ export function elementBounds(el: HirakuElement): Bounds {
   } else if (el.type === "text") {
     outlinePath(el).forEach((p) => add(p.x, p.y));
     pad = 2;
+  } else if (el.type === "attachment") {
+    add(el.x, el.y); add(el.x + el.w, el.y); add(el.x + el.w, el.y + el.h); add(el.x, el.y + el.h);
+    pad = 0;
   } else {
     shapePath(el).forEach((p) => add(p.x, p.y));
     pad = el.strokeWidth / 2;
@@ -101,6 +109,7 @@ export function selectionFrame(els: HirakuElement[]): Frame | null {
   if (els.length === 1) {
     const e = els[0];
     if (isLinear(e) || e.type === "node") return null; // nó sozinho: sem alças (tamanho vem do texto)
+    if (e.type === "attachment") return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: 0 };
     if (e.type !== "stroke") return { cx: e.x + e.w / 2, cy: e.y + e.h / 2, w: e.w, h: e.h, angle: e.angle };
   }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -222,7 +231,9 @@ export function boxSelect(els: HirakuElement[], a: Pt, b: Pt): string[] {
 }
 
 function samplePoints(el: HirakuElement): Pt[] {
-  const pts: Pt[] = el.type === "stroke" ? el.points : isLinear(el) ? linearPath(el) : outlinePath(el);
+  const pts: Pt[] = el.type === "stroke" ? el.points : isLinear(el) ? linearPath(el) : el.type === "attachment"
+    ? [{ x: el.x, y: el.y }, { x: el.x + el.w, y: el.y }, { x: el.x + el.w, y: el.y + el.h }, { x: el.x, y: el.y + el.h }]
+    : outlinePath(el);
   const stride = Math.max(1, Math.ceil(pts.length / 80));
   const out: Pt[] = [];
   for (let i = 0; i < pts.length; i += stride) out.push(pts[i]);

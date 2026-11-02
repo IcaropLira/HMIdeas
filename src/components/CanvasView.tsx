@@ -35,6 +35,59 @@ export function CanvasView() {
     const host = hostRef.current!;
     const canvas = canvasRef.current!;
     const renderer = new Renderer();
+
+    // Anexos universais: colar imagens/URLs, ou arrastar imagens, PDFs e outros arquivos.
+    // A posição inicial é o centro visível da página; os anexos continuam sendo elementos normais do documento.
+    const attachmentAtCenter = () => {
+      const rect = host.getBoundingClientRect();
+      return screenToWorld(useView.getState().camera, rect.width / 2, rect.height / 2);
+    };
+    const readAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Arquivo inválido"));
+      reader.onerror = () => reject(reader.error ?? new Error("Falha ao ler arquivo"));
+      reader.readAsDataURL(file);
+    });
+    const addAttachmentFile = async (file: File) => {
+      if (file.size > 15 * 1024 * 1024) { window.alert("Este anexo ultrapassa 15 MB. Reduza o arquivo antes de incorporá-lo ao caderno."); return; }
+      const p = attachmentAtCenter();
+      const isImage = file.type.startsWith("image/");
+      let data = "";
+      try { data = await readAsDataUrl(file); } catch { window.alert("Não foi possível ler este arquivo."); return; }
+      const image = isImage ? new Image() : null;
+      let w = 340, h = 220;
+      if (image) {
+        await new Promise<void>((resolve) => { image.onload = () => resolve(); image.onerror = () => resolve(); image.src = data; });
+        if (image.naturalWidth && image.naturalHeight) {
+          const scale = Math.min(1, 640 / image.naturalWidth, 480 / image.naturalHeight);
+          w = Math.max(80, image.naturalWidth * scale); h = Math.max(60, image.naturalHeight * scale);
+        }
+      }
+      useDoc.getState().addElement({ id: newId(), type: "attachment", kind: isImage ? "image" : "file", x: p.x - w / 2, y: p.y - h / 2, w, h, title: file.name || "Arquivo anexado", url: file.name || "arquivo", data, mime: file.type || "application/octet-stream", opacity: 1 });
+    };
+    const onPaste = (ev: ClipboardEvent) => {
+      const items = Array.from(ev.clipboardData?.items ?? []);
+      const imageItem = items.find((item) => item.kind === "file" && item.type.startsWith("image/"));
+      if (imageItem) { const file = imageItem.getAsFile(); if (file) { ev.preventDefault(); void addAttachmentFile(file); } return; }
+      const text = ev.clipboardData?.getData("text/uri-list") || ev.clipboardData?.getData("text/plain") || "";
+      const url = text.trim().split(/\r?\n/).find((line) => /^https?:\/\//i.test(line.trim()));
+      if (url) {
+        ev.preventDefault(); const p = attachmentAtCenter();
+        const title = url.includes("youtube.com") || url.includes("youtu.be") ? "Vídeo do YouTube" : url.includes("vimeo.com") ? "Vídeo do Vimeo" : "Link anexado";
+        useDoc.getState().addElement({ id: newId(), type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title, url: url.trim(), mime: "text/uri-list", opacity: 1 });
+      }
+    };
+    const onDragOver = (ev: DragEvent) => { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy"; };
+    const onDrop = (ev: DragEvent) => {
+      ev.preventDefault();
+      const files = Array.from(ev.dataTransfer?.files ?? []);
+      if (files.length) { files.forEach((file) => void addAttachmentFile(file)); return; }
+      const url = ev.dataTransfer?.getData("text/uri-list") || ev.dataTransfer?.getData("text/plain") || "";
+      if (/^https?:\/\//i.test(url.trim())) { const p = screenToWorld(useView.getState().camera, ev.clientX - host.getBoundingClientRect().left, ev.clientY - host.getBoundingClientRect().top); useDoc.getState().addElement({ id: newId(), type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title: "Link anexado", url: url.trim(), mime: "text/uri-list", opacity: 1 }); }
+    };
+    window.addEventListener("paste", onPaste as EventListener);
+    host.addEventListener("dragover", onDragOver as EventListener);
+    host.addEventListener("drop", onDrop as EventListener);
     const selectCtl = createSelectController(renderer);
     const unsubs: Array<() => void> = [];
     let input: InputController | null = null;
@@ -527,6 +580,9 @@ export function CanvasView() {
 
     return () => {
       disposed = true;
+      window.removeEventListener("paste", onPaste as EventListener);
+      host.removeEventListener("dragover", onDragOver as EventListener);
+      host.removeEventListener("drop", onDrop as EventListener);
       unsubs.forEach((u) => u());
       input?.destroy();
       renderer.destroy();

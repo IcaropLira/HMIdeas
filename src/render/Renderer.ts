@@ -1,6 +1,6 @@
 // Renderização com PixiJS (WebGL). Só DESENHA o modelo; nunca altera o documento.
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
-import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
+import { Application, Container, Graphics, Matrix, Text, Sprite, Texture } from "pixi.js";
 import { Camera, defaultCamera } from "../core/camera";
 import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
@@ -175,7 +175,7 @@ export class Renderer {
       let n = this.nodes.get(el.id);
       const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
       if (!n) {
-        const g = el.type === "text" || el.type === "node" || el.type === "frame" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
         n = { g, el, dep };
         this.nodes.set(el.id, n);
         (el.type === "frame" ? this.frames : this.committed).addChild(g);
@@ -261,6 +261,35 @@ export class Renderer {
       paintNode(node, el, this.nodeCtx(el));
     } else if (el.type === "frame") {
       paintFrame(node, el, this.textRes());
+    } else if (el.type === "attachment") {
+      for (const ch of node.removeChildren()) ch.destroy({ children: true });
+      node.alpha = el.opacity;
+      if (el.kind === "image" && el.data) {
+        try {
+          const sprite = new Sprite(Texture.from(el.data));
+          sprite.position.set(el.x, el.y);
+          sprite.width = el.w; sprite.height = el.h;
+          node.addChild(sprite);
+        } catch (err) { console.warn("Não foi possível carregar a imagem anexada", err); }
+      } else {
+        const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
+        card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
+        node.addChild(card);
+        const badge = new Text({ text: el.kind === "link" ? "↗" : "↧", style: { fontFamily: "Arial", fontSize: 22, fill: 0x2F4B8F } });
+        badge.position.set(el.x + 21, el.y + 17); node.addChild(badge);
+        const title = new Text({ text: el.title || (el.kind === "link" ? "Link" : "Arquivo anexado"), style: { fontFamily: "Arial", fontSize: 17, fontWeight: "bold", fill: 0x1B2233, wordWrap: true, wordWrapWidth: Math.max(80, el.w - 28) } });
+        title.position.set(el.x + 14, el.y + 60); node.addChild(title);
+        const detail = new Text({ text: el.url, style: { fontFamily: "Arial", fontSize: 12, fill: 0x52627A, wordWrap: true, wordWrapWidth: Math.max(80, el.w - 28) } });
+        detail.position.set(el.x + 14, el.y + 88); node.addChild(detail);
+        if ((el.kind === "link" && /^https?:\/\//i.test(el.url)) || (el.kind === "file" && el.data)) {
+          node.eventMode = "static"; node.cursor = "pointer";
+          node.removeAllListeners("pointertap");
+          node.on("pointertap", () => {
+            if (el.kind === "link") window.open(el.url, "_blank", "noopener,noreferrer");
+            else if (el.data) { const a = document.createElement("a"); a.href = el.data; a.download = el.title || "anexo"; a.click(); }
+          });
+        } else { node.eventMode = "none"; }
+      }
     } else if (el.type === "text") {
       for (const ch of node.removeChildren()) ch.destroy();
       const t = new Text({

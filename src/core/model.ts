@@ -239,8 +239,21 @@ export interface FrameElement {
   opacity: number;
 }
 
-// M2+ adiciona: image
-export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement;
+/** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
+export interface AttachmentElement {
+  id: ID;
+  type: "attachment";
+  x: number; y: number; w: number; h: number;
+  kind: "image" | "link" | "file";
+  title: string;
+  url: string;
+  mime: string;
+  /** Imagens coladas/arrastadas ficam incorporadas ao arquivo .hiraku. */
+  data?: string;
+  opacity: number;
+}
+
+export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement | AttachmentElement;
 
 /** Elementos "de caixa" com contorno próprio: formas, nós e quadros. */
 export type BoxElement = ShapeElement | NodeElement | FrameElement;
@@ -313,7 +326,7 @@ const cleanText = (e: any): TextElement => {
   };
 };
 
-const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame"];
+const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame", "attachment"];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const validElement = (e: any): boolean =>
   !!e &&
@@ -321,7 +334,8 @@ const validElement = (e: any): boolean =>
   (!(e.type === "line" || e.type === "arrow") || (Array.isArray(e.points) && e.points.length >= 2)) &&
   (e.type !== "text" || typeof e.text === "string") &&
   (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
-  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h)));
+  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h))) &&
+  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && ["image", "link", "file"].includes(e.kind) && typeof e.url === "string"));
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
@@ -402,7 +416,9 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                     ? cleanNode(e)
                     : e.type === "frame"
                       ? cleanFrame(e)
-                      : e,
+                      : e.type === "attachment"
+                        ? { ...e, w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)), kind: ["image", "link", "file"].includes(e.kind) ? e.kind : "file", title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"), opacity: Math.max(0, Math.min(1, num(e.opacity, 1))) }
+                        : e,
           )
         : [],
     })),

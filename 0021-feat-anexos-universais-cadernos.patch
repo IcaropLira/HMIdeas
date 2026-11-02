@@ -1,0 +1,216 @@
+From 2d9967e7e49ed035325212df4d143c5eb3f82ec2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=8Dcaro=20Lira?= <icaro@example.invalid>
+Date: Mon, 2 Nov 2026 17:29:18 +0000
+Subject: [PATCH] feat: anexos universais em cadernos
+
+---
+ src/components/CanvasView.tsx | 56 +++++++++++++++++++++++++++++++++++
+ src/core/geometry.ts          |  1 +
+ src/core/model.ts             | 26 ++++++++++++----
+ src/render/Renderer.ts        | 33 +++++++++++++++++++--
+ 4 files changed, 109 insertions(+), 7 deletions(-)
+
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 6b16ece..ff6924b 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -35,6 +35,59 @@ export function CanvasView() {
+     const host = hostRef.current!;
+     const canvas = canvasRef.current!;
+     const renderer = new Renderer();
++
++    // Anexos universais: colar imagens/URLs, ou arrastar imagens, PDFs e outros arquivos.
++    // A posição inicial é o centro visível da página; os anexos continuam sendo elementos normais do documento.
++    const attachmentAtCenter = () => {
++      const rect = host.getBoundingClientRect();
++      return screenToWorld(useView.getState().camera, rect.width / 2, rect.height / 2);
++    };
++    const readAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
++      const reader = new FileReader();
++      reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Arquivo inválido"));
++      reader.onerror = () => reject(reader.error ?? new Error("Falha ao ler arquivo"));
++      reader.readAsDataURL(file);
++    });
++    const addAttachmentFile = async (file: File) => {
++      if (file.size > 15 * 1024 * 1024) { window.alert("Este anexo ultrapassa 15 MB. Reduza o arquivo antes de incorporá-lo ao caderno."); return; }
++      const p = attachmentAtCenter();
++      const isImage = file.type.startsWith("image/");
++      let data = "";
++      try { data = await readAsDataUrl(file); } catch { window.alert("Não foi possível ler este arquivo."); return; }
++      const image = isImage ? new Image() : null;
++      let w = 340, h = 220;
++      if (image) {
++        await new Promise<void>((resolve) => { image.onload = () => resolve(); image.onerror = () => resolve(); image.src = data; });
++        if (image.naturalWidth && image.naturalHeight) {
++          const scale = Math.min(1, 640 / image.naturalWidth, 480 / image.naturalHeight);
++          w = Math.max(80, image.naturalWidth * scale); h = Math.max(60, image.naturalHeight * scale);
++        }
++      }
++      useDoc.getState().addElement({ id: newId(), type: "attachment", kind: isImage ? "image" : "file", x: p.x - w / 2, y: p.y - h / 2, w, h, title: file.name || "Arquivo anexado", url: file.name || "arquivo", data, mime: file.type || "application/octet-stream", opacity: 1 });
++    };
++    const onPaste = (ev: ClipboardEvent) => {
++      const items = Array.from(ev.clipboardData?.items ?? []);
++      const imageItem = items.find((item) => item.kind === "file" && item.type.startsWith("image/"));
++      if (imageItem) { const file = imageItem.getAsFile(); if (file) { ev.preventDefault(); void addAttachmentFile(file); } return; }
++      const text = ev.clipboardData?.getData("text/uri-list") || ev.clipboardData?.getData("text/plain") || "";
++      const url = text.trim().split(/\r?\n/).find((line) => /^https?:\/\//i.test(line.trim()));
++      if (url) {
++        ev.preventDefault(); const p = attachmentAtCenter();
++        const title = url.includes("youtube.com") || url.includes("youtu.be") ? "Vídeo do YouTube" : url.includes("vimeo.com") ? "Vídeo do Vimeo" : "Link anexado";
++        useDoc.getState().addElement({ id: newId(), type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title, url: url.trim(), mime: "text/uri-list", opacity: 1 });
++      }
++    };
++    const onDragOver = (ev: DragEvent) => { ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy"; };
++    const onDrop = (ev: DragEvent) => {
++      ev.preventDefault();
++      const files = Array.from(ev.dataTransfer?.files ?? []);
++      if (files.length) { files.forEach((file) => void addAttachmentFile(file)); return; }
++      const url = ev.dataTransfer?.getData("text/uri-list") || ev.dataTransfer?.getData("text/plain") || "";
++      if (/^https?:\/\//i.test(url.trim())) { const p = screenToWorld(useView.getState().camera, ev.clientX - host.getBoundingClientRect().left, ev.clientY - host.getBoundingClientRect().top); useDoc.getState().addElement({ id: newId(), type: "attachment", kind: "link", x: p.x - 170, y: p.y - 70, w: 340, h: 140, title: "Link anexado", url: url.trim(), mime: "text/uri-list", opacity: 1 }); }
++    };
++    window.addEventListener("paste", onPaste as EventListener);
++    host.addEventListener("dragover", onDragOver as EventListener);
++    host.addEventListener("drop", onDrop as EventListener);
+     const selectCtl = createSelectController(renderer);
+     const unsubs: Array<() => void> = [];
+     let input: InputController | null = null;
+@@ -527,6 +580,9 @@ export function CanvasView() {
+ 
+     return () => {
+       disposed = true;
++      window.removeEventListener("paste", onPaste as EventListener);
++      host.removeEventListener("dragover", onDragOver as EventListener);
++      host.removeEventListener("drop", onDrop as EventListener);
+       unsubs.forEach((u) => u());
+       input?.destroy();
+       renderer.destroy();
+diff --git a/src/core/geometry.ts b/src/core/geometry.ts
+index 774852a..3dc9dfd 100644
+--- a/src/core/geometry.ts
++++ b/src/core/geometry.ts
+@@ -48,6 +48,7 @@ export function elementHit(el: HirakuElement, x: number, y: number, r: number):
+   if (el.type === "stroke") return strokeHit(el, x, y, r);
+   if (el.type === "node") return !el.hidden && pointInPolygon(x, y, shapePath(el)) || (!el.hidden && nearPolygon(shapePath(el), x, y, r));
+   if (el.type === "frame") return frameHit(el, x, y, r);
++  if (el.type === "attachment") return x >= el.x - r && x <= el.x + el.w + r && y >= el.y - r && y <= el.y + el.h + r;
+ 
+   if (isLinear(el)) {
+     const lr = r + el.strokeWidth / 2;
+diff --git a/src/core/model.ts b/src/core/model.ts
+index b324a15..c800eaf 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -239,8 +239,21 @@ export interface FrameElement {
+   opacity: number;
+ }
+ 
+-// M2+ adiciona: image
+-export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement;
++/** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
++export interface AttachmentElement {
++  id: ID;
++  type: "attachment";
++  x: number; y: number; w: number; h: number;
++  kind: "image" | "link" | "file";
++  title: string;
++  url: string;
++  mime: string;
++  /** Imagens coladas/arrastadas ficam incorporadas ao arquivo .hiraku. */
++  data?: string;
++  opacity: number;
++}
++
++export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement | AttachmentElement;
+ 
+ /** Elementos "de caixa" com contorno próprio: formas, nós e quadros. */
+ export type BoxElement = ShapeElement | NodeElement | FrameElement;
+@@ -313,7 +326,7 @@ const cleanText = (e: any): TextElement => {
+   };
+ };
+ 
+-const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame"];
++const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame", "attachment"];
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ const validElement = (e: any): boolean =>
+   !!e &&
+@@ -321,7 +334,8 @@ const validElement = (e: any): boolean =>
+   (!(e.type === "line" || e.type === "arrow") || (Array.isArray(e.points) && e.points.length >= 2)) &&
+   (e.type !== "text" || typeof e.text === "string") &&
+   (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
+-  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h)));
++  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h))) &&
++  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && ["image", "link", "file"].includes(e.kind) && typeof e.url === "string"));
+ 
+ const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+ const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
+@@ -402,7 +416,9 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
+                     ? cleanNode(e)
+                     : e.type === "frame"
+                       ? cleanFrame(e)
+-                      : e,
++                      : e.type === "attachment"
++                        ? { ...e, w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)), kind: ["image", "link", "file"].includes(e.kind) ? e.kind : "file", title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"), opacity: Math.max(0, Math.min(1, num(e.opacity, 1))) }
++                        : e,
+           )
+         : [],
+     })),
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index 4a05ca2..3ab1eb5 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -1,6 +1,6 @@
+ // Renderização com PixiJS (WebGL). Só DESENHA o modelo; nunca altera o documento.
+ // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
+-import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
++import { Application, Container, Graphics, Matrix, Text, Sprite, Texture } from "pixi.js";
+ import { Camera, defaultCamera } from "../core/camera";
+ import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
+@@ -175,7 +175,7 @@ export class Renderer {
+       let n = this.nodes.get(el.id);
+       const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
+       if (!n) {
+-        const g = el.type === "text" || el.type === "node" || el.type === "frame" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
++        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+         n = { g, el, dep };
+         this.nodes.set(el.id, n);
+         (el.type === "frame" ? this.frames : this.committed).addChild(g);
+@@ -261,6 +261,35 @@ export class Renderer {
+       paintNode(node, el, this.nodeCtx(el));
+     } else if (el.type === "frame") {
+       paintFrame(node, el, this.textRes());
++    } else if (el.type === "attachment") {
++      for (const ch of node.removeChildren()) ch.destroy({ children: true });
++      node.alpha = el.opacity;
++      if (el.kind === "image" && el.data) {
++        try {
++          const sprite = new Sprite(Texture.from(el.data));
++          sprite.position.set(el.x, el.y);
++          sprite.width = el.w; sprite.height = el.h;
++          node.addChild(sprite);
++        } catch (err) { console.warn("Não foi possível carregar a imagem anexada", err); }
++      } else {
++        const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
++        card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
++        node.addChild(card);
++        const badge = new Text({ text: el.kind === "link" ? "↗" : "↧", style: { fontFamily: "Arial", fontSize: 22, fill: 0x2F4B8F } });
++        badge.position.set(el.x + 21, el.y + 17); node.addChild(badge);
++        const title = new Text({ text: el.title || (el.kind === "link" ? "Link" : "Arquivo anexado"), style: { fontFamily: "Arial", fontSize: 17, fontWeight: "bold", fill: 0x1B2233, wordWrap: true, wordWrapWidth: Math.max(80, el.w - 28) } });
++        title.position.set(el.x + 14, el.y + 60); node.addChild(title);
++        const detail = new Text({ text: el.url, style: { fontFamily: "Arial", fontSize: 12, fill: 0x52627A, wordWrap: true, wordWrapWidth: Math.max(80, el.w - 28) } });
++        detail.position.set(el.x + 14, el.y + 88); node.addChild(detail);
++        if ((el.kind === "link" && /^https?:\/\//i.test(el.url)) || (el.kind === "file" && el.data)) {
++          node.eventMode = "static"; node.cursor = "pointer";
++          node.removeAllListeners("pointertap");
++          node.on("pointertap", () => {
++            if (el.kind === "link") window.open(el.url, "_blank", "noopener,noreferrer");
++            else if (el.data) { const a = document.createElement("a"); a.href = el.data; a.download = el.title || "anexo"; a.click(); }
++          });
++        } else { node.eventMode = "none"; }
++      }
+     } else if (el.type === "text") {
+       for (const ch of node.removeChildren()) ch.destroy();
+       const t = new Text({
+-- 
+2.47.3
+

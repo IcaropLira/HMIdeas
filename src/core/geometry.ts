@@ -48,6 +48,7 @@ export function elementHit(el: HirakuElement, x: number, y: number, r: number): 
   if (el.type === "stroke") return strokeHit(el, x, y, r);
   if (el.type === "node") return !el.hidden && pointInPolygon(x, y, shapePath(el)) || (!el.hidden && nearPolygon(shapePath(el), x, y, r));
   if (el.type === "frame") return frameHit(el, x, y, r);
+  if (el.type === "attachment") return x >= el.x - r && x <= el.x + el.w + r && y >= el.y - r && y <= el.y + el.h + r;
 
   if (isLinear(el)) {
     const lr = r + el.strokeWidth / 2;

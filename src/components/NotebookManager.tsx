@@ -29,6 +29,23 @@ async function drop(id: string): Promise<void> {
   finally { db.close(); }
 }
 
+async function readLegacyAutosave(): Promise<HirakuDoc | null> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("hm-ideas", 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    if (!db.objectStoreNames.contains("kv")) return null;
+    const raw = await new Promise<string | null>((resolve, reject) => {
+      const request = db.transaction("kv").objectStore("kv").get("autosave");
+      request.onsuccess = () => resolve(typeof request.result === "string" ? request.result : null);
+      request.onerror = () => reject(request.error);
+    });
+    return raw ? parseDoc(raw) : null;
+  } finally { db.close(); }
+}
+
 export function NotebookManager() {
   const [opened, setOpened] = useState(false), [items, setItems] = useState<Notebook[]>([]), [active, setActive] = useState("");
   const [query, setQuery] = useState(""), [renameId, setRenameId] = useState(""), [renameValue, setRenameValue] = useState("");
@@ -42,7 +59,11 @@ export function NotebookManager() {
     void (async () => {
       try {
         let list = await all(), id = localStorage.getItem(ACTIVE) || "";
-        if (!list.length) { const first = { id: newId(), name: "Meu primeiro caderno", updatedAt: Date.now(), doc: useDoc.getState().doc }; await put(first); list = [first]; id = first.id; }
+        if (!list.length) {
+          const legacy = await readLegacyAutosave().catch(() => null);
+          const first = { id: newId(), name: "Meu primeiro caderno", updatedAt: Date.now(), doc: legacy ?? useDoc.getState().doc };
+          await put(first); list = [first]; id = first.id;
+        }
         if (!list.some((n) => n.id === id)) id = list[0].id;
         const selected = list.find((n) => n.id === id)!;
         if (cancelled) return;

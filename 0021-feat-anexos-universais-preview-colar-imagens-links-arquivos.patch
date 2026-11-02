@@ -1,0 +1,301 @@
+From db216d34010a17ac3ddef61b33f2198361058a14 Mon Sep 17 00:00:00 2001
+From: OpenAI <patches@openai.com>
+Date: Mon, 2 Nov 2026 17:30:15 +0000
+Subject: [PATCH] feat: anexos ricos por colar e arrastar
+
+---
+ src/App.tsx                   |  4 +-
+ src/components/CanvasView.tsx | 77 ++++++++++++++++++++++++++++++++++-
+ src/core/actions.ts           |  1 +
+ src/core/geometry.ts          |  1 +
+ src/core/model.ts             | 28 ++++++++++---
+ src/core/selection.ts         |  2 +-
+ src/render/Renderer.ts        | 24 +++++++++--
+ 7 files changed, 124 insertions(+), 13 deletions(-)
+
+diff --git a/src/App.tsx b/src/App.tsx
+index ba81427..520de18 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -10,7 +10,7 @@ import { PageNav, Sidebar, Toast } from "./components/Pages";
+ import { Toolbar } from "./components/Toolbar";
+ import {
+   copySelection, cutSelection, deleteSelection, duplicateSelection, editSelectedText,
+-  goPage, nudgeSelection, pasteClipboard, selectAll,
++  goPage, nudgeSelection, selectAll,
+ } from "./core/actions";
+ import {
+   addChildToSelection, addSiblingToSelection, collapseMap, connectSelection, editSelectedLabel, fitToSelection,
+@@ -45,7 +45,7 @@ export default function App() {
+         else if (k === "d") run(duplicateSelection);
+         else if (k === "c") run(copySelection);
+         else if (k === "x") run(cutSelection);
+-        else if (k === "v") run(pasteClipboard);
++        else if (k === "v") { /* O evento paste decide entre anexos do sistema e a cópia interna. */ }
+         else if (k === "g") run(() => (e.shiftKey ? ungroupSelection() : wrapSelectionInFrame()));
+         else if (k === "enter") run(() => addChildToSelection());
+         return;
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 6b16ece..f4a9f68 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -1,5 +1,5 @@
+ import { useEffect, useRef } from "react";
+-import { applyColor, elementColor } from "../core/actions";
++import { applyColor, elementColor, pasteClipboard } from "../core/actions";
+ import { brushDyn, getBrush } from "../core/brushes";
+ import { OneEuro, stabilizerOptions } from "../core/oneEuro";
+ import { panBy, screenToWorld, zoomAt } from "../core/camera";
+@@ -7,7 +7,7 @@ import { elementHit } from "../core/geometry";
+ import { bindableAt, clearBindingsTo, makeBinding, solveArrow } from "../core/binding";
+ import { eraseStep } from "../core/erase";
+ import { makeLinear, snapAngle } from "../core/linear";
+-import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
++import { ArrowBinding, ArrowHead, AttachmentElement, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
+ import { Box, Pt, boxFromDrag, makeShape, outlinePath } from "../core/shapes";
+ import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
+ import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
+@@ -36,6 +36,77 @@ export function CanvasView() {
+     const canvas = canvasRef.current!;
+     const renderer = new Renderer();
+     const selectCtl = createSelectController(renderer);
++
++    // Anexos da área de transferência e arrastar/soltar: imagens viram conteúdo incorporado no .hiraku;
++    // URLs e arquivos ficam como cartões clicáveis/identificáveis no próprio quadro.
++    const attachmentAt = () => {
++      const r = host.getBoundingClientRect();
++      return screenToWorld(useView.getState().camera, r.width / 2, r.height / 2);
++    };
++    const addAttachment = (patch: Omit<AttachmentElement, "id" | "type" | "x" | "y" | "angle" | "opacity" | "rounded">, w = 280, h = 180) => {
++      const at = attachmentAt();
++      const el: AttachmentElement = { ...patch, id: newId(), type: "attachment", x: at.x - w / 2, y: at.y - h / 2, w, h, angle: 0, opacity: 1, rounded: true };
++      useDoc.getState().addElement(el);
++      useSel.getState().set([el.id]);
++    };
++    const readDataUrl = (file: Blob) => new Promise<string>((resolve, reject) => {
++      const reader = new FileReader(); reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Arquivo inválido"));
++      reader.onerror = () => reject(reader.error ?? new Error("Não foi possível ler o arquivo")); reader.readAsDataURL(file);
++    });
++    const addFile = async (file: File) => {
++      const isImage = file.type.startsWith("image/");
++      // Arquivos muito grandes não são embutidos para evitar documentos gigantes; ainda ganham cartão.
++      const dataUrl = file.size <= 12 * 1024 * 1024 ? await readDataUrl(file).catch(() => undefined) : undefined;
++      if (isImage && dataUrl) {
++        const dims = await new Promise<{w:number;h:number}>((resolve) => {
++          const img = new Image(); img.onload = () => resolve({ w: img.naturalWidth || 640, h: img.naturalHeight || 480 });
++          img.onerror = () => resolve({ w: 640, h: 480 }); img.src = dataUrl;
++        });
++        const scale = Math.min(1, 520 / dims.w, 420 / dims.h);
++        addAttachment({ kind: "image", name: file.name || "Imagem colada", mime: file.type || "image/*", dataUrl }, Math.max(80, dims.w * scale), Math.max(60, dims.h * scale));
++      } else {
++        addAttachment({ kind: "file", name: file.name || "Arquivo anexado", mime: file.type || "application/octet-stream", ...(dataUrl ? { dataUrl } : {}) }, 300, 132);
++      }
++    };
++    const onPaste = (e: ClipboardEvent) => {
++      if (e.defaultPrevented) return;
++      const target = e.target as HTMLElement | null;
++      if (target?.closest("input,textarea,[contenteditable=true]")) return;
++      const items = Array.from(e.clipboardData?.items ?? []);
++      const files = items.map((i) => i.kind === "file" ? i.getAsFile() : null).filter((f): f is File => !!f);
++      if (files.length) { e.preventDefault(); void Promise.all(files.map(addFile)); return; }
++      const text = e.clipboardData?.getData("text/plain")?.trim() ?? "";
++      const html = e.clipboardData?.getData("text/html") ?? "";
++      const imageSrc = html.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1];
++      if (imageSrc && /^https?:/i.test(imageSrc)) {
++        e.preventDefault(); addAttachment({ kind: "link", name: "Imagem da web", mime: "text/uri-list", url: imageSrc }, 320, 120); return;
++      }
++      if (/^https?:\/\//i.test(text)) {
++        e.preventDefault(); let name = text;
++        try { const u = new URL(text); name = /youtube\.com|youtu\.be|vimeo\.com|tiktok\.com/i.test(u.hostname) ? "Vídeo / mídia" : u.hostname.replace(/^www\./, ""); } catch { /* mantém URL original */ }
++        addAttachment({ kind: "link", name, mime: "text/uri-list", url: text }, 340, 142); return;
++      }
++      // Sem conteúdo externo reconhecível, mantém o Ctrl+V interno do HM Ideas.
++      if (useSel.getState().ids.length) { e.preventDefault(); pasteClipboard(); }
++    };
++    const onDrop = (e: DragEvent) => {
++      const files = Array.from(e.dataTransfer?.files ?? []);
++      if (files.length) { e.preventDefault(); void Promise.all(files.map(addFile)); return; }
++      const url = e.dataTransfer?.getData("text/uri-list") || e.dataTransfer?.getData("text/plain");
++      if (url && /^https?:\/\//i.test(url.trim())) { e.preventDefault(); addAttachment({ kind: "link", name: "Link anexado", mime: "text/uri-list", url: url.trim() }, 340, 142); }
++    };
++    const onDragOver = (e: DragEvent) => { if (e.dataTransfer?.types.length) e.preventDefault(); };
++    const onAttachmentOpen = (e: MouseEvent) => {
++      const r = host.getBoundingClientRect();
++      const pt = screenToWorld(useView.getState().camera, e.clientX - r.left, e.clientY - r.top);
++      const page = selectActivePage(useDoc.getState());
++      const el = [...page.elements].reverse().find((item) => item.type === "attachment" && pt.x >= item.x && pt.x <= item.x + item.w && pt.y >= item.y && pt.y <= item.y + item.h);
++      if (el?.type !== "attachment") return;
++      if (el.url) window.open(el.url, "_blank", "noopener,noreferrer");
++      else if (el.dataUrl) { const a = document.createElement("a"); a.href = el.dataUrl; a.download = el.name || "anexo"; a.click(); }
++    };
++    window.addEventListener("paste", onPaste);
++    host.addEventListener("drop", onDrop); host.addEventListener("dragover", onDragOver); host.addEventListener("dblclick", onAttachmentOpen);
+     const unsubs: Array<() => void> = [];
+     let input: InputController | null = null;
+     let disposed = false;
+@@ -528,6 +599,8 @@ export function CanvasView() {
+     return () => {
+       disposed = true;
+       unsubs.forEach((u) => u());
++      window.removeEventListener("paste", onPaste);
++      host.removeEventListener("drop", onDrop); host.removeEventListener("dragover", onDragOver); host.removeEventListener("dblclick", onAttachmentOpen);
+       input?.destroy();
+       renderer.destroy();
+     };
+diff --git a/src/core/actions.ts b/src/core/actions.ts
+index dd64fe6..d3f5509 100644
+--- a/src/core/actions.ts
++++ b/src/core/actions.ts
+@@ -82,6 +82,7 @@ export function recolorSelection(color: string) {
+   useDoc.getState().updateElements(els.map((e) => {
+     if (e.type === "stroke" || e.type === "text" || e.type === "frame") return { ...e, color };
+     if (e.type === "node") return { ...e, stroke: e.stroke ? color : e.stroke, fill: e.fill ? tint(color, 0.85) : e.fill, branchColor: color };
++    if (e.type === "attachment") return e;
+     return { ...e, stroke: color };
+   }));
+ }
+diff --git a/src/core/geometry.ts b/src/core/geometry.ts
+index 774852a..3dc9dfd 100644
+--- a/src/core/geometry.ts
++++ b/src/core/geometry.ts
+@@ -48,6 +48,7 @@ export function elementHit(el: HirakuElement, x: number, y: number, r: number):
+   if (el.type === "stroke") return strokeHit(el, x, y, r);
+   if (el.type === "node") return !el.hidden && pointInPolygon(x, y, shapePath(el)) || (!el.hidden && nearPolygon(shapePath(el), x, y, r));
+   if (el.type === "frame") return frameHit(el, x, y, r);
++  if (el.type === "attachment") return x >= el.x - r && x <= el.x + el.w + r && y >= el.y - r && y <= el.y + el.h + r;
+ 
+   if (isLinear(el)) {
+     const lr = r + el.strokeWidth / 2;
+diff --git a/src/core/model.ts b/src/core/model.ts
+index b324a15..f4e9ff3 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -57,6 +57,21 @@ export interface StrokeElement {
+   openEnd?: boolean;
+ }
+ 
++/** Anexo persistente: imagem incorporada, link rico ou arquivo genérico. */
++export interface AttachmentElement {
++  id: ID;
++  frameId?: ID | null;
++  type: "attachment";
++  kind: "image" | "link" | "file";
++  x: number; y: number; w: number; h: number; angle: number;
++  name: string;
++  mime: string;
++  url?: string;
++  dataUrl?: string;
++  opacity: number;
++  rounded: boolean;
++}
++
+ export type ShapeType = "rect" | "ellipse" | "diamond";
+ export const SHAPE_TYPES: ShapeType[] = ["rect", "ellipse", "diamond"];
+ export type LineStyle = "solid" | "dashed" | "dotted";
+@@ -240,10 +255,10 @@ export interface FrameElement {
+ }
+ 
+ // M2+ adiciona: image
+-export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement;
++export type HirakuElement = StrokeElement | ShapeElement | LinearElement | TextElement | NodeElement | FrameElement | AttachmentElement;
+ 
+ /** Elementos "de caixa" com contorno próprio: formas, nós e quadros. */
+-export type BoxElement = ShapeElement | NodeElement | FrameElement;
++export type BoxElement = ShapeElement | NodeElement | FrameElement | AttachmentElement;
+ 
+ /** Guardas de tipo: `type` de forma/linha é uma união de literais, então só `===` não separa as duas no TS. */
+ export const isLinear = (el: HirakuElement): el is LinearElement => el.type === "line" || el.type === "arrow";
+@@ -313,7 +328,7 @@ const cleanText = (e: any): TextElement => {
+   };
+ };
+ 
+-const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame"];
++const KNOWN_TYPES = ["stroke", "rect", "ellipse", "diamond", "line", "arrow", "text", "node", "frame", "attachment"];
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ const validElement = (e: any): boolean =>
+   !!e &&
+@@ -321,7 +336,8 @@ const validElement = (e: any): boolean =>
+   (!(e.type === "line" || e.type === "arrow") || (Array.isArray(e.points) && e.points.length >= 2)) &&
+   (e.type !== "text" || typeof e.text === "string") &&
+   (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
+-  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h)));
++  (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h))) &&
++  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && ["image", "link", "file"].includes(e.kind)));
+ 
+ const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+ const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
+@@ -402,7 +418,9 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
+                     ? cleanNode(e)
+                     : e.type === "frame"
+                       ? cleanFrame(e)
+-                      : e,
++                      : e.type === "attachment"
++                        ? { ...e, name: str(e.name, "Anexo").slice(0, 240), mime: str(e.mime, "application/octet-stream"), w: Math.max(80, num(e.w, 260)), h: Math.max(60, num(e.h, 180)), angle: num(e.angle, 0), opacity: num(e.opacity, 1), rounded: e.rounded !== false }
++                        : e,
+           )
+         : [],
+     })),
+diff --git a/src/core/selection.ts b/src/core/selection.ts
+index 4d835ba..1301020 100644
+--- a/src/core/selection.ts
++++ b/src/core/selection.ts
+@@ -82,7 +82,7 @@ export function elementBounds(el: HirakuElement): Bounds {
+     pad = 2;
+   } else {
+     shapePath(el).forEach((p) => add(p.x, p.y));
+-    pad = el.strokeWidth / 2;
++    pad = el.type === "attachment" ? 0 : el.strokeWidth / 2;
+   }
+   return { minX: b.minX - pad, minY: b.minY - pad, maxX: b.maxX + pad, maxY: b.maxY + pad };
+ }
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index 4a05ca2..9ecdbd8 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -1,6 +1,6 @@
+ // Renderização com PixiJS (WebGL). Só DESENHA o modelo; nunca altera o documento.
+ // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
+-import { Application, Container, Graphics, Matrix, Text } from "pixi.js";
++import { Application, Container, Graphics, Matrix, Sprite, Text, Texture } from "pixi.js";
+ import { Camera, defaultCamera } from "../core/camera";
+ import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
+@@ -175,7 +175,7 @@ export class Renderer {
+       let n = this.nodes.get(el.id);
+       const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
+       if (!n) {
+-        const g = el.type === "text" || el.type === "node" || el.type === "frame" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
++        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+         n = { g, el, dep };
+         this.nodes.set(el.id, n);
+         (el.type === "frame" ? this.frames : this.committed).addChild(g);
+@@ -257,7 +257,25 @@ export class Renderer {
+ 
+   /** Desenha o elemento no nó (Graphics) ou monta o Text (Container). */
+   private paint(node: Container, el: HirakuElement, _n?: Node) {
+-    if (el.type === "node") {
++    if (el.type === "attachment") {
++      for (const ch of node.removeChildren()) ch.destroy();
++      node.alpha = el.opacity;
++      if (el.kind === "image" && el.dataUrl) {
++        const sprite = new Sprite(Texture.from(el.dataUrl));
++        sprite.width = el.w; sprite.height = el.h; sprite.position.set(el.x, el.y);
++        node.addChild(sprite);
++      } else {
++        const card = new Graphics();
++        card.roundRect(el.x, el.y, el.w, el.h, el.rounded ? 12 : 0).fill({ color: 0xFFFFFF });
++        card.roundRect(el.x, el.y, el.w, el.h, el.rounded ? 12 : 0).stroke({ color: 0xAAB4C5, width: 1.5 });
++        card.roundRect(el.x + 14, el.y + 14, 38, 38, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8EAF0 });
++        card.moveTo(el.x + 14, el.y + 14).lineTo(el.x + 52, el.y + 52).stroke({ color: 0xDCE8FF, alpha: 0 });
++        node.addChild(card);
++        const title = new Text({ text: el.kind === "link" ? "↗  " + (el.name || el.url || "Link") : "▣  " + (el.name || "Arquivo"), style: { fontFamily: "Arial", fontSize: 15, fill: 0x1B2233, fontWeight: "600", wordWrap: true, wordWrapWidth: Math.max(80, el.w - 28) } });
++        title.position.set(el.x + 14, el.y + 62); node.addChild(title);
++        if (el.url) { const sub = new Text({ text: el.url, style: { fontFamily: "Arial", fontSize: 11, fill: 0x526A91, wordWrap: true, wordWrapWidth: Math.max(80, el.w - 28) } }); sub.position.set(el.x + 14, el.y + 84); node.addChild(sub); }
++      }
++    } else if (el.type === "node") {
+       paintNode(node, el, this.nodeCtx(el));
+     } else if (el.type === "frame") {
+       paintFrame(node, el, this.textRes());
+-- 
+2.47.3
+

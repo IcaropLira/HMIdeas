@@ -1,0 +1,232 @@
+From 62bb1863e9492c5661d4635fb9f3f6350ca66f17 Mon Sep 17 00:00:00 2001
+From: OpenAI <patches@openai.com>
+Date: Mon, 2 Nov 2026 17:46:01 +0000
+Subject: [PATCH] feat: gerenciador de cadernos e corrigir reagrupamento
+
+---
+ src/App.tsx                        |   2 +
+ src/components/NotebookManager.tsx | 123 +++++++++++++++++++++++++++++
+ src/core/mapActions.ts             |  19 ++++-
+ src/styles.css                     |  20 +++++
+ 4 files changed, 161 insertions(+), 3 deletions(-)
+ create mode 100644 src/components/NotebookManager.tsx
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 520de18..a47ef58 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -8,6 +8,7 @@ import { initAutosave } from "./core/autosave";
+ import { initUpdates } from "./core/updater";
+ import { PageNav, Sidebar, Toast } from "./components/Pages";
+ import { Toolbar } from "./components/Toolbar";
++import { NotebookManager } from "./components/NotebookManager";
+ import {
+   copySelection, cutSelection, deleteSelection, duplicateSelection, editSelectedText,
+   goPage, nudgeSelection, selectAll,
+@@ -104,6 +105,7 @@ export default function App() {
+     <>
+       <CanvasView />
+       <PageNav />
++      <NotebookManager />
+       <Sidebar />
+       <Toolbar />
+       <TextEditor />
+diff --git a/src/components/NotebookManager.tsx b/src/components/NotebookManager.tsx
+new file mode 100644
+index 0000000..248fd65
+--- /dev/null
++++ b/src/components/NotebookManager.tsx
+@@ -0,0 +1,123 @@
++import { useEffect, useMemo, useRef, useState } from "react";
++import { createDoc, HirakuDoc, newId } from "../core/model";
++import { downloadDoc, parseDoc, serializeDoc } from "../core/serialize";
++import { useDoc } from "../core/store";
++
++type Notebook = { id: string; name: string; updatedAt: number; doc: HirakuDoc };
++const DB_NAME = "hm-ideas-notebooks";
++const DB_STORE = "notebooks";
++const ACTIVE = "hm-ideas:notebooks:active";
++function openDb(): Promise<IDBDatabase> {
++  return new Promise((resolve, reject) => {
++    const request = indexedDB.open(DB_NAME, 1);
++    request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains(DB_STORE)) request.result.createObjectStore(DB_STORE, { keyPath: "id" }); };
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++}
++async function allNotebooks(): Promise<Notebook[]> {
++  const db = await openDb();
++  try { return await new Promise((resolve, reject) => { const r = db.transaction(DB_STORE).objectStore(DB_STORE).getAll(); r.onsuccess = () => resolve((r.result as Notebook[]).filter((n) => n && typeof n.id === "string" && n.doc?.pages)); r.onerror = () => reject(r.error); }); }
++  finally { db.close(); }
++}
++async function saveNotebook(notebook: Notebook): Promise<void> {
++  const db = await openDb();
++  try { await new Promise<void>((resolve, reject) => { const tx = db.transaction(DB_STORE, "readwrite"); tx.objectStore(DB_STORE).put(notebook); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); }); }
++  finally { db.close(); }
++}
++async function deleteNotebook(id: string): Promise<void> {
++  const db = await openDb();
++  try { await new Promise<void>((resolve, reject) => { const tx = db.transaction(DB_STORE, "readwrite"); tx.objectStore(DB_STORE).delete(id); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); }); }
++  finally { db.close(); }
++}
++
++export function NotebookManager() {
++  const [open, setOpen] = useState(false);
++  const [items, setItems] = useState<Notebook[]>([]);
++  const itemsRef = useRef<Notebook[]>([]);
++  const [active, setActive] = useState("");
++  const [query, setQuery] = useState("");
++  const updateItems = (next: Notebook[]) => { itemsRef.current = next; setItems(next); };
++
++  useEffect(() => {
++    let cancelled = false;
++    void (async () => {
++      try {
++        let list = await allNotebooks();
++        let id = localStorage.getItem(ACTIVE) || "";
++        if (!list.length) {
++          id = newId();
++          list = [{ id, name: "Meu primeiro caderno", updatedAt: Date.now(), doc: useDoc.getState().doc }];
++          await saveNotebook(list[0]);
++        }
++        if (!list.some((n) => n.id === id)) id = list[0].id;
++        if (cancelled) return;
++        updateItems(list); setActive(id); localStorage.setItem(ACTIVE, id);
++        const selected = list.find((n) => n.id === id);
++        if (selected) useDoc.getState().loadDoc(selected.doc);
++      } catch { /* se o IndexedDB estiver indisponível, o autosave padrão do app continua ativo */ }
++    })();
++    return () => { cancelled = true; };
++  }, []);
++
++  useEffect(() => {
++    if (!active) return;
++    const unsub = useDoc.subscribe((state) => {
++      if (localStorage.getItem(ACTIVE) !== active) return;
++      const current = itemsRef.current.find((n) => n.id === active);
++      if (!current) return;
++      const updated = { ...current, doc: state.doc, updatedAt: Date.now() };
++      updateItems(itemsRef.current.map((n) => n.id === active ? updated : n));
++      void saveNotebook(updated);
++    });
++    return unsub;
++  }, [active]);
++
++  const visible = useMemo(() => items.filter((n) => n.name.toLowerCase().includes(query.toLowerCase())), [items, query]);
++  const persistCurrent = async () => {
++    const current = itemsRef.current.find((n) => n.id === active);
++    if (current) await saveNotebook({ ...current, doc: useDoc.getState().doc, updatedAt: Date.now() });
++  };
++  const create = async () => {
++    await persistCurrent();
++    const id = newId();
++    const notebook: Notebook = { id, name: `Novo caderno ${itemsRef.current.length + 1}`, updatedAt: Date.now(), doc: createDoc() };
++    await saveNotebook(notebook);
++    updateItems([...itemsRef.current, notebook]); setActive(id); localStorage.setItem(ACTIVE, id); useDoc.getState().loadDoc(notebook.doc);
++  };
++  const switchTo = async (n: Notebook) => {
++    if (n.id === active) return;
++    await persistCurrent();
++    setActive(n.id); localStorage.setItem(ACTIVE, n.id); useDoc.getState().loadDoc(n.doc);
++  };
++  const rename = async (n: Notebook) => {
++    const name = window.prompt("Nome do caderno", n.name)?.trim();
++    if (!name) return;
++    const updated = { ...n, name, updatedAt: Date.now() };
++    updateItems(itemsRef.current.map((x) => x.id === n.id ? updated : x)); await saveNotebook(updated);
++  };
++  const duplicate = async (n: Notebook) => {
++    const copy = { ...n, id: newId(), name: `${n.name} (cópia)`, updatedAt: Date.now(), doc: parseDoc(serializeDoc(n.doc)) };
++    await saveNotebook(copy); updateItems([...itemsRef.current, copy]);
++  };
++  const remove = async (n: Notebook) => {
++    if (itemsRef.current.length <= 1) return;
++    if (!window.confirm(`Excluir o caderno “${n.name}”? Esta ação não pode ser desfeita.`)) return;
++    await deleteNotebook(n.id);
++    const next = itemsRef.current.filter((x) => x.id !== n.id); updateItems(next);
++    if (n.id === active) { const fallback = next[0]; setActive(fallback.id); localStorage.setItem(ACTIVE, fallback.id); useDoc.getState().loadDoc(fallback.doc); }
++  };
++  if (!open) return <button className="notebook-launch btn" onClick={() => setOpen(true)} title="Gerenciador de cadernos" aria-label="Gerenciador de cadernos">▤ Cadernos</button>;
++
++  return <div className="notebook-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
++    <section className="notebook-dialog" role="dialog" aria-modal="true" aria-label="Gerenciador de cadernos">
++      <header><div><strong>Meus cadernos</strong><small>Organize seus estudos, ideias e referências em espaços separados.</small></div><button className="btn" onClick={() => setOpen(false)} aria-label="Fechar">×</button></header>
++      <div className="notebook-tools"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar cadernos…" /><button className="btn primary" onClick={() => void create()}>＋ Novo caderno</button></div>
++      <div className="notebook-list">{visible.map((n) => <article className={`notebook-card ${n.id === active ? "active" : ""}`} key={n.id}>
++        <button className="notebook-open" onClick={() => void switchTo(n)}><span className="notebook-cover">▤</span><span><b>{n.name}</b><small>{n.doc.pages.length} páginas · {n.doc.pages.reduce((a, p) => a + p.elements.length, 0)} elementos</small><small>Modificado em {new Date(n.updatedAt).toLocaleString()}</small></span></button>
++        <div className="notebook-actions"><button className="btn sm" onClick={() => void rename(n)} title="Renomear">✎</button><button className="btn sm" onClick={() => void duplicate(n)} title="Duplicar">⧉</button><button className="btn sm" onClick={() => downloadDoc(n.doc, n.name.replace(/[^\w\- ]/g, "").trim() || "caderno")} title="Exportar .hiraku">↓</button><button className="btn sm danger" disabled={items.length <= 1} onClick={() => void remove(n)} title="Excluir">×</button></div>
++      </article>)}{!visible.length && <p className="notebook-empty">Nenhum caderno encontrado.</p>}</div>
++      <footer>Os cadernos são armazenados localmente no IndexedDB. Exporte arquivos .hiraku para manter uma cópia externa ou transferi-los.</footer>
++    </section>
++  </div>;
++}
+diff --git a/src/core/mapActions.ts b/src/core/mapActions.ts
+index 11900bf..858e066 100644
+--- a/src/core/mapActions.ts
++++ b/src/core/mapActions.ts
+@@ -3,7 +3,7 @@
+ import { create } from "zustand";
+ import { makeBinding, solveArrow } from "./binding";
+ import { Camera, clampZoom } from "./camera";
+-import { fitFrameToContent, framesOf, makeFrame, settleFrames, ungroupFrame, wrapInFrame } from "./frames";
++import { fitFrameToContent, makeFrame, settleFrames, ungroupFrame, wrapInFrame } from "./frames";
+ import { BranchStyle, HirakuElement, ID, LinearElement, MapLayout, NodeElement, newId } from "./model";
+ import {
+   Added, Measure, NodePatch, NODE_PRESETS, addChild, addSibling, ancestorsOf, childrenMap, detachToRoot, focusBranch, isNodeEl,
+@@ -252,10 +252,23 @@ export function wrapSelectionInFrame() {
+ 
+ export function ungroupSelection() {
+   const ids = selIds();
+-  let out = els();
++  const before = els();
++  // Guarda os membros ANTES de remover os quadros. A seleção anterior continha apenas
++  // o id do quadro; depois do ungroup esse id deixa de existir e a seleção ficava vazia.
++  // Selecionar os membros permite movê-los juntos e agrupá-los novamente imediatamente.
++  const members = new Set<ID>();
++  for (const id of ids) {
++    const frame = before.find((e) => e.id === id);
++    if (frame?.type === "frame") {
++      // Só os filhos diretos: quadros internos continuam contendo seus próprios elementos.
++      for (const member of before) if (member.frameId === id) members.add(member.id);
++    }
++  }
++  let out = before;
+   for (const id of ids) out = ungroupFrame(out, id);
+   commit(out);
+-  useSel.getState().set(ids.filter((id) => !framesOf(els()).some((f) => f.id === id)));
++  const remaining = new Set(out.map((e) => e.id));
++  useSel.getState().set([...members].filter((id) => remaining.has(id)));
+ }
+ 
+ export function fitFrameSelection() {
+diff --git a/src/styles.css b/src/styles.css
+index 61abc63..4552a77 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -485,3 +485,23 @@ body.dragging-ui, body.dragging-ui * { cursor: grabbing !important; user-select:
+ .float-layer { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+ .float-layer > * { pointer-events: auto; }
+ .fbar { position: absolute; padding: 6px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
++
++/* ---- gerenciador de cadernos ---- */
++.notebook-launch { position: fixed; top: 12px; right: 14px; z-index: 8; padding: 8px 12px; box-shadow: 0 3px 14px #17203320; }
++.notebook-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: #10182780; backdrop-filter: blur(5px); }
++.notebook-dialog { width: min(760px, 100%); max-height: min(780px, 90vh); display: flex; flex-direction: column; overflow: hidden; color: var(--ink); background: var(--panel, #fff); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 24px 80px #0004; }
++.notebook-dialog header, .notebook-dialog footer { padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); }
++.notebook-dialog header strong { display: block; font-size: 20px; }
++.notebook-dialog header small, .notebook-card small { display: block; margin-top: 4px; color: var(--ink-soft); font-size: 12px; }
++.notebook-tools { display: flex; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
++.notebook-tools input { flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper, #fff); color: var(--ink); }
++.notebook-list { overflow: auto; padding: 12px 20px; display: grid; gap: 9px; }
++.notebook-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
++.notebook-card.active { border-color: var(--indigo, #5965bd); background: color-mix(in srgb, var(--indigo, #5965bd) 7%, transparent); }
++.notebook-open { display: flex; align-items: center; gap: 13px; flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; color: inherit; cursor: pointer; }
++.notebook-open > span:last-child { min-width: 0; overflow-wrap: anywhere; }
++.notebook-cover { display: grid; place-items: center; flex: none; width: 48px; height: 58px; border-radius: 6px 10px 10px 6px; background: linear-gradient(135deg, #6576c8, #35447f); color: white; font-size: 25px; box-shadow: inset 4px 0 #ffffff30; }
++.notebook-actions { display: flex; gap: 3px; }
++.notebook-dialog footer { justify-content: flex-start; border-top: 1px solid var(--line); border-bottom: 0; color: var(--ink-soft); font-size: 12px; }
++.notebook-empty { padding: 30px; text-align: center; color: var(--ink-soft); }
++@media (max-width: 560px) { .notebook-launch { top: auto; bottom: 14px; right: 14px; } .notebook-tools { flex-direction: column; } .notebook-card { align-items: flex-start; flex-direction: column; } .notebook-actions { align-self: flex-end; } }
+-- 
+2.47.3
+

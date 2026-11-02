@@ -82,6 +82,7 @@ export function recolorSelection(color: string) {
   useDoc.getState().updateElements(els.map((e) => {
     if (e.type === "stroke" || e.type === "text" || e.type === "frame") return { ...e, color };
     if (e.type === "node") return { ...e, stroke: e.stroke ? color : e.stroke, fill: e.fill ? tint(color, 0.85) : e.fill, branchColor: color };
+    if (e.type === "attachment") return e;
     return { ...e, stroke: color };
   }));
 }

@@ -8,6 +8,7 @@ import { initAutosave } from "./core/autosave";
 import { initUpdates } from "./core/updater";
 import { PageNav, Sidebar, Toast } from "./components/Pages";
 import { Toolbar } from "./components/Toolbar";
+import { NotebookManager } from "./components/NotebookManager";
 import {
   copySelection, cutSelection, deleteSelection, duplicateSelection, editSelectedText,
   goPage, nudgeSelection, pasteClipboard, selectAll,
@@ -28,7 +29,7 @@ const TOOL_KEYS: Record<string, ToolId> = {
 
 export default function App() {
   useEffect(() => initPageViewSync(), []);
-  useEffect(() => initAutosave(), []);
+  useEffect(() => initAutosave(false), []);
   useEffect(() => initUpdates(), []);
 
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function App() {
     <>
       <CanvasView />
       <PageNav />
+      <NotebookManager />
       <Sidebar />
       <Toolbar />
       <TextEditor />

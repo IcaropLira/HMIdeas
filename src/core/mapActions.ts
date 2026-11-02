@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { makeBinding, solveArrow } from "./binding";
 import { Camera, clampZoom } from "./camera";
-import { fitFrameToContent, framesOf, makeFrame, settleFrames, ungroupFrame, wrapInFrame } from "./frames";
+import { fitFrameToContent, makeFrame, settleFrames, ungroupFrame, wrapInFrame } from "./frames";
 import { BranchStyle, HirakuElement, ID, LinearElement, MapLayout, NodeElement, newId } from "./model";
 import {
   Added, Measure, NodePatch, NODE_PRESETS, addChild, addSibling, ancestorsOf, childrenMap, detachToRoot, focusBranch, isNodeEl,
@@ -252,10 +252,19 @@ export function wrapSelectionInFrame() {
 
 export function ungroupSelection() {
   const ids = selIds();
-  let out = els();
+  const before = els();
+  const members = new Set<ID>();
+  // Guarda os membros diretos antes de remover os quadros: o id selecionado deixa de existir.
+  for (const id of ids) {
+    if (before.some((e) => e.id === id && e.type === "frame")) {
+      for (const el of before) if (el.frameId === id) members.add(el.id);
+    }
+  }
+  let out = before;
   for (const id of ids) out = ungroupFrame(out, id);
   commit(out);
-  useSel.getState().set(ids.filter((id) => !framesOf(els()).some((f) => f.id === id)));
+  const alive = new Set(out.map((e) => e.id));
+  useSel.getState().set([...members].filter((id) => alive.has(id)));
 }
 
 export function fitFrameSelection() {

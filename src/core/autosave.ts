@@ -40,7 +40,7 @@ async function get(): Promise<string | null> {
 }
 
 /** Restaura a sessão anterior (se houver) e passa a guardar as mudanças. Devolve a função que desliga. */
-export function initAutosave(): () => void {
+export function initAutosave(restore = true): () => void {
   if (typeof indexedDB === "undefined") return () => undefined;
   let off = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -53,18 +53,20 @@ export function initAutosave(): () => void {
   const onHide = () => { if (document.visibilityState === "hidden") flush(); };
 
   void (async () => {
-    try {
-      const saved = await get();
-      const s = useDoc.getState();
-      const pristine = s.past.length === 0 && s.doc.pages.every((p) => p.elements.length === 0);
-      if (!off && saved && pristine) {
-        const doc = parseDoc(saved);
-        if (doc.pages.some((p) => p.elements.length > 0)) {
-          s.loadDoc(doc);
-          useUI.getState().showToast("Sua sessão anterior foi restaurada.");
+    if (restore) {
+      try {
+        const saved = await get();
+        const s = useDoc.getState();
+        const pristine = s.past.length === 0 && s.doc.pages.every((p) => p.elements.length === 0);
+        if (!off && saved && pristine) {
+          const doc = parseDoc(saved);
+          if (doc.pages.some((p) => p.elements.length > 0)) {
+            s.loadDoc(doc);
+            useUI.getState().showToast("Sua sessão anterior foi restaurada.");
+          }
         }
-      }
-    } catch { /* cópia ilegível: segue com o documento em branco */ }
+      } catch { /* cópia ilegível: segue com o documento em branco */ }
+    }
     if (off) return;
     unsub = useDoc.subscribe((s, prev) => {
       if (s.doc === prev.doc) return;

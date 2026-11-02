@@ -242,6 +242,7 @@ export interface FrameElement {
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
 export interface AttachmentElement {
   id: ID;
+  frameId?: ID | null;
   type: "attachment";
   x: number; y: number; w: number; h: number;
   kind: "image" | "link" | "file";
@@ -417,7 +418,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                     : e.type === "frame"
                       ? cleanFrame(e)
                       : e.type === "attachment"
-                        ? { ...e, w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)), kind: ["image", "link", "file"].includes(e.kind) ? e.kind : "file", title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"), opacity: Math.max(0, Math.min(1, num(e.opacity, 1))) }
+                        ? { ...e, frameId: typeof e.frameId === "string" ? e.frameId : null, w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)), kind: ["image", "link", "file"].includes(e.kind) ? e.kind : "file", title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"), opacity: Math.max(0, Math.min(1, num(e.opacity, 1))) }
                         : e,
           )
         : [],

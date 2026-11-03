@@ -208,3 +208,15 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - **Tema:** `core/theme.ts` (auto/claro/escuro + densidade), tokens CSS em `:root[data-theme]`. Configurações agora têm abas (`Settings.tsx`).
 - **Topo:** esquerda = páginas + chip do caderno (abre o gerenciador, estado em `useUI.notebooksOpen`) + navegação; direita = zoom, Salvar, Abrir, ⋯, ⚙.
 - Logo novo em `public/logo.svg` (sem metadados C2PA) e `public/icon.svg`; ícones regenerados.
+
+### Incorporados: imagem, vídeo do YouTube e PDF (0.4.1 – 0.5.0)
+- Tudo é `AttachmentElement` (`kind`: `image | link | file | video | pdf`), então seleção, mover, redimensionar, desfazer e salvar já funcionam.
+  Formato `.hiraku` continua `version: 1` (campos novos são opcionais; `normalizeDoc` → `cleanAttachment` sanitiza: vídeo sem link válido vira `link`, PDF sem `data` vira `file`).
+- **Imagem:** `render/imageTexture.ts` decodifica o data URL antes de virar textura (`Texture.from(dataURL)` no Pixi v8 é assíncrono e dava imagem branca).
+  O renderer mostra um quadro "carregando" e troca pelo sprite quando a textura chega.
+- **YouTube:** `core/embed.ts` (puro, testado) reconhece o link. O Pixi desenha só a miniatura + play; o player é um `<iframe>` em `components/EmbedLayer.tsx`
+  (camada DOM sobre o canvas que acompanha a câmera). Um vídeo toca por vez (`core/embedView.ts`); fora da tela o iframe é desmontado. Sempre há "Abrir no navegador" (`core/openExternal.ts`).
+- **PDF:** `render/pdfDoc.ts` carrega o pdf.js (build `legacy`, import dinâmico, fora do pacote principal) e rasteriza cada página em textura sob demanda (LRU de 14 páginas).
+  Dois modos guardados no elemento (`mode`): **carrossel** (uma página; ‹ › / setas / PageUp-PageDown) e **rolagem** (páginas empilhadas com máscara; roda do mouse sobre o PDF selecionado).
+  A página atual e a rolagem ficam em `useEmbedView` (NÃO entram no desfazer: virar página não é edição); só trocar o modo é um passo de desfazer.
+  O PDF fica embutido no `.hiraku` como data URL (limite de 15 MB). PPTX não é lido: exporte para PDF.

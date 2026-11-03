@@ -19,6 +19,9 @@ import { createSelectController } from "../tools/selectTool";
 import { useUI } from "../core/ui";
 import { importData, worldPoint as dropPoint } from "./clipboard";
 import { detectWebGL, useGfx } from "../core/webgl";
+import { EmbedLayer } from "./EmbedLayer";
+import { clampScroll, scrollLayout } from "../core/embed";
+import { useEmbedView } from "../core/embedView";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
 type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
@@ -43,6 +46,25 @@ export function CanvasView() {
       ev.preventDefault();
       if (ev.dataTransfer) void importData(ev.dataTransfer, dropPoint(ev.clientX, ev.clientY));
     };
+    // Roda do mouse sobre um PDF selecionado em modo rolagem rola o documento (e não move a tela).
+    // Pinça/Ctrl+roda continuam dando zoom no canvas.
+    const onWheel = (ev: WheelEvent) => {
+      if (ev.ctrlKey || ev.metaKey) return;
+      const ids = useSel.getState().ids;
+      if (ids.length !== 1) return;
+      const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
+      if (!el || el.type !== "attachment" || el.kind !== "pdf" || el.mode !== "scroll") return;
+      const cam = useView.getState().camera;
+      const P = screenToWorld(cam, ev.clientX, ev.clientY);
+      if (P.x < el.x || P.x > el.x + el.w || P.y < el.y || P.y > el.y + el.h) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const L = scrollLayout(el.w, el.ratio ?? 1.414, Math.max(1, el.pages ?? 1));
+      const dy = (ev.deltaMode === 1 ? ev.deltaY * 32 : ev.deltaY) / cam.zoom;
+      const v = useEmbedView.getState();
+      v.setScroll(el.id, clampScroll((v.scroll[el.id] ?? 0) + dy, L.total, el.h));
+    };
+    host.addEventListener("wheel", onWheel, { capture: true, passive: false });
     host.addEventListener("dragover", onDragOver as EventListener);
     host.addEventListener("drop", onDrop as EventListener);
     const selectCtl = createSelectController(renderer);
@@ -239,6 +261,13 @@ export function CanvasView() {
           if (s.doc !== prev.doc || s.activePageId !== prev.activePageId) syncDoc();
         }),
         useView.subscribe((s) => renderer.setCamera(s.camera)),
+        // Virar página / rolar um PDF: repinta só os PDFs que mudaram.
+        useEmbedView.subscribe((s, prev) => {
+          if (s.page === prev.page && s.scroll === prev.scroll) return;
+          for (const id of new Set([...Object.keys(s.page), ...Object.keys(s.scroll)])) {
+            if (s.page[id] !== prev.page[id] || s.scroll[id] !== prev.scroll[id]) renderer.refreshAttachment(id);
+          }
+        }),
         useSel.subscribe(() => selectCtl.refresh()),
         // O texto em edição some do canvas (a <textarea> o substitui).
         useEdit.subscribe((s) => renderer.setHidden(s.session?.id ?? null)),
@@ -537,6 +566,7 @@ export function CanvasView() {
 
     return () => {
       disposed = true;
+      host.removeEventListener("wheel", onWheel, { capture: true });
       host.removeEventListener("dragover", onDragOver as EventListener);
       host.removeEventListener("drop", onDrop as EventListener);
       unsubs.forEach((u) => u());
@@ -548,6 +578,7 @@ export function CanvasView() {
   return (
     <div ref={hostRef} className="canvas-host">
       <canvas ref={canvasRef} tabIndex={0} className={`canvas ${tool}${picking ? " pick" : ""}`} />
+      <EmbedLayer />
     </div>
   );
 }

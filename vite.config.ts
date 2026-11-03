@@ -26,7 +26,7 @@ export default defineConfig({
       registerType: "prompt",
       injectRegister: false,
       includeAssets: ["icon.svg"],
-      workbox: { navigateFallbackDenylist: [/download\.html$/] },
+      workbox: { navigateFallbackDenylist: [/download\.html$/], globPatterns: ["**/*.{js,css,html,mjs}"], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
       manifest: {
         name: "HM Ideas",
         short_name: "HM Ideas",

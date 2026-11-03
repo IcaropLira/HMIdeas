@@ -2,6 +2,7 @@
 // menu "Inserir" e arrastar-e-soltar. O Ctrl+V NÃO é interceptado no teclado: o navegador dispara o evento
 // `paste` com a área de transferência real (prints, imagens copiadas, links, texto).
 import { screenToWorld } from "../core/camera";
+import { parseYouTube } from "../core/embed";
 import { newId } from "../core/model";
 import { copySelection, pasteClipboard } from "../core/actions";
 import { useDoc, useSel, useTool, useView } from "../core/store";
@@ -62,6 +63,28 @@ export async function addAttachmentFile(file: File | Blob, at: Point = worldPoin
   let data: string;
   try { data = await readAsDataUrl(file); } catch { ui.showToast("Não consegui ler este arquivo."); return false; }
   let w = 340, h = 220;
+  const fileName = name || (file as File).name || "";
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(fileName);
+  if (isPdf) {
+    // PDF vira carrossel: precisa de número de páginas e proporção (pdf.js é carregado só agora)
+    const info = await import("../render/pdfDoc").then((m) => m.probePdf(data)).catch(() => null);
+    if (info) {
+      const ratio = Math.min(4, Math.max(0.25, info.ratio));
+      const pw = ratio > 1 ? 420 : 560;
+      const ph = Math.round(pw * ratio);
+      const id = newId();
+      useDoc.getState().addElement({
+        id, type: "attachment", kind: "pdf", x: at.x - pw / 2, y: at.y - ph / 2, w: pw, h: ph,
+        title: fileName || "Documento PDF", url: fileName || "documento.pdf", data, mime: "application/pdf", opacity: 1,
+        pages: info.pages, ratio, mode: "carousel",
+      });
+      useSel.getState().set([id]);
+      return true;
+    }
+    ui.showToast("Não consegui abrir este PDF (protegido por senha ou corrompido). Ele foi anexado como arquivo.");
+  } else if (/\.(pptx?|odp|key)$/i.test(fileName)) {
+    ui.showToast("Para ver os slides como carrossel, exporte a apresentação em PDF e cole o PDF aqui.");
+  }
   if (isImage) {
     const img = await loadImage(data);
     if (!img || !img.naturalWidth || !img.naturalHeight) {
@@ -85,8 +108,14 @@ export async function addAttachmentFile(file: File | Blob, at: Point = worldPoin
 
 export function addLink(url: string, at: Point = worldPoint()) {
   const u = url.trim();
-  const title = /youtube\.com|youtu\.be/.test(u) ? "Vídeo do YouTube" : /vimeo\.com/.test(u) ? "Vídeo do Vimeo" : "Link anexado";
   const id = newId();
+  if (parseYouTube(u)) {
+    // YouTube vira um cartão de vídeo (miniatura + player ao clicar), não um simples link
+    useDoc.getState().addElement({ id, type: "attachment", kind: "video", x: at.x - 240, y: at.y - 135, w: 480, h: 270, title: "Vídeo do YouTube", url: u, mime: "text/uri-list", opacity: 1 });
+    useSel.getState().set([id]);
+    return;
+  }
+  const title = /vimeo\.com/.test(u) ? "Vídeo do Vimeo" : "Link anexado";
   useDoc.getState().addElement({ id, type: "attachment", kind: "link", x: at.x - 170, y: at.y - 70, w: 340, h: 140, title, url: u, mime: "text/uri-list", opacity: 1 });
   useSel.getState().set([id]);
 }

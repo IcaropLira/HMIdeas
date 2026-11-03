@@ -9,6 +9,7 @@ import { createLoaderCache } from "../core/loaderCache";
 async function loadTexture(src: string): Promise<Texture | null> {
   const img = new Image();
   img.decoding = "async";
+  if (/^https?:/i.test(src)) img.crossOrigin = "anonymous"; // miniaturas remotas: o WebGL só aceita com CORS
   img.src = src;
   try {
     if (img.decode) await img.decode();

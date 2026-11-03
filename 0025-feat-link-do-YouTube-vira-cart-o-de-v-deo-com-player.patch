@@ -1,0 +1,520 @@
+From a66a9f81592cff81af93717da5bc012e24005ca6 Mon Sep 17 00:00:00 2001
+From: HM Dev <dev@hm.local>
+Date: Tue, 3 Nov 2026 23:34:26 +0000
+Subject: [PATCH 25/26] =?UTF-8?q?feat:=20link=20do=20YouTube=20vira=20cart?=
+ =?UTF-8?q?=C3=A3o=20de=20v=C3=ADdeo=20com=20player=20embutido?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- core/embed.ts (+ testes): reconhece watch/youtu.be/shorts/embed/live e tempo inicial;
+  monta miniatura, player (youtube-nocookie) e link para o navegador.
+- Anexo ganha os tipos "video" e "pdf" (model.ts); normalizeDoc sanitiza (vídeo sem link
+  válido vira link; PDF sem conteúdo vira arquivo). Formato .hiraku segue na versão 1.
+- Renderer: cartão com miniatura (cobre o quadro, cantos arredondados), faixa com título e
+  botão de play; cai para fundo escuro se a miniatura não carregar (offline/sem CORS).
+- components/EmbedLayer.tsx: camada DOM sobre o canvas que acompanha a câmera. Selecionado:
+  botão de play + "Abrir no navegador". Tocando: iframe do player + Fechar. Fora da tela, sem iframe.
+- core/openExternal.ts: abre no navegador do sistema (plugin-opener) ou em aba nova na web.
+- clipboard: colar link do YouTube cria o cartão de vídeo (480×270).
+- versão 0.4.2.
+---
+ package.json                  |  2 +-
+ src-tauri/Cargo.toml          |  2 +-
+ src-tauri/tauri.conf.json     |  2 +-
+ src/components/CanvasView.tsx |  2 ++
+ src/components/EmbedLayer.tsx | 62 +++++++++++++++++++++++++++++++++++
+ src/components/clipboard.ts   |  9 ++++-
+ src/core/embed.test.ts        | 59 +++++++++++++++++++++++++++++++++
+ src/core/embed.ts             | 39 ++++++++++++++++++++++
+ src/core/embedView.ts         | 12 +++++++
+ src/core/model.ts             | 33 ++++++++++++++++---
+ src/core/openExternal.ts      | 10 ++++++
+ src/render/Renderer.ts        | 39 ++++++++++++++++++++++
+ src/render/imageTexture.ts    |  1 +
+ src/styles.css                | 18 ++++++++++
+ 14 files changed, 282 insertions(+), 8 deletions(-)
+ create mode 100644 src/components/EmbedLayer.tsx
+ create mode 100644 src/core/embed.test.ts
+ create mode 100644 src/core/embed.ts
+ create mode 100644 src/core/embedView.ts
+ create mode 100644 src/core/openExternal.ts
+
+diff --git a/package.json b/package.json
+index 79ce525..b320800 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+     "type": "git",
+     "url": "https://github.com/IcaropLira/HMIdeas.git"
+   },
+-  "version": "0.4.1",
++  "version": "0.4.2",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 3b9f307..f70583d 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "hm-ideas"
+-version = "0.4.1"
++version = "0.4.2"
+ description = "HM Ideas (Hiraku Manager Ideas): quadro branco e caderno de anotações com caneta"
+ edition = "2021"
+ 
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index ddedf69..e459687 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "HM Ideas",
+-  "version": "0.4.1",
++  "version": "0.4.2",
+   "identifier": "app.hiraku.hmideas",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index d0f4dad..0c907c0 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -19,6 +19,7 @@ import { createSelectController } from "../tools/selectTool";
+ import { useUI } from "../core/ui";
+ import { importData, worldPoint as dropPoint } from "./clipboard";
+ import { detectWebGL, useGfx } from "../core/webgl";
++import { EmbedLayer } from "./EmbedLayer";
+ 
+ interface Smoothed { x: number; y: number; p: number; t: number }
+ type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
+@@ -548,6 +549,7 @@ export function CanvasView() {
+   return (
+     <div ref={hostRef} className="canvas-host">
+       <canvas ref={canvasRef} tabIndex={0} className={`canvas ${tool}${picking ? " pick" : ""}`} />
++      <EmbedLayer />
+     </div>
+   );
+ }
+diff --git a/src/components/EmbedLayer.tsx b/src/components/EmbedLayer.tsx
+new file mode 100644
+index 0000000..81edcd1
+--- /dev/null
++++ b/src/components/EmbedLayer.tsx
+@@ -0,0 +1,62 @@
++import { AttachmentElement } from "../core/model";
++import { useEmbedView } from "../core/embedView";
++import { parseYouTube, youtubeEmbed, youtubeWatch } from "../core/embed";
++import { openExternal } from "../core/openExternal";
++import { selectActivePage, useDoc, useSel, useView } from "../core/store";
++
++/**
++ * Camada DOM por cima do canvas para o que o WebGL não desenha: o player do YouTube (iframe) e os controles
++ * dos incorporados. Acompanha a câmera; só os botões recebem clique, o resto deixa o canvas funcionar.
++ */
++export function EmbedLayer() {
++  const elements = useDoc((s) => selectActivePage(s).elements);
++  const cam = useView((s) => s.camera);
++  const sel = useSel((s) => s.ids);
++  const playing = useEmbedView((s) => s.playing);
++  const play = useEmbedView((s) => s.play);
++
++  const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
++  const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
++  const items = elements.filter((e): e is AttachmentElement => e.type === "attachment" && e.kind === "video");
++  if (!items.length) return null;
++
++  return (
++    <div className="embed-layer">
++      {items.map((el) => {
++        const yt = parseYouTube(el.url);
++        if (!yt) return null;
++        const left = el.x * cam.zoom + cam.x, top = el.y * cam.zoom + cam.y;
++        const w = el.w * cam.zoom, h = el.h * cam.zoom;
++        if (left > vw || top > vh || left + w < 0 || top + h < 0) return null; // fora da tela: nada de iframe vivo
++        const box = { left, top, width: w, height: h };
++        if (playing === el.id) {
++          return (
++            <div key={el.id} className="embed-box" style={box}>
++              <iframe
++                src={youtubeEmbed(yt)}
++                title={el.title}
++                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
++                allowFullScreen
++                referrerPolicy="strict-origin-when-cross-origin"
++              />
++              <div className="embed-bar">
++                <button onClick={() => void openExternal(youtubeWatch(yt))} title="Abrir no navegador">Abrir no navegador ↗</button>
++                <button onClick={() => play(null)} title="Voltar à miniatura">Fechar</button>
++              </div>
++            </div>
++          );
++        }
++        if (!sel.includes(el.id)) return null;
++        const d = Math.max(44, Math.min(w, h) * 0.26);
++        return (
++          <div key={el.id} className="embed-box embed-idle" style={box}>
++            <button className="embed-play" style={{ width: d, height: d }} onClick={() => play(el.id)} title="Reproduzir aqui" aria-label="Reproduzir vídeo">▶</button>
++            <div className="embed-bar">
++              <button onClick={() => void openExternal(youtubeWatch(yt))} title="Abrir no navegador">Abrir no navegador ↗</button>
++            </div>
++          </div>
++        );
++      })}
++    </div>
++  );
++}
+diff --git a/src/components/clipboard.ts b/src/components/clipboard.ts
+index 62d9c20..3cf4acc 100644
+--- a/src/components/clipboard.ts
++++ b/src/components/clipboard.ts
+@@ -2,6 +2,7 @@
+ // menu "Inserir" e arrastar-e-soltar. O Ctrl+V NÃO é interceptado no teclado: o navegador dispara o evento
+ // `paste` com a área de transferência real (prints, imagens copiadas, links, texto).
+ import { screenToWorld } from "../core/camera";
++import { parseYouTube } from "../core/embed";
+ import { newId } from "../core/model";
+ import { copySelection, pasteClipboard } from "../core/actions";
+ import { useDoc, useSel, useTool, useView } from "../core/store";
+@@ -85,8 +86,14 @@ export async function addAttachmentFile(file: File | Blob, at: Point = worldPoin
+ 
+ export function addLink(url: string, at: Point = worldPoint()) {
+   const u = url.trim();
+-  const title = /youtube\.com|youtu\.be/.test(u) ? "Vídeo do YouTube" : /vimeo\.com/.test(u) ? "Vídeo do Vimeo" : "Link anexado";
+   const id = newId();
++  if (parseYouTube(u)) {
++    // YouTube vira um cartão de vídeo (miniatura + player ao clicar), não um simples link
++    useDoc.getState().addElement({ id, type: "attachment", kind: "video", x: at.x - 240, y: at.y - 135, w: 480, h: 270, title: "Vídeo do YouTube", url: u, mime: "text/uri-list", opacity: 1 });
++    useSel.getState().set([id]);
++    return;
++  }
++  const title = /vimeo\.com/.test(u) ? "Vídeo do Vimeo" : "Link anexado";
+   useDoc.getState().addElement({ id, type: "attachment", kind: "link", x: at.x - 170, y: at.y - 70, w: 340, h: 140, title, url: u, mime: "text/uri-list", opacity: 1 });
+   useSel.getState().set([id]);
+ }
+diff --git a/src/core/embed.test.ts b/src/core/embed.test.ts
+new file mode 100644
+index 0000000..899c848
+--- /dev/null
++++ b/src/core/embed.test.ts
+@@ -0,0 +1,59 @@
++import { describe, expect, it } from "vitest";
++import { normalizeDoc } from "./model";
++import { parseStart, parseYouTube, youtubeEmbed, youtubeThumb, youtubeWatch } from "./embed";
++
++describe("YouTube", () => {
++  const ID = "dQw4w9WgXcQ";
++  it("reconhece os formatos comuns de link", () => {
++    for (const u of [
++      `https://www.youtube.com/watch?v=${ID}`,
++      `https://youtube.com/watch?v=${ID}&list=PL1`,
++      `https://m.youtube.com/watch?v=${ID}`,
++      `https://music.youtube.com/watch?v=${ID}`,
++      `https://youtu.be/${ID}`,
++      `https://youtu.be/${ID}?si=abc`,
++      `https://www.youtube.com/shorts/${ID}`,
++      `https://www.youtube.com/embed/${ID}`,
++      `https://www.youtube.com/live/${ID}`,
++      `  https://youtu.be/${ID}  `,
++    ]) expect(parseYouTube(u)?.id, u).toBe(ID);
++  });
++  it("rejeita o que não é vídeo", () => {
++    for (const u of [
++      "https://www.youtube.com/", "https://www.youtube.com/watch?v=curto", "https://www.youtube.com/@canal",
++      "https://vimeo.com/123456789", "https://exemplo.com/watch?v=dQw4w9WgXcQ", "https://evil-youtube.com/watch?v=dQw4w9WgXcQ",
++      "javascript:alert(1)", "texto qualquer", "",
++    ]) expect(parseYouTube(u), u).toBeNull();
++  });
++  it("lê o tempo inicial", () => {
++    expect(parseStart("90")).toBe(90);
++    expect(parseStart("1m30s")).toBe(90);
++    expect(parseStart("1h2m3s")).toBe(3723);
++    expect(parseStart("lixo")).toBe(0);
++    expect(parseYouTube("https://youtu.be/dQw4w9WgXcQ?t=42")?.start).toBe(42);
++    expect(parseYouTube("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m5s")?.start).toBe(65);
++  });
++  it("monta as URLs", () => {
++    const r = { id: ID, start: 0 };
++    expect(youtubeThumb(ID)).toBe(`https://i.ytimg.com/vi/${ID}/hqdefault.jpg`);
++    expect(youtubeEmbed(r)).toContain(`youtube-nocookie.com/embed/${ID}?autoplay=1`);
++    expect(youtubeEmbed(r)).not.toContain("start=");
++    expect(youtubeEmbed({ ...r, start: 30 })).toContain("&start=30");
++    expect(youtubeWatch({ ...r, start: 30 })).toBe(`https://www.youtube.com/watch?v=${ID}&t=30s`);
++  });
++});
++
++describe("anexo de vídeo no arquivo", () => {
++  const doc = (att: Record<string, unknown>) => ({
++    version: 1, id: "d", title: "t",
++    pages: [{ id: "p", name: "1", paper: "blank", background: "#ffffff", elements: [{ id: "a", type: "attachment", x: 0, y: 0, w: 480, h: 270, mime: "x", opacity: 1, ...att }] }],
++  });
++  const kindOf = (att: Record<string, unknown>) => {
++    const el = normalizeDoc(doc(att)).pages[0].elements[0];
++    return el && el.type === "attachment" ? el.kind : null;
++  };
++  it("mantém vídeo válido", () => expect(kindOf({ kind: "video", title: "v", url: "https://youtu.be/dQw4w9WgXcQ" })).toBe("video"));
++  it("vídeo com link inválido vira cartão de link", () => expect(kindOf({ kind: "video", title: "v", url: "https://exemplo.com" })).toBe("link"));
++  it("PDF sem conteúdo embutido vira arquivo", () => expect(kindOf({ kind: "pdf", title: "p", url: "p.pdf" })).toBe("file"));
++  it("tipo desconhecido vira arquivo", () => expect(kindOf({ kind: "zzz", title: "p", url: "x" })).toBe("file"));
++});
+diff --git a/src/core/embed.ts b/src/core/embed.ts
+new file mode 100644
+index 0000000..fbcb2b2
+--- /dev/null
++++ b/src/core/embed.ts
+@@ -0,0 +1,39 @@
++// Incorporados do caderno: reconhecimento de links do YouTube e montagem das URLs (puro, sem DOM).
++
++export interface YouTubeRef { id: string; /** segundo inicial (0 = começo) */ start: number }
++
++const VIDEO_ID = /^[\w-]{11}$/;
++
++/** "90", "90s", "1m30s", "1h2m3s" → segundos. */
++export function parseStart(v: string | null | undefined): number {
++  if (!v) return 0;
++  if (/^\d+$/.test(v)) return Number(v);
++  const m = v.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
++  if (!m) return 0;
++  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
++}
++
++/** Reconhece watch?v=, youtu.be/, /shorts/, /embed/, /live/ e músicas; devolve null para qualquer outra coisa. */
++export function parseYouTube(input: string): YouTubeRef | null {
++  let u: URL;
++  try { u = new URL(input.trim()); } catch { return null; }
++  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
++  const host = u.hostname.toLowerCase().replace(/^(www|m|music)\./, "");
++  let id: string | null = null;
++  if (host === "youtu.be") id = u.pathname.slice(1).split("/")[0] || null;
++  else if (host === "youtube.com" || host === "youtube-nocookie.com") {
++    if (u.pathname === "/watch") id = u.searchParams.get("v");
++    else { const m = u.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/); if (m) id = m[1]; }
++  }
++  if (!id || !VIDEO_ID.test(id)) return null;
++  return { id, start: parseStart(u.searchParams.get("t") ?? u.searchParams.get("start")) };
++}
++
++/** Miniatura (16:9 com tarjas pretas em cima e embaixo; o renderer corta). */
++export const youtubeThumb = (id: string) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
++
++/** Player embutido (domínio sem cookies de rastreio). */
++export const youtubeEmbed = (r: YouTubeRef) =>
++  `https://www.youtube-nocookie.com/embed/${r.id}?autoplay=1&rel=0&playsinline=1${r.start ? `&start=${r.start}` : ""}`;
++
++export const youtubeWatch = (r: YouTubeRef) => `https://www.youtube.com/watch?v=${r.id}${r.start ? `&t=${r.start}s` : ""}`;
+diff --git a/src/core/embedView.ts b/src/core/embedView.ts
+new file mode 100644
+index 0000000..c5ae759
+--- /dev/null
++++ b/src/core/embedView.ts
+@@ -0,0 +1,12 @@
++import { create } from "zustand";
++
++interface EmbedViewState {
++  /** Vídeo em reprodução (um por vez). Não persiste e não entra no desfazer. */
++  playing: string | null;
++  play: (id: string | null) => void;
++}
++
++export const useEmbedView = create<EmbedViewState>((set) => ({
++  playing: null,
++  play: (playing) => set({ playing }),
++}));
+diff --git a/src/core/model.ts b/src/core/model.ts
+index 75f3848..4b6075e 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -1,6 +1,8 @@
+ // Modelo de dados do HM Ideas. Puro: sem Pixi, sem React.
+ // Tudo aqui é serializável em JSON e tratado como IMUTÁVEL.
+ 
++import { parseYouTube } from "./embed";
++
+ export type ID = string;
+ 
+ /** Ponto de tinta em coordenadas do MUNDO (não da tela). */
+@@ -239,18 +241,25 @@ export interface FrameElement {
+   opacity: number;
+ }
+ 
++export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf"] as const;
++export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
++
+ /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
+ export interface AttachmentElement {
+   id: ID;
+   frameId?: ID | null;
+   type: "attachment";
+   x: number; y: number; w: number; h: number;
+-  kind: "image" | "link" | "file";
++  kind: AttachmentKind;
+   title: string;
++  /** Para "video": o link do YouTube (a miniatura e o player saem dele). */
+   url: string;
+   mime: string;
+-  /** Imagens coladas/arrastadas ficam incorporadas ao arquivo .hiraku. */
++  /** Imagens e PDFs colados/arrastados ficam incorporados ao arquivo .hiraku. */
+   data?: string;
++  /** PDF: número de páginas e modo de leitura (carrossel ou rolagem). */
++  pages?: number;
++  mode?: "carousel" | "scroll";
+   opacity: number;
+ }
+ 
+@@ -336,7 +345,23 @@ const validElement = (e: any): boolean =>
+   (e.type !== "text" || typeof e.text === "string") &&
+   (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
+   (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h))) &&
+-  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && ["image", "link", "file"].includes(e.kind) && typeof e.url === "string"));
++  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) && typeof e.url === "string"));
++
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++const cleanAttachment = (e: any): AttachmentElement => {
++  let kind: AttachmentKind = (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) ? e.kind : "file";
++  if (kind === "video" && !parseYouTube(str(e.url, ""))) kind = "link"; // sem link reconhecível, vira cartão de link
++  if (kind === "pdf" && typeof e.data !== "string") kind = "file"; // sem o conteúdo embutido, vira arquivo comum
++  return {
++    ...e,
++    frameId: typeof e.frameId === "string" ? e.frameId : null,
++    w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)),
++    kind, title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"),
++    opacity: Math.max(0, Math.min(1, num(e.opacity, 1))),
++    pages: kind === "pdf" ? Math.max(1, Math.floor(num(e.pages, 1))) : undefined,
++    mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
++  };
++};
+ 
+ const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+ const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
+@@ -418,7 +443,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
+                     : e.type === "frame"
+                       ? cleanFrame(e)
+                       : e.type === "attachment"
+-                        ? { ...e, frameId: typeof e.frameId === "string" ? e.frameId : null, w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)), kind: ["image", "link", "file"].includes(e.kind) ? e.kind : "file", title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"), opacity: Math.max(0, Math.min(1, num(e.opacity, 1))) }
++                        ? cleanAttachment(e)
+                         : e,
+           )
+         : [],
+diff --git a/src/core/openExternal.ts b/src/core/openExternal.ts
+new file mode 100644
+index 0000000..9d70516
+--- /dev/null
++++ b/src/core/openExternal.ts
+@@ -0,0 +1,10 @@
++/** Abre um link no navegador do sistema (app desktop/mobile) ou numa aba nova (web). */
++export async function openExternal(url: string): Promise<void> {
++  if (!/^https?:\/\//i.test(url)) return;
++  try {
++    const { openUrl } = await import("@tauri-apps/plugin-opener");
++    await openUrl(url);
++  } catch {
++    window.open(url, "_blank", "noopener,noreferrer");
++  }
++}
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index 8a9a72a..dd0e988 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -10,6 +10,7 @@ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+ import { decimateForPreview } from "../core/ink";
+ import { paintFrame, paintNode } from "./mindDraw";
+ import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
++import { parseYouTube, youtubeThumb } from "../core/embed";
+ import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
+ 
+ const LINE = "#1B2233";
+@@ -267,6 +268,9 @@ export class Renderer {
+       node.alpha = el.opacity;
+       if (el.kind === "image" && el.data) {
+         this.paintImage(node, el);
++      } else if (el.kind === "video" && parseYouTube(el.url)) {
++        this.paintVideo(node, el);
++        node.eventMode = "none";
+       } else {
+         const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
+         card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
+@@ -343,6 +347,41 @@ export class Renderer {
+     });
+   }
+ 
++  /** Vídeo do YouTube parado: miniatura (quando carrega) + botão de play. O player real é um iframe na camada DOM. */
++  private paintVideo(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
++    const yt = parseYouTube(el.url);
++    if (!yt) return;
++    const thumb = youtubeThumb(yt.id);
++    this.imageKey.set(node, thumb);
++    node.addChild(new Graphics().roundRect(el.x, el.y, el.w, el.h, 10).fill({ color: 0x0F1420 }));
++    // miniatura entra logo acima do fundo (índice 1) e é cortada pelo contorno arredondado do cartão
++    const putThumb = (tex: Texture) => {
++      const k = Math.max(el.w / tex.width, el.h / tex.height); // cobrir o cartão, sem esticar
++      const sp = new Sprite(tex);
++      sp.scale.set(k);
++      sp.position.set(el.x + (el.w - tex.width * k) / 2, el.y + (el.h - tex.height * k) / 2);
++      const mask = new Graphics().roundRect(el.x, el.y, el.w, el.h, 10).fill({ color: 0xFFFFFF });
++      node.addChildAt(mask, 1);
++      node.addChildAt(sp, 2);
++      sp.mask = mask;
++    };
++    const hit = peekImageTexture(thumb);
++    if (hit) putThumb(hit);
++    else void loadImageTexture(thumb).then((tex) => {
++      if (!tex || node.destroyed || this.imageKey.get(node) !== thumb) return;
++      putThumb(tex);
++    });
++    // faixa com o título + botão de play
++    const barH = Math.min(30, el.h * 0.2);
++    node.addChild(new Graphics().roundRect(el.x, el.y + el.h - barH, el.w, barH, 10).fill({ color: 0x000000, alpha: 0.55 }));
++    const title = new Text({ text: el.title || "Vídeo do YouTube", style: { fontFamily: "Arial", fontSize: Math.max(10, Math.min(14, barH * 0.5)), fill: 0xFFFFFF } });
++    title.position.set(el.x + 10, el.y + el.h - barH + (barH - title.height) / 2);
++    node.addChild(title);
++    const cx = el.x + el.w / 2, cy = el.y + el.h / 2, r = Math.max(16, Math.min(46, Math.min(el.w, el.h) * 0.13));
++    node.addChild(new Graphics().circle(cx, cy, r).fill({ color: 0xE62117, alpha: 0.92 }));
++    node.addChild(new Graphics().poly([cx - r * 0.28, cy - r * 0.42, cx - r * 0.28, cy + r * 0.42, cx + r * 0.5, cy]).fill({ color: 0xFFFFFF }));
++  }
++
+   // Texto é raster: ao dar zoom, rasteriza de novo em resolução maior (com atraso, para não travar o gesto).
+   private textRes() {
+     return Math.min(4, Math.max(1, (window.devicePixelRatio || 1) * this.cam.zoom));
+diff --git a/src/render/imageTexture.ts b/src/render/imageTexture.ts
+index 73ee206..3579bed 100644
+--- a/src/render/imageTexture.ts
++++ b/src/render/imageTexture.ts
+@@ -9,6 +9,7 @@ import { createLoaderCache } from "../core/loaderCache";
+ async function loadTexture(src: string): Promise<Texture | null> {
+   const img = new Image();
+   img.decoding = "async";
++  if (/^https?:/i.test(src)) img.crossOrigin = "anonymous"; // miniaturas remotas: o WebGL só aceita com CORS
+   img.src = src;
+   try {
+     if (img.decode) await img.decode();
+diff --git a/src/styles.css b/src/styles.css
+index 3652091..98bf965 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -617,3 +617,21 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
+   .keys > div { grid-template-columns: 1fr; gap: 2px; }
+   .about { flex-direction: column; align-items: flex-start; }
+ }
++
++/* Incorporados (vídeo do YouTube, PDF): camada DOM sobre o canvas */
++.embed-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
++.embed-box { position: absolute; pointer-events: none; }
++.embed-box iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; pointer-events: auto; }
++.embed-bar { position: absolute; right: 0; top: -34px; display: flex; gap: 6px; pointer-events: auto; }
++.embed-bar button, .embed-nav button {
++  font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
++  border: 1px solid var(--line, #c9d1e0); background: var(--paper, #fff); color: var(--ink, #1b2233);
++  box-shadow: 0 2px 8px rgba(20, 30, 60, 0.15);
++}
++.embed-bar button:hover, .embed-nav button:hover { background: var(--hover, #eef1f7); }
++.embed-play {
++  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: auto;
++  border-radius: 50%; border: 0; cursor: pointer; color: #fff; font-size: 20px; padding: 0 0 0 4px;
++  background: rgba(230, 33, 23, 0.92); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
++}
++.embed-play:hover { background: #e62117; }
+-- 
+2.43.0
+

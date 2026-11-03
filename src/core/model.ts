@@ -1,6 +1,8 @@
 // Modelo de dados do HM Ideas. Puro: sem Pixi, sem React.
 // Tudo aqui é serializável em JSON e tratado como IMUTÁVEL.
 
+import { parseYouTube } from "./embed";
+
 export type ID = string;
 
 /** Ponto de tinta em coordenadas do MUNDO (não da tela). */
@@ -239,18 +241,26 @@ export interface FrameElement {
   opacity: number;
 }
 
+export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf"] as const;
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
+
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
 export interface AttachmentElement {
   id: ID;
   frameId?: ID | null;
   type: "attachment";
   x: number; y: number; w: number; h: number;
-  kind: "image" | "link" | "file";
+  kind: AttachmentKind;
   title: string;
+  /** Para "video": o link do YouTube (a miniatura e o player saem dele). */
   url: string;
   mime: string;
-  /** Imagens coladas/arrastadas ficam incorporadas ao arquivo .hiraku. */
+  /** Imagens e PDFs colados/arrastados ficam incorporados ao arquivo .hiraku. */
   data?: string;
+  /** PDF: número de páginas, proporção altura/largura da 1ª página e modo de leitura (carrossel ou rolagem). */
+  pages?: number;
+  ratio?: number;
+  mode?: "carousel" | "scroll";
   opacity: number;
 }
 
@@ -336,7 +346,24 @@ const validElement = (e: any): boolean =>
   (e.type !== "text" || typeof e.text === "string") &&
   (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
   (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h))) &&
-  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && ["image", "link", "file"].includes(e.kind) && typeof e.url === "string"));
+  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) && typeof e.url === "string"));
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cleanAttachment = (e: any): AttachmentElement => {
+  let kind: AttachmentKind = (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) ? e.kind : "file";
+  if (kind === "video" && !parseYouTube(str(e.url, ""))) kind = "link"; // sem link reconhecível, vira cartão de link
+  if (kind === "pdf" && typeof e.data !== "string") kind = "file"; // sem o conteúdo embutido, vira arquivo comum
+  return {
+    ...e,
+    frameId: typeof e.frameId === "string" ? e.frameId : null,
+    w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)),
+    kind, title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"),
+    opacity: Math.max(0, Math.min(1, num(e.opacity, 1))),
+    pages: kind === "pdf" ? Math.max(1, Math.floor(num(e.pages, 1))) : undefined,
+    ratio: kind === "pdf" ? Math.min(4, Math.max(0.25, num(e.ratio, 1.414))) : undefined,
+    mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
+  };
+};
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 const str = (v: unknown, d: string) => (typeof v === "string" && v ? v : d);
@@ -418,7 +445,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                     : e.type === "frame"
                       ? cleanFrame(e)
                       : e.type === "attachment"
-                        ? { ...e, frameId: typeof e.frameId === "string" ? e.frameId : null, w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)), kind: ["image", "link", "file"].includes(e.kind) ? e.kind : "file", title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"), opacity: Math.max(0, Math.min(1, num(e.opacity, 1))) }
+                        ? cleanAttachment(e)
                         : e,
           )
         : [],

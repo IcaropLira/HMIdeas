@@ -617,3 +617,28 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
   .keys > div { grid-template-columns: 1fr; gap: 2px; }
   .about { flex-direction: column; align-items: flex-start; }
 }
+
+/* Incorporados (vídeo do YouTube, PDF): camada DOM sobre o canvas */
+.embed-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.embed-box { position: absolute; pointer-events: none; }
+.embed-box iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; pointer-events: auto; }
+.embed-bar { position: absolute; right: 0; top: -34px; display: flex; gap: 6px; pointer-events: auto; }
+.embed-bar button, .embed-nav button {
+  font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line, #c9d1e0); background: var(--paper, #fff); color: var(--ink, #1b2233);
+  box-shadow: 0 2px 8px rgba(20, 30, 60, 0.15);
+}
+.embed-bar button:hover, .embed-nav button:hover { background: var(--hover, #eef1f7); }
+.embed-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: auto;
+  border-radius: 50%; border: 0; cursor: pointer; color: #fff; font-size: 20px; padding: 0 0 0 4px;
+  background: rgba(230, 33, 23, 0.92); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.embed-play:hover { background: #e62117; }
+.embed-nav {
+  position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px;
+  pointer-events: auto; white-space: nowrap;
+}
+.embed-nav button { min-width: 32px; }
+.embed-nav button:disabled { opacity: 0.4; cursor: default; }
+.embed-count { font-size: 12px; min-width: 52px; text-align: center; color: var(--ink, #1b2233); background: var(--paper, #fff); border-radius: 8px; padding: 5px 8px; box-shadow: 0 2px 8px rgba(20, 30, 60, 0.15); }

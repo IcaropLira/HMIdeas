@@ -1,0 +1,755 @@
+From 067ad228c1dec82dd3ec5023049986b72b890088 Mon Sep 17 00:00:00 2001
+From: HM Dev <dev@hm.local>
+Date: Tue, 3 Nov 2026 23:36:52 +0000
+Subject: [PATCH 26/26] feat: PDF e slides como objeto com carrossel ou rolagem
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Colar/arrastar um PDF cria um anexo "pdf": número de páginas e proporção vêm do pdf.js.
+- render/pdfDoc.ts: pdf.js (build legacy) carregado sob demanda; cada página vira textura só
+  quando aparece, com limite de 14 páginas por documento e falha registrada (sem loop de recarga).
+- Renderer: modo carrossel (uma página, vizinhas pré-carregadas) e modo rolagem (páginas
+  empilhadas com máscara e barra de rolagem).
+- EmbedLayer: com o PDF selecionado aparecem ‹ 3 / 12 › e o botão Carrossel/Rolagem;
+  setas e PageUp/PageDown passam as páginas; roda do mouse rola no modo rolagem.
+- core/embedView.ts guarda página e rolagem fora do desfazer; só trocar o modo é um passo de desfazer.
+- core/embed.ts: helpers puros de paginação/rolagem (+ testes). model: campos pages, ratio, mode.
+- PPT/PPTX/ODP/KEY: avisa para exportar em PDF.
+- PWA: pré-cache de .mjs (worker do pdf.js). Dependência pdfjs-dist ^4.10.38.
+- AGENTS.md documenta imagem, YouTube e PDF. Versão 0.5.0.
+---
+ AGENTS.md                     |  12 ++++
+ package.json                  |   3 +-
+ src-tauri/Cargo.toml          |   2 +-
+ src-tauri/tauri.conf.json     |   2 +-
+ src/components/CanvasView.tsx |  29 ++++++++++
+ src/components/EmbedLayer.tsx |  67 +++++++++++++++++++--
+ src/components/clipboard.ts   |  22 +++++++
+ src/core/embed.test.ts        |  60 ++++++++++++++++++-
+ src/core/embed.ts             |  39 +++++++++++++
+ src/core/embedView.ts         |  12 +++-
+ src/core/loaderCache.ts       |   2 +
+ src/core/model.ts             |   4 +-
+ src/render/Renderer.ts        |  86 ++++++++++++++++++++++++++-
+ src/render/pdfDoc.ts          | 106 ++++++++++++++++++++++++++++++++++
+ src/styles.css                |   7 +++
+ src/vite-env.d.ts             |   3 +
+ vite.config.ts                |   2 +-
+ 17 files changed, 446 insertions(+), 12 deletions(-)
+ create mode 100644 src/render/pdfDoc.ts
+
+diff --git a/AGENTS.md b/AGENTS.md
+index 8123703..aed5b5c 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -208,3 +208,15 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
+ - **Tema:** `core/theme.ts` (auto/claro/escuro + densidade), tokens CSS em `:root[data-theme]`. Configurações agora têm abas (`Settings.tsx`).
+ - **Topo:** esquerda = páginas + chip do caderno (abre o gerenciador, estado em `useUI.notebooksOpen`) + navegação; direita = zoom, Salvar, Abrir, ⋯, ⚙.
+ - Logo novo em `public/logo.svg` (sem metadados C2PA) e `public/icon.svg`; ícones regenerados.
++
++### Incorporados: imagem, vídeo do YouTube e PDF (0.4.1 – 0.5.0)
++- Tudo é `AttachmentElement` (`kind`: `image | link | file | video | pdf`), então seleção, mover, redimensionar, desfazer e salvar já funcionam.
++  Formato `.hiraku` continua `version: 1` (campos novos são opcionais; `normalizeDoc` → `cleanAttachment` sanitiza: vídeo sem link válido vira `link`, PDF sem `data` vira `file`).
++- **Imagem:** `render/imageTexture.ts` decodifica o data URL antes de virar textura (`Texture.from(dataURL)` no Pixi v8 é assíncrono e dava imagem branca).
++  O renderer mostra um quadro "carregando" e troca pelo sprite quando a textura chega.
++- **YouTube:** `core/embed.ts` (puro, testado) reconhece o link. O Pixi desenha só a miniatura + play; o player é um `<iframe>` em `components/EmbedLayer.tsx`
++  (camada DOM sobre o canvas que acompanha a câmera). Um vídeo toca por vez (`core/embedView.ts`); fora da tela o iframe é desmontado. Sempre há "Abrir no navegador" (`core/openExternal.ts`).
++- **PDF:** `render/pdfDoc.ts` carrega o pdf.js (build `legacy`, import dinâmico, fora do pacote principal) e rasteriza cada página em textura sob demanda (LRU de 14 páginas).
++  Dois modos guardados no elemento (`mode`): **carrossel** (uma página; ‹ › / setas / PageUp-PageDown) e **rolagem** (páginas empilhadas com máscara; roda do mouse sobre o PDF selecionado).
++  A página atual e a rolagem ficam em `useEmbedView` (NÃO entram no desfazer: virar página não é edição); só trocar o modo é um passo de desfazer.
++  O PDF fica embutido no `.hiraku` como data URL (limite de 15 MB). PPTX não é lido: exporte para PDF.
+diff --git a/package.json b/package.json
+index b320800..962be47 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+     "type": "git",
+     "url": "https://github.com/IcaropLira/HMIdeas.git"
+   },
+-  "version": "0.4.2",
++  "version": "0.5.0",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+@@ -27,6 +27,7 @@
+     "@tauri-apps/plugin-opener": "^2.7.2",
+     "@tauri-apps/plugin-process": "^2.4.0",
+     "@tauri-apps/plugin-updater": "^2.14.0",
++    "pdfjs-dist": "^4.10.38",
+     "pixi.js": "^8.6.0",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index f70583d..e9fb0c0 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "hm-ideas"
+-version = "0.4.2"
++version = "0.5.0"
+ description = "HM Ideas (Hiraku Manager Ideas): quadro branco e caderno de anotações com caneta"
+ edition = "2021"
+ 
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index e459687..94ecd9e 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "HM Ideas",
+-  "version": "0.4.2",
++  "version": "0.5.0",
+   "identifier": "app.hiraku.hmideas",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+diff --git a/src/components/CanvasView.tsx b/src/components/CanvasView.tsx
+index 0c907c0..17e275f 100644
+--- a/src/components/CanvasView.tsx
++++ b/src/components/CanvasView.tsx
+@@ -20,6 +20,8 @@ import { useUI } from "../core/ui";
+ import { importData, worldPoint as dropPoint } from "./clipboard";
+ import { detectWebGL, useGfx } from "../core/webgl";
+ import { EmbedLayer } from "./EmbedLayer";
++import { clampScroll, scrollLayout } from "../core/embed";
++import { useEmbedView } from "../core/embedView";
+ 
+ interface Smoothed { x: number; y: number; p: number; t: number }
+ type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
+@@ -44,6 +46,25 @@ export function CanvasView() {
+       ev.preventDefault();
+       if (ev.dataTransfer) void importData(ev.dataTransfer, dropPoint(ev.clientX, ev.clientY));
+     };
++    // Roda do mouse sobre um PDF selecionado em modo rolagem rola o documento (e não move a tela).
++    // Pinça/Ctrl+roda continuam dando zoom no canvas.
++    const onWheel = (ev: WheelEvent) => {
++      if (ev.ctrlKey || ev.metaKey) return;
++      const ids = useSel.getState().ids;
++      if (ids.length !== 1) return;
++      const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
++      if (!el || el.type !== "attachment" || el.kind !== "pdf" || el.mode !== "scroll") return;
++      const cam = useView.getState().camera;
++      const P = screenToWorld(cam, ev.clientX, ev.clientY);
++      if (P.x < el.x || P.x > el.x + el.w || P.y < el.y || P.y > el.y + el.h) return;
++      ev.preventDefault();
++      ev.stopPropagation();
++      const L = scrollLayout(el.w, el.ratio ?? 1.414, Math.max(1, el.pages ?? 1));
++      const dy = (ev.deltaMode === 1 ? ev.deltaY * 32 : ev.deltaY) / cam.zoom;
++      const v = useEmbedView.getState();
++      v.setScroll(el.id, clampScroll((v.scroll[el.id] ?? 0) + dy, L.total, el.h));
++    };
++    host.addEventListener("wheel", onWheel, { capture: true, passive: false });
+     host.addEventListener("dragover", onDragOver as EventListener);
+     host.addEventListener("drop", onDrop as EventListener);
+     const selectCtl = createSelectController(renderer);
+@@ -240,6 +261,13 @@ export function CanvasView() {
+           if (s.doc !== prev.doc || s.activePageId !== prev.activePageId) syncDoc();
+         }),
+         useView.subscribe((s) => renderer.setCamera(s.camera)),
++        // Virar página / rolar um PDF: repinta só os PDFs que mudaram.
++        useEmbedView.subscribe((s, prev) => {
++          if (s.page === prev.page && s.scroll === prev.scroll) return;
++          for (const id of new Set([...Object.keys(s.page), ...Object.keys(s.scroll)])) {
++            if (s.page[id] !== prev.page[id] || s.scroll[id] !== prev.scroll[id]) renderer.refreshAttachment(id);
++          }
++        }),
+         useSel.subscribe(() => selectCtl.refresh()),
+         // O texto em edição some do canvas (a <textarea> o substitui).
+         useEdit.subscribe((s) => renderer.setHidden(s.session?.id ?? null)),
+@@ -538,6 +566,7 @@ export function CanvasView() {
+ 
+     return () => {
+       disposed = true;
++      host.removeEventListener("wheel", onWheel, { capture: true });
+       host.removeEventListener("dragover", onDragOver as EventListener);
+       host.removeEventListener("drop", onDrop as EventListener);
+       unsubs.forEach((u) => u());
+diff --git a/src/components/EmbedLayer.tsx b/src/components/EmbedLayer.tsx
+index 81edcd1..5d9a7d8 100644
+--- a/src/components/EmbedLayer.tsx
++++ b/src/components/EmbedLayer.tsx
+@@ -1,9 +1,23 @@
++import { useEffect } from "react";
+ import { AttachmentElement } from "../core/model";
+ import { useEmbedView } from "../core/embedView";
+-import { parseYouTube, youtubeEmbed, youtubeWatch } from "../core/embed";
++import { clampPage, clampScroll, maxScroll, pageAtScroll, parseYouTube, scrollLayout, youtubeEmbed, youtubeWatch } from "../core/embed";
+ import { openExternal } from "../core/openExternal";
+ import { selectActivePage, useDoc, useSel, useView } from "../core/store";
+ 
++/** Passa `delta` páginas no PDF (carrossel: troca a página; rolagem: salta para o início da página vizinha). */
++function turnPage(el: AttachmentElement, delta: number) {
++  const v = useEmbedView.getState();
++  const count = Math.max(1, el.pages ?? 1);
++  if (el.mode === "scroll") {
++    const L = scrollLayout(el.w, el.ratio ?? 1.414, count);
++    const cur = pageAtScroll(v.scroll[el.id] ?? 0, el.h, L.step, count);
++    v.setScroll(el.id, clampScroll((clampPage(cur + delta, count) - 1) * L.step, L.total, el.h));
++  } else {
++    v.setPage(el.id, clampPage((v.page[el.id] ?? 1) + delta, count));
++  }
++}
++
+ /**
+  * Camada DOM por cima do canvas para o que o WebGL não desenha: o player do YouTube (iframe) e os controles
+  * dos incorporados. Acompanha a câmera; só os botões recebem clique, o resto deixa o canvas funcionar.
+@@ -15,20 +29,65 @@ export function EmbedLayer() {
+   const playing = useEmbedView((s) => s.playing);
+   const play = useEmbedView((s) => s.play);
+ 
++  const pdfScroll = useEmbedView((s) => s.scroll);
++  const pdfPage = useEmbedView((s) => s.page);
++
++  // Setas e PageUp/PageDown passam as páginas do PDF selecionado (fora de campos de texto).
++  useEffect(() => {
++    const onKey = (ev: KeyboardEvent) => {
++      const t = ev.target as HTMLElement | null;
++      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
++      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
++      const dir = ev.key === "ArrowRight" || ev.key === "PageDown" ? 1 : ev.key === "ArrowLeft" || ev.key === "PageUp" ? -1 : 0;
++      if (!dir) return;
++      const ids = useSel.getState().ids;
++      if (ids.length !== 1) return;
++      const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
++      if (!el || el.type !== "attachment" || el.kind !== "pdf") return;
++      ev.preventDefault();
++      turnPage(el, dir);
++    };
++    window.addEventListener("keydown", onKey);
++    return () => window.removeEventListener("keydown", onKey);
++  }, []);
++
+   const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
+   const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
+-  const items = elements.filter((e): e is AttachmentElement => e.type === "attachment" && e.kind === "video");
++  const items = elements.filter((e): e is AttachmentElement => e.type === "attachment" && (e.kind === "video" || e.kind === "pdf"));
+   if (!items.length) return null;
+ 
+   return (
+     <div className="embed-layer">
+       {items.map((el) => {
+-        const yt = parseYouTube(el.url);
+-        if (!yt) return null;
+         const left = el.x * cam.zoom + cam.x, top = el.y * cam.zoom + cam.y;
+         const w = el.w * cam.zoom, h = el.h * cam.zoom;
+         if (left > vw || top > vh || left + w < 0 || top + h < 0) return null; // fora da tela: nada de iframe vivo
+         const box = { left, top, width: w, height: h };
++        if (el.kind === "pdf") {
++          if (!sel.includes(el.id)) return null;
++          const count = Math.max(1, el.pages ?? 1);
++          const L = scrollLayout(el.w, el.ratio ?? 1.414, count);
++          const scrolling = el.mode === "scroll";
++          const cur = scrolling ? pageAtScroll(pdfScroll[el.id] ?? 0, el.h, L.step, count) : clampPage(pdfPage[el.id] ?? 1, count);
++          const atEnd = scrolling ? (pdfScroll[el.id] ?? 0) >= maxScroll(L.total, el.h) - 1 : cur >= count;
++          return (
++            <div key={el.id} className="embed-box" style={box}>
++              <div className="embed-nav" style={{ top: h + 8 }}>
++                <button onClick={() => turnPage(el, -1)} disabled={cur <= 1} title="Página anterior (←)" aria-label="Página anterior">‹</button>
++                <span className="embed-count">{cur} / {count}</span>
++                <button onClick={() => turnPage(el, 1)} disabled={atEnd} title="Próxima página (→)" aria-label="Próxima página">›</button>
++                <button
++                  onClick={() => useDoc.getState().updateElements([{ ...el, mode: scrolling ? "carousel" : "scroll" }])}
++                  title={scrolling ? "Mostrar uma página por vez" : "Rolar as páginas para baixo"}
++                >
++                  {scrolling ? "Carrossel" : "Rolagem"}
++                </button>
++              </div>
++            </div>
++          );
++        }
++        const yt = parseYouTube(el.url);
++        if (!yt) return null;
+         if (playing === el.id) {
+           return (
+             <div key={el.id} className="embed-box" style={box}>
+diff --git a/src/components/clipboard.ts b/src/components/clipboard.ts
+index 3cf4acc..095849d 100644
+--- a/src/components/clipboard.ts
++++ b/src/components/clipboard.ts
+@@ -63,6 +63,28 @@ export async function addAttachmentFile(file: File | Blob, at: Point = worldPoin
+   let data: string;
+   try { data = await readAsDataUrl(file); } catch { ui.showToast("Não consegui ler este arquivo."); return false; }
+   let w = 340, h = 220;
++  const fileName = name || (file as File).name || "";
++  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(fileName);
++  if (isPdf) {
++    // PDF vira carrossel: precisa de número de páginas e proporção (pdf.js é carregado só agora)
++    const info = await import("../render/pdfDoc").then((m) => m.probePdf(data)).catch(() => null);
++    if (info) {
++      const ratio = Math.min(4, Math.max(0.25, info.ratio));
++      const pw = ratio > 1 ? 420 : 560;
++      const ph = Math.round(pw * ratio);
++      const id = newId();
++      useDoc.getState().addElement({
++        id, type: "attachment", kind: "pdf", x: at.x - pw / 2, y: at.y - ph / 2, w: pw, h: ph,
++        title: fileName || "Documento PDF", url: fileName || "documento.pdf", data, mime: "application/pdf", opacity: 1,
++        pages: info.pages, ratio, mode: "carousel",
++      });
++      useSel.getState().set([id]);
++      return true;
++    }
++    ui.showToast("Não consegui abrir este PDF (protegido por senha ou corrompido). Ele foi anexado como arquivo.");
++  } else if (/\.(pptx?|odp|key)$/i.test(fileName)) {
++    ui.showToast("Para ver os slides como carrossel, exporte a apresentação em PDF e cole o PDF aqui.");
++  }
+   if (isImage) {
+     const img = await loadImage(data);
+     if (!img || !img.naturalWidth || !img.naturalHeight) {
+diff --git a/src/core/embed.test.ts b/src/core/embed.test.ts
+index 899c848..25fe9e9 100644
+--- a/src/core/embed.test.ts
++++ b/src/core/embed.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from "vitest";
+ import { normalizeDoc } from "./model";
+-import { parseStart, parseYouTube, youtubeEmbed, youtubeThumb, youtubeWatch } from "./embed";
++import { clampPage, clampScroll, fitContain, maxScroll, pageAtScroll, parseStart, parseYouTube, scrollLayout, visiblePages, youtubeEmbed, youtubeThumb, youtubeWatch } from "./embed";
+ 
+ describe("YouTube", () => {
+   const ID = "dQw4w9WgXcQ";
+@@ -57,3 +57,61 @@ describe("anexo de vídeo no arquivo", () => {
+   it("PDF sem conteúdo embutido vira arquivo", () => expect(kindOf({ kind: "pdf", title: "p", url: "p.pdf" })).toBe("file"));
+   it("tipo desconhecido vira arquivo", () => expect(kindOf({ kind: "zzz", title: "p", url: "x" })).toBe("file"));
+ });
++
++
++describe("PDF: páginas e rolagem", () => {
++  it("clampPage fica entre 1 e o total", () => {
++    expect(clampPage(0, 10)).toBe(1);
++    expect(clampPage(11, 10)).toBe(10);
++    expect(clampPage(3.4, 10)).toBe(3);
++    expect(clampPage(5, 0)).toBe(1);
++  });
++  it("layout de rolagem soma páginas e espaços", () => {
++    const L = scrollLayout(400, 1.5, 3); // páginas de 600 px, vão de 10
++    expect(L.slot).toBe(600);
++    expect(L.step).toBe(610);
++    expect(L.total).toBe(3 * 600 + 2 * 10);
++    expect(scrollLayout(400, 1.5, 1).total).toBe(600);
++  });
++  it("limita a rolagem ao conteúdo", () => {
++    expect(maxScroll(1820, 600)).toBe(1220);
++    expect(maxScroll(300, 600)).toBe(0);
++    expect(clampScroll(-5, 1820, 600)).toBe(0);
++    expect(clampScroll(5000, 1820, 600)).toBe(1220);
++  });
++  it("lista só as páginas visíveis", () => {
++    // passo 610, janela de 600 px
++    expect(visiblePages(0, 600, 610, 10)).toEqual([1]);
++    expect(visiblePages(300, 600, 610, 10)).toEqual([1, 2]);
++    expect(visiblePages(610, 600, 610, 10)).toEqual([2]);
++    expect(visiblePages(5000, 600, 610, 3)).toEqual([]);
++    expect(visiblePages(0, 2000, 610, 3)).toEqual([1, 2, 3]);
++  });
++  it("página sob o centro da janela", () => {
++    expect(pageAtScroll(0, 600, 610, 10)).toBe(1);
++    expect(pageAtScroll(400, 600, 610, 10)).toBe(2); // centro em 700 → 2ª página
++    expect(pageAtScroll(99999, 600, 610, 10)).toBe(10);
++  });
++  it("fitContain centraliza sem esticar", () => {
++    const f = fitContain(200, 100, 50, 100); // página em pé num quadro largo
++    expect(f).toEqual({ w: 50, h: 100, x: 75, y: 0 });
++    const g = fitContain(100, 100, 200, 100);
++    expect(g).toEqual({ w: 100, h: 50, x: 0, y: 25 });
++  });
++});
++
++describe("anexo PDF no arquivo", () => {
++  it("mantém PDF com conteúdo e sanitiza páginas, proporção e modo", () => {
++    const d = normalizeDoc({
++      version: 1,
++      pages: [{ id: "p", name: "1", paper: "blank", background: "#ffffff", elements: [
++        { id: "a", type: "attachment", x: 0, y: 0, w: 420, h: 594, mime: "application/pdf", opacity: 1, kind: "pdf", title: "t", url: "t.pdf", data: "data:application/pdf;base64,AAAA", pages: -3, ratio: 99, mode: "zzz" },
++      ] }],
++    });
++    const el = d.pages[0].elements[0];
++    expect(el.type === "attachment" && el.kind).toBe("pdf");
++    expect(el.type === "attachment" && el.pages).toBe(1);
++    expect(el.type === "attachment" && el.ratio).toBe(4);
++    expect(el.type === "attachment" && el.mode).toBe("carousel");
++  });
++});
+diff --git a/src/core/embed.ts b/src/core/embed.ts
+index fbcb2b2..775d9dd 100644
+--- a/src/core/embed.ts
++++ b/src/core/embed.ts
+@@ -37,3 +37,42 @@ export const youtubeEmbed = (r: YouTubeRef) =>
+   `https://www.youtube-nocookie.com/embed/${r.id}?autoplay=1&rel=0&playsinline=1${r.start ? `&start=${r.start}` : ""}`;
+ 
+ export const youtubeWatch = (r: YouTubeRef) => `https://www.youtube.com/watch?v=${r.id}${r.start ? `&t=${r.start}s` : ""}`;
++
++// ---------------- PDF: páginas, carrossel e rolagem ----------------
++
++export const PDF_GAP = 10;
++
++export const clampPage = (p: number, count: number) => Math.min(Math.max(1, Math.floor(count)), Math.max(1, Math.round(p)));
++
++/** Modo rolagem: páginas empilhadas com a largura do objeto. `slot` = altura de cada página; `step` = passo entre elas. */
++export function scrollLayout(w: number, ratio: number, count: number) {
++  const slot = w * ratio;
++  const step = slot + PDF_GAP;
++  return { slot, step, total: count * slot + Math.max(0, count - 1) * PDF_GAP };
++}
++
++export const maxScroll = (total: number, viewH: number) => Math.max(0, total - viewH);
++export const clampScroll = (y: number, total: number, viewH: number) => Math.min(maxScroll(total, viewH), Math.max(0, y));
++
++/** Páginas (1..count) que aparecem na janela [scroll, scroll + viewH]. */
++export function visiblePages(scroll: number, viewH: number, step: number, count: number): number[] {
++  const out: number[] = [];
++  const first = Math.max(0, Math.floor(scroll / step));
++  for (let i = first; i < count; i++) {
++    const top = i * step;
++    if (top >= scroll + viewH) break;
++    out.push(i + 1);
++  }
++  return out;
++}
++
++/** Página sob o centro da janela (o "3 / 12" do indicador na rolagem). */
++export const pageAtScroll = (scroll: number, viewH: number, step: number, count: number) =>
++  clampPage(Math.floor((scroll + viewH / 2) / step) + 1, count);
++
++/** Encaixa uma imagem w×h dentro de um quadro boxW×boxH, centralizada e sem esticar. */
++export function fitContain(boxW: number, boxH: number, w: number, h: number) {
++  const k = Math.min(boxW / w, boxH / h);
++  const fw = w * k, fh = h * k;
++  return { w: fw, h: fh, x: (boxW - fw) / 2, y: (boxH - fh) / 2 };
++}
+diff --git a/src/core/embedView.ts b/src/core/embedView.ts
+index c5ae759..332ce4f 100644
+--- a/src/core/embedView.ts
++++ b/src/core/embedView.ts
+@@ -1,12 +1,22 @@
+ import { create } from "zustand";
+ 
+ interface EmbedViewState {
+-  /** Vídeo em reprodução (um por vez). Não persiste e não entra no desfazer. */
++  /** Vídeo em reprodução (um por vez). */
+   playing: string | null;
+   play: (id: string | null) => void;
++  /** PDF: página atual (carrossel) e deslocamento em unidades do mundo (rolagem), por elemento. */
++  page: Record<string, number>;
++  scroll: Record<string, number>;
++  setPage: (id: string, page: number) => void;
++  setScroll: (id: string, y: number) => void;
+ }
+ 
++/** Estado de leitura dos incorporados: não persiste e não entra no desfazer (virar página não é edição). */
+ export const useEmbedView = create<EmbedViewState>((set) => ({
+   playing: null,
+   play: (playing) => set({ playing }),
++  page: {},
++  scroll: {},
++  setPage: (id, p) => set((s) => (s.page[id] === p ? s : { page: { ...s.page, [id]: p } })),
++  setScroll: (id, y) => set((s) => (s.scroll[id] === y ? s : { scroll: { ...s.scroll, [id]: y } })),
+ }));
+diff --git a/src/core/loaderCache.ts b/src/core/loaderCache.ts
+index 35a27d1..273c05e 100644
+--- a/src/core/loaderCache.ts
++++ b/src/core/loaderCache.ts
+@@ -20,6 +20,8 @@ export function createLoaderCache<T>(load: (key: string) => Promise<T | null>) {
+       }
+       return p;
+     },
++    /** Remove e devolve o valor carregado (para o chamador liberar o recurso). */
++    take(key: string): T | undefined { const v = ready.get(key); ready.delete(key); return v; },
+     values: () => Array.from(ready.values()),
+     clear() { ready.clear(); pending.clear(); },
+   };
+diff --git a/src/core/model.ts b/src/core/model.ts
+index 4b6075e..77f51b5 100644
+--- a/src/core/model.ts
++++ b/src/core/model.ts
+@@ -257,8 +257,9 @@ export interface AttachmentElement {
+   mime: string;
+   /** Imagens e PDFs colados/arrastados ficam incorporados ao arquivo .hiraku. */
+   data?: string;
+-  /** PDF: número de páginas e modo de leitura (carrossel ou rolagem). */
++  /** PDF: número de páginas, proporção altura/largura da 1ª página e modo de leitura (carrossel ou rolagem). */
+   pages?: number;
++  ratio?: number;
+   mode?: "carousel" | "scroll";
+   opacity: number;
+ }
+@@ -359,6 +360,7 @@ const cleanAttachment = (e: any): AttachmentElement => {
+     kind, title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"),
+     opacity: Math.max(0, Math.min(1, num(e.opacity, 1))),
+     pages: kind === "pdf" ? Math.max(1, Math.floor(num(e.pages, 1))) : undefined,
++    ratio: kind === "pdf" ? Math.min(4, Math.max(0.25, num(e.ratio, 1.414))) : undefined,
+     mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
+   };
+ };
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index dd0e988..44db8e7 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -10,7 +10,8 @@ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+ import { decimateForPreview } from "../core/ink";
+ import { paintFrame, paintNode } from "./mindDraw";
+ import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
+-import { parseYouTube, youtubeThumb } from "../core/embed";
++import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visiblePages, youtubeThumb } from "../core/embed";
++import { useEmbedView } from "../core/embedView";
+ import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
+ 
+ const LINE = "#1B2233";
+@@ -271,6 +272,9 @@ export class Renderer {
+       } else if (el.kind === "video" && parseYouTube(el.url)) {
+         this.paintVideo(node, el);
+         node.eventMode = "none";
++      } else if (el.kind === "pdf" && el.data) {
++        this.paintPdf(node, el);
++        node.eventMode = "none";
+       } else {
+         const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
+         card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
+@@ -347,6 +351,85 @@ export class Renderer {
+     });
+   }
+ 
++  private pdf: typeof import("./pdfDoc") | null = null;
++
++  /** Repinta um anexo (ex.: virou a página do PDF) com a versão mais recente do elemento. */
++  refreshAttachment(id: string) {
++    const n = this.nodes.get(id);
++    if (!n || n.g.destroyed) return;
++    this.paint(n.g, n.view ?? n.el, n);
++  }
++
++  /**
++   * PDF: carrossel (uma página por vez) ou rolagem (páginas empilhadas dentro do quadro, com máscara).
++   * As páginas viram textura só quando aparecem; ao ficarem prontas o nó é repintado sozinho.
++   */
++  private paintPdf(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
++    const src = el.data as string;
++    const count = Math.max(1, el.pages ?? 1);
++    const ratio = el.ratio ?? 1.414;
++    const view = useEmbedView.getState();
++    node.addChild(new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xFFFFFF }).stroke({ color: 0xB4BED0, width: 1 }));
++
++    const pdf = this.pdf;
++    if (!pdf) { // módulo do pdf.js ainda não carregou: carrega e repinta
++      void import("./pdfDoc").then((m) => { this.pdf = m; this.refreshAttachment(el.id); });
++      this.note(node, el, "Abrindo PDF…");
++      return;
++    }
++    const want = (p: number) => { // pede a página e repinta quando chegar
++      if (pdf.peekPage(src, p) || pdf.pageFailed(src, p)) return;
++      void pdf.loadPage(src, p).then(() => { this.refreshAttachment(el.id); });
++    };
++    const drawPage = (p: number, x: number, y: number, w: number, h: number, into: Container) => {
++      const tex = pdf.peekPage(src, p);
++      if (tex) {
++        const f = fitContain(w, h, tex.width, tex.height);
++        const sp = new Sprite(tex);
++        sp.position.set(x + f.x, y + f.y);
++        sp.width = f.w; sp.height = f.h; // textura já tem tamanho real
++        into.addChild(sp);
++      } else {
++        const t = new Text({ text: pdf.pageFailed(src, p) ? "Página indisponível" : "Carregando página…", style: { fontFamily: "Arial", fontSize: 14, fill: 0x52627A } });
++        t.position.set(x + (w - t.width) / 2, y + Math.min(h, 120) / 2);
++        into.addChild(t);
++      }
++    };
++
++    if (el.mode === "scroll") {
++      const L = scrollLayout(el.w, ratio, count);
++      const scroll = clampScroll(view.scroll[el.id] ?? 0, L.total, el.h);
++      const clip = new Graphics().rect(el.x, el.y, el.w, el.h).fill({ color: 0xFFFFFF });
++      const body = new Container();
++      node.addChild(clip, body);
++      body.mask = clip;
++      for (const p of visiblePages(scroll, el.h, L.step, count)) {
++        const y = el.y + (p - 1) * L.step - scroll;
++        body.addChild(new Graphics().rect(el.x, y, el.w, L.slot).fill({ color: 0xFFFFFF }).stroke({ color: 0xDDE3EE, width: 1 }));
++        drawPage(p, el.x, y, el.w, L.slot, body);
++        want(p);
++      }
++      const maxS = L.total - el.h;
++      if (maxS > 0) { // barra de rolagem
++        const bh = Math.max(24, el.h * (el.h / L.total));
++        const by = el.y + (scroll / maxS) * (el.h - bh);
++        body.addChild(new Graphics().roundRect(el.x + el.w - 8, by, 4, bh, 2).fill({ color: 0x1B2233, alpha: 0.35 }));
++      }
++    } else {
++      const page = clampPage(view.page[el.id] ?? 1, count);
++      drawPage(page, el.x, el.y, el.w, el.h, node);
++      want(page);
++      if (page < count) want(page + 1); // adianta a vizinha para a virada ser instantânea
++      if (page > 1) want(page - 1);
++    }
++  }
++
++  private note(node: Container, el: Extract<HirakuElement, { type: "attachment" }>, msg: string) {
++    const t = new Text({ text: msg, style: { fontFamily: "Arial", fontSize: 14, fill: 0x52627A } });
++    t.position.set(el.x + (el.w - t.width) / 2, el.y + el.h / 2 - t.height / 2);
++    node.addChild(t);
++  }
++
+   /** Vídeo do YouTube parado: miniatura (quando carrega) + botão de play. O player real é um iframe na camada DOM. */
+   private paintVideo(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
+     const yt = parseYouTube(el.url);
+@@ -552,5 +635,6 @@ export class Renderer {
+     clearTimeout(this.resTimer);
+     this.app.destroy(false, { children: true });
+     clearImageTextures();
++    this.pdf?.clearPdf();
+   }
+ }
+diff --git a/src/render/pdfDoc.ts b/src/render/pdfDoc.ts
+new file mode 100644
+index 0000000..8919991
+--- /dev/null
++++ b/src/render/pdfDoc.ts
+@@ -0,0 +1,106 @@
++// PDF no canvas: abre o documento com o pdf.js (carregado sob demanda, fora do pacote principal) e
++// transforma cada página em textura do Pixi, só quando ela aparece, com limite de páginas na memória.
++import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
++import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
++import { Texture } from "pixi.js";
++import { createLoaderCache } from "../core/loaderCache";
++
++interface PdfPage {
++  getViewport(o: { scale: number }): { width: number; height: number };
++  render(o: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }): { promise: Promise<void> };
++}
++interface PdfDocument { numPages: number; getPage(n: number): Promise<PdfPage>; destroy(): Promise<void> }
++
++(pdfjs as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = workerUrl;
++
++/** Largura em pixels em que cada página é rasterizada (nítido até ~2× de zoom num objeto de 560 px). */
++const PAGE_PX = 1400;
++/** Texturas de página mantidas por documento (as mais antigas são destruídas). */
++const MAX_PAGES = 14;
++
++const toBytes = (dataUrl: string): Uint8Array => {
++  const bin = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
++  const out = new Uint8Array(bin.length);
++  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
++  return out;
++};
++
++const docs = createLoaderCache<PdfDocument>(async (src) => {
++  const task = (pdfjs as { getDocument: (o: { data: Uint8Array }) => { promise: Promise<PdfDocument> } }).getDocument({ data: toBytes(src) });
++  return task.promise;
++});
++
++interface PageStore { cache: ReturnType<typeof createLoaderCache<Texture>>; lru: number[]; failed: Set<number> }
++const stores = new Map<string, PageStore>();
++
++function store(src: string): PageStore {
++  let s = stores.get(src);
++  if (!s) {
++    s = {
++      cache: createLoaderCache<Texture>(async (k) => {
++        const doc = await docs.get(src);
++        if (!doc) return null;
++        const page = await doc.getPage(Number(k));
++        const base = page.getViewport({ scale: 1 });
++        const vp = page.getViewport({ scale: Math.min(3, PAGE_PX / base.width) });
++        const canvas = document.createElement("canvas");
++        canvas.width = Math.max(1, Math.ceil(vp.width));
++        canvas.height = Math.max(1, Math.ceil(vp.height));
++        const ctx = canvas.getContext("2d");
++        if (!ctx) return null;
++        ctx.fillStyle = "#ffffff"; // páginas de PDF costumam ser transparentes
++        ctx.fillRect(0, 0, canvas.width, canvas.height);
++        await page.render({ canvasContext: ctx, viewport: vp }).promise;
++        return Texture.from(canvas);
++      }),
++      lru: [],
++      failed: new Set(),
++    };
++    stores.set(src, s);
++  }
++  return s;
++}
++
++/** Página 1: quantas páginas tem e a proporção altura/largura (null se o PDF não abre). */
++export async function probePdf(src: string): Promise<{ pages: number; ratio: number } | null> {
++  const doc = await docs.get(src);
++  if (!doc) return null;
++  try {
++    const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
++    return { pages: doc.numPages, ratio: vp.height / vp.width };
++  } catch { return null; }
++}
++
++const touch = (s: PageStore, n: number) => { const i = s.lru.indexOf(n); if (i >= 0) s.lru.splice(i, 1); s.lru.push(n); };
++
++/** Textura da página se já está pronta (e marca como usada agora). */
++export function peekPage(src: string, n: number): Texture | undefined {
++  const s = stores.get(src);
++  const t = s?.cache.peek(String(n));
++  if (s && t) touch(s, n);
++  return t;
++}
++
++export const pageFailed = (src: string, n: number) => !!stores.get(src)?.failed.has(n);
++
++/** Carrega a página (uma vez só). Falha fica registrada para não ficar tentando em loop. */
++export async function loadPage(src: string, n: number): Promise<Texture | null> {
++  const s = store(src);
++  if (s.failed.has(n)) return null;
++  const t = await s.cache.get(String(n));
++  if (!t) { s.failed.add(n); return null; }
++  touch(s, n);
++  while (s.lru.length > MAX_PAGES) {
++    const old = s.lru.shift();
++    if (old !== undefined) { try { s.cache.take(String(old))?.destroy(true); } catch { /* já destruída */ } }
++  }
++  return t;
++}
++
++/** Libera tudo (ao destruir o renderer). */
++export function clearPdf() {
++  for (const s of stores.values()) for (const t of s.cache.values()) { try { t.destroy(true); } catch { /* já destruída */ } }
++  stores.clear();
++  for (const d of docs.values()) void d.destroy().catch(() => undefined);
++  docs.clear();
++}
+diff --git a/src/styles.css b/src/styles.css
+index 98bf965..2e43c82 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -635,3 +635,10 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
+   background: rgba(230, 33, 23, 0.92); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+ }
+ .embed-play:hover { background: #e62117; }
++.embed-nav {
++  position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px;
++  pointer-events: auto; white-space: nowrap;
++}
++.embed-nav button { min-width: 32px; }
++.embed-nav button:disabled { opacity: 0.4; cursor: default; }
++.embed-count { font-size: 12px; min-width: 52px; text-align: center; color: var(--ink, #1b2233); background: var(--paper, #fff); border-radius: 8px; padding: 5px 8px; box-shadow: 0 2px 8px rgba(20, 30, 60, 0.15); }
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+index cfbbd6f..1bd5052 100644
+--- a/src/vite-env.d.ts
++++ b/src/vite-env.d.ts
+@@ -4,3 +4,6 @@
+ /** Versão do app (package.json), injetada pelo Vite. */
+ declare const __APP_VERSION__: string;
+ declare const __GH_REPO__: string;
++
++// pdf.js (build "legacy", compatível com WebViews mais antigas). Tipado à mão em render/pdfDoc.ts.
++declare module "pdfjs-dist/legacy/build/pdf.mjs";
+diff --git a/vite.config.ts b/vite.config.ts
+index ee2e4af..a8781f9 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -26,7 +26,7 @@ export default defineConfig({
+       registerType: "prompt",
+       injectRegister: false,
+       includeAssets: ["icon.svg"],
+-      workbox: { navigateFallbackDenylist: [/download\.html$/] },
++      workbox: { navigateFallbackDenylist: [/download\.html$/], globPatterns: ["**/*.{js,css,html,mjs}"], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
+       manifest: {
+         name: "HM Ideas",
+         short_name: "HM Ideas",
+-- 
+2.43.0
+

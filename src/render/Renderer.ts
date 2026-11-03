@@ -10,6 +10,8 @@ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
 import { decimateForPreview } from "../core/ink";
 import { paintFrame, paintNode } from "./mindDraw";
 import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
+import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visiblePages, youtubeThumb } from "../core/embed";
+import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
 
 const LINE = "#1B2233";
@@ -267,6 +269,12 @@ export class Renderer {
       node.alpha = el.opacity;
       if (el.kind === "image" && el.data) {
         this.paintImage(node, el);
+      } else if (el.kind === "video" && parseYouTube(el.url)) {
+        this.paintVideo(node, el);
+        node.eventMode = "none";
+      } else if (el.kind === "pdf" && el.data) {
+        this.paintPdf(node, el);
+        node.eventMode = "none";
       } else {
         const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
         card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
@@ -341,6 +349,120 @@ export class Renderer {
         t.position.set(el.x + 10, el.y + 10); node.addChild(t);
       }
     });
+  }
+
+  private pdf: typeof import("./pdfDoc") | null = null;
+
+  /** Repinta um anexo (ex.: virou a página do PDF) com a versão mais recente do elemento. */
+  refreshAttachment(id: string) {
+    const n = this.nodes.get(id);
+    if (!n || n.g.destroyed) return;
+    this.paint(n.g, n.view ?? n.el, n);
+  }
+
+  /**
+   * PDF: carrossel (uma página por vez) ou rolagem (páginas empilhadas dentro do quadro, com máscara).
+   * As páginas viram textura só quando aparecem; ao ficarem prontas o nó é repintado sozinho.
+   */
+  private paintPdf(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
+    const src = el.data as string;
+    const count = Math.max(1, el.pages ?? 1);
+    const ratio = el.ratio ?? 1.414;
+    const view = useEmbedView.getState();
+    node.addChild(new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xFFFFFF }).stroke({ color: 0xB4BED0, width: 1 }));
+
+    const pdf = this.pdf;
+    if (!pdf) { // módulo do pdf.js ainda não carregou: carrega e repinta
+      void import("./pdfDoc").then((m) => { this.pdf = m; this.refreshAttachment(el.id); });
+      this.note(node, el, "Abrindo PDF…");
+      return;
+    }
+    const want = (p: number) => { // pede a página e repinta quando chegar
+      if (pdf.peekPage(src, p) || pdf.pageFailed(src, p)) return;
+      void pdf.loadPage(src, p).then(() => { this.refreshAttachment(el.id); });
+    };
+    const drawPage = (p: number, x: number, y: number, w: number, h: number, into: Container) => {
+      const tex = pdf.peekPage(src, p);
+      if (tex) {
+        const f = fitContain(w, h, tex.width, tex.height);
+        const sp = new Sprite(tex);
+        sp.position.set(x + f.x, y + f.y);
+        sp.width = f.w; sp.height = f.h; // textura já tem tamanho real
+        into.addChild(sp);
+      } else {
+        const t = new Text({ text: pdf.pageFailed(src, p) ? "Página indisponível" : "Carregando página…", style: { fontFamily: "Arial", fontSize: 14, fill: 0x52627A } });
+        t.position.set(x + (w - t.width) / 2, y + Math.min(h, 120) / 2);
+        into.addChild(t);
+      }
+    };
+
+    if (el.mode === "scroll") {
+      const L = scrollLayout(el.w, ratio, count);
+      const scroll = clampScroll(view.scroll[el.id] ?? 0, L.total, el.h);
+      const clip = new Graphics().rect(el.x, el.y, el.w, el.h).fill({ color: 0xFFFFFF });
+      const body = new Container();
+      node.addChild(clip, body);
+      body.mask = clip;
+      for (const p of visiblePages(scroll, el.h, L.step, count)) {
+        const y = el.y + (p - 1) * L.step - scroll;
+        body.addChild(new Graphics().rect(el.x, y, el.w, L.slot).fill({ color: 0xFFFFFF }).stroke({ color: 0xDDE3EE, width: 1 }));
+        drawPage(p, el.x, y, el.w, L.slot, body);
+        want(p);
+      }
+      const maxS = L.total - el.h;
+      if (maxS > 0) { // barra de rolagem
+        const bh = Math.max(24, el.h * (el.h / L.total));
+        const by = el.y + (scroll / maxS) * (el.h - bh);
+        body.addChild(new Graphics().roundRect(el.x + el.w - 8, by, 4, bh, 2).fill({ color: 0x1B2233, alpha: 0.35 }));
+      }
+    } else {
+      const page = clampPage(view.page[el.id] ?? 1, count);
+      drawPage(page, el.x, el.y, el.w, el.h, node);
+      want(page);
+      if (page < count) want(page + 1); // adianta a vizinha para a virada ser instantânea
+      if (page > 1) want(page - 1);
+    }
+  }
+
+  private note(node: Container, el: Extract<HirakuElement, { type: "attachment" }>, msg: string) {
+    const t = new Text({ text: msg, style: { fontFamily: "Arial", fontSize: 14, fill: 0x52627A } });
+    t.position.set(el.x + (el.w - t.width) / 2, el.y + el.h / 2 - t.height / 2);
+    node.addChild(t);
+  }
+
+  /** Vídeo do YouTube parado: miniatura (quando carrega) + botão de play. O player real é um iframe na camada DOM. */
+  private paintVideo(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
+    const yt = parseYouTube(el.url);
+    if (!yt) return;
+    const thumb = youtubeThumb(yt.id);
+    this.imageKey.set(node, thumb);
+    node.addChild(new Graphics().roundRect(el.x, el.y, el.w, el.h, 10).fill({ color: 0x0F1420 }));
+    // miniatura entra logo acima do fundo (índice 1) e é cortada pelo contorno arredondado do cartão
+    const putThumb = (tex: Texture) => {
+      const k = Math.max(el.w / tex.width, el.h / tex.height); // cobrir o cartão, sem esticar
+      const sp = new Sprite(tex);
+      sp.scale.set(k);
+      sp.position.set(el.x + (el.w - tex.width * k) / 2, el.y + (el.h - tex.height * k) / 2);
+      const mask = new Graphics().roundRect(el.x, el.y, el.w, el.h, 10).fill({ color: 0xFFFFFF });
+      node.addChildAt(mask, 1);
+      node.addChildAt(sp, 2);
+      sp.mask = mask;
+    };
+    const hit = peekImageTexture(thumb);
+    if (hit) putThumb(hit);
+    else void loadImageTexture(thumb).then((tex) => {
+      if (!tex || node.destroyed || this.imageKey.get(node) !== thumb) return;
+      putThumb(tex);
+    });
+    // faixa com o título + botão de play
+    const barH = Math.min(30, el.h * 0.2);
+    node.addChild(new Graphics().roundRect(el.x, el.y + el.h - barH, el.w, barH, 10).fill({ color: 0x000000, alpha: 0.55 }));
+    const title = new Text({ text: el.title || "Vídeo do YouTube", style: { fontFamily: "Arial", fontSize: Math.max(10, Math.min(14, barH * 0.5)), fill: 0xFFFFFF } });
+    title.position.set(el.x + 10, el.y + el.h - barH + (barH - title.height) / 2);
+    node.addChild(title);
+    const cx = el.x + el.w / 2, cy = el.y + el.h / 2, r = Math.max(16, Math.min(46, Math.min(el.w, el.h) * 0.13));
+    node.addChild(new Graphics().circle(cx, cy, r).fill({ color: 0xE62117, alpha: 0.92 }));
+    node.addChild(new Graphics().poly([cx - r * 0.28, cy - r * 0.42, cx - r * 0.28, cy + r * 0.42, cx + r * 0.5, cy]).fill({ color: 0xFFFFFF }));
   }
 
   // Texto é raster: ao dar zoom, rasteriza de novo em resolução maior (com atraso, para não travar o gesto).
@@ -513,5 +635,6 @@ export class Renderer {
     clearTimeout(this.resTimer);
     this.app.destroy(false, { children: true });
     clearImageTextures();
+    this.pdf?.clearPdf();
   }
 }

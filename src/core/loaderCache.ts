@@ -20,6 +20,8 @@ export function createLoaderCache<T>(load: (key: string) => Promise<T | null>) {
       }
       return p;
     },
+    /** Remove e devolve o valor carregado (para o chamador liberar o recurso). */
+    take(key: string): T | undefined { const v = ready.get(key); ready.delete(key); return v; },
     values: () => Array.from(ready.values()),
     clear() { ready.clear(); pending.clear(); },
   };

@@ -1,0 +1,275 @@
+From eb19bfc91ba96b13487aa0dd43c9f751cb8118b1 Mon Sep 17 00:00:00 2001
+From: HM Dev <dev@hm.local>
+Date: Tue, 3 Nov 2026 18:11:24 +0000
+Subject: [PATCH] =?UTF-8?q?fix:=20imagem=20colada=20aparecia=20em=20branco?=
+ =?UTF-8?q?=20(textura=20carregada=20de=20forma=20ass=C3=ADncrona)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- render/imageTexture.ts: decodifica o data URL num <img> antes de criar a textura
+  (Texture.from(dataURL) no PixiJS v8 devolve textura vazia) e guarda em cache por imagem.
+- Renderer: desenha a imagem na hora se a textura já está pronta; senão mostra um quadro
+  "carregando" e troca pelo sprite ao terminar. Tamanho do sprite só é definido depois
+  de a textura ter dimensões reais. Imagem inválida mostra aviso em vez de ficar branca.
+- clipboard: não cria o anexo se a imagem não decodifica (avisa o usuário).
+- core/loaderCache.ts (+ teste): cache assíncrono puro com deduplicação.
+- versão 0.4.1 (package.json, tauri.conf.json, Cargo.toml).
+---
+ package.json                 |  2 +-
+ src-tauri/Cargo.toml         |  2 +-
+ src-tauri/tauri.conf.json    |  2 +-
+ src/components/clipboard.ts  | 12 ++++++-----
+ src/core/loaderCache.test.ts | 32 +++++++++++++++++++++++++++++
+ src/core/loaderCache.ts      | 26 +++++++++++++++++++++++
+ src/render/Renderer.ts       | 40 ++++++++++++++++++++++++++++++------
+ src/render/imageTexture.ts   | 32 +++++++++++++++++++++++++++++
+ 8 files changed, 134 insertions(+), 14 deletions(-)
+ create mode 100644 src/core/loaderCache.test.ts
+ create mode 100644 src/core/loaderCache.ts
+ create mode 100644 src/render/imageTexture.ts
+
+diff --git a/package.json b/package.json
+index 3ae66fb..79ce525 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+     "type": "git",
+     "url": "https://github.com/IcaropLira/HMIdeas.git"
+   },
+-  "version": "0.4.0",
++  "version": "0.4.1",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 0c82789..3b9f307 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "hm-ideas"
+-version = "0.4.0"
++version = "0.4.1"
+ description = "HM Ideas (Hiraku Manager Ideas): quadro branco e caderno de anotações com caneta"
+ edition = "2021"
+ 
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 668e93e..ddedf69 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "HM Ideas",
+-  "version": "0.4.0",
++  "version": "0.4.1",
+   "identifier": "app.hiraku.hmideas",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+diff --git a/src/components/clipboard.ts b/src/components/clipboard.ts
+index 8b2b3c6..62d9c20 100644
+--- a/src/components/clipboard.ts
++++ b/src/components/clipboard.ts
+@@ -64,12 +64,14 @@ export async function addAttachmentFile(file: File | Blob, at: Point = worldPoin
+   let w = 340, h = 220;
+   if (isImage) {
+     const img = await loadImage(data);
+-    if (img && img.naturalWidth && img.naturalHeight) {
+-      data = await shrinkIfHuge(file, data, img);
+-      const s = Math.min(1, 640 / img.naturalWidth, 480 / img.naturalHeight);
+-      w = Math.max(80, img.naturalWidth * s);
+-      h = Math.max(60, img.naturalHeight * s);
++    if (!img || !img.naturalWidth || !img.naturalHeight) {
++      ui.showToast("Não consegui abrir esta imagem (formato não suportado ou arquivo corrompido).");
++      return false;
+     }
++    data = await shrinkIfHuge(file, data, img);
++    const s = Math.min(1, 640 / img.naturalWidth, 480 / img.naturalHeight);
++    w = Math.max(80, img.naturalWidth * s);
++    h = Math.max(60, img.naturalHeight * s);
+   }
+   const title = name || (file as File).name || (isImage ? "Imagem colada" : "Arquivo anexado");
+   const id = newId();
+diff --git a/src/core/loaderCache.test.ts b/src/core/loaderCache.test.ts
+new file mode 100644
+index 0000000..eeb406c
+--- /dev/null
++++ b/src/core/loaderCache.test.ts
+@@ -0,0 +1,32 @@
++import { describe, expect, it } from "vitest";
++import { createLoaderCache } from "./loaderCache";
++
++describe("cache de carregamento", () => {
++  it("carrega uma vez só, mesmo com pedidos simultâneos", async () => {
++    let calls = 0;
++    const c = createLoaderCache<number>(async () => { calls++; return 7; });
++    const [a, b] = await Promise.all([c.get("x"), c.get("x")]);
++    expect([a, b]).toEqual([7, 7]);
++    expect(calls).toBe(1);
++  });
++  it("peek é síncrono e só vê o que já carregou", async () => {
++    const c = createLoaderCache<string>(async (k) => k.toUpperCase());
++    expect(c.peek("a")).toBeUndefined();
++    await c.get("a");
++    expect(c.peek("a")).toBe("A");
++  });
++  it("falha ou nulo não ficam no cache e podem ser tentados de novo", async () => {
++    let n = 0;
++    const c = createLoaderCache<number>(async () => { n++; if (n === 1) throw new Error("x"); if (n === 2) return null; return 3; });
++    expect(await c.get("k")).toBeNull();
++    expect(await c.get("k")).toBeNull();
++    expect(await c.get("k")).toBe(3);
++    expect(c.peek("k")).toBe(3);
++  });
++  it("clear esquece tudo", async () => {
++    const c = createLoaderCache<number>(async () => 1);
++    await c.get("a");
++    c.clear();
++    expect(c.peek("a")).toBeUndefined();
++  });
++});
+diff --git a/src/core/loaderCache.ts b/src/core/loaderCache.ts
+new file mode 100644
+index 0000000..35a27d1
+--- /dev/null
++++ b/src/core/loaderCache.ts
+@@ -0,0 +1,26 @@
++// Cache assíncrono por chave (puro, sem DOM/Pixi): carrega cada chave uma única vez.
++/** Cache genérico por chave com deduplicação de cargas em andamento (testável sem Pixi/DOM). */
++export function createLoaderCache<T>(load: (key: string) => Promise<T | null>) {
++  const ready = new Map<string, T>();
++  const pending = new Map<string, Promise<T | null>>();
++  return {
++    /** Valor já carregado (síncrono) ou undefined. */
++    peek: (key: string): T | undefined => ready.get(key),
++    /** Carrega uma vez só, mesmo que vários elementos peçam a mesma imagem ao mesmo tempo. */
++    get(key: string): Promise<T | null> {
++      const hit = ready.get(key);
++      if (hit !== undefined) return Promise.resolve(hit);
++      let p = pending.get(key);
++      if (!p) {
++        p = load(key)
++          .then((v) => { if (v !== null) ready.set(key, v); return v; })
++          .catch(() => null)
++          .finally(() => { pending.delete(key); });
++        pending.set(key, p);
++      }
++      return p;
++    },
++    values: () => Array.from(ready.values()),
++    clear() { ready.clear(); pending.clear(); },
++  };
++}
+diff --git a/src/render/Renderer.ts b/src/render/Renderer.ts
+index 3ab1eb5..8a9a72a 100644
+--- a/src/render/Renderer.ts
++++ b/src/render/Renderer.ts
+@@ -10,6 +10,7 @@ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+ import { decimateForPreview } from "../core/ink";
+ import { paintFrame, paintNode } from "./mindDraw";
+ import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
++import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
+ 
+ const LINE = "#1B2233";
+ const INDIGO = "#2F4B8F";
+@@ -265,12 +266,7 @@ export class Renderer {
+       for (const ch of node.removeChildren()) ch.destroy({ children: true });
+       node.alpha = el.opacity;
+       if (el.kind === "image" && el.data) {
+-        try {
+-          const sprite = new Sprite(Texture.from(el.data));
+-          sprite.position.set(el.x, el.y);
+-          sprite.width = el.w; sprite.height = el.h;
+-          node.addChild(sprite);
+-        } catch (err) { console.warn("Não foi possível carregar a imagem anexada", err); }
++        this.paintImage(node, el);
+       } else {
+         const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
+         card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
+@@ -316,6 +312,37 @@ export class Renderer {
+     }
+   }
+ 
++  /** Imagem anexada: com a textura já em cache desenha na hora; senão mostra um quadro "Carregando…"
++   *  e troca pelo sprite quando a imagem terminar de decodificar (sem depender de novo repaint). */
++  private imageKey = new WeakMap<Container, string>();
++
++  private paintImage(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
++    const src = el.data as string;
++    const put = (tex: Texture) => {
++      const sprite = new Sprite(tex);
++      sprite.position.set(el.x, el.y);
++      sprite.width = el.w; sprite.height = el.h; // só depois de a textura ter tamanho real
++      node.addChild(sprite);
++    };
++    this.imageKey.set(node, src);
++    const hit = peekImageTexture(src);
++    if (hit) { put(hit); return; }
++    const hold = new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xEEF1F7 }).stroke({ color: 0xB4BED0, width: 1 });
++    node.addChild(hold);
++    void loadImageTexture(src).then((tex) => {
++      // o nó pode ter sido destruído, repintado com outra imagem ou apagado enquanto carregava
++      if (node.destroyed || this.imageKey.get(node) !== src) return;
++      for (const ch of node.removeChildren()) ch.destroy({ children: true });
++      if (tex) put(tex);
++      else {
++        const bad = new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xFBECEC }).stroke({ color: 0xD9A0A0, width: 1 });
++        node.addChild(bad);
++        const t = new Text({ text: "Imagem inválida", style: { fontFamily: "Arial", fontSize: 14, fill: 0x8A3B3B } });
++        t.position.set(el.x + 10, el.y + 10); node.addChild(t);
++      }
++    });
++  }
++
+   // Texto é raster: ao dar zoom, rasteriza de novo em resolução maior (com atraso, para não travar o gesto).
+   private textRes() {
+     return Math.min(4, Math.max(1, (window.devicePixelRatio || 1) * this.cam.zoom));
+@@ -485,5 +512,6 @@ export class Renderer {
+     this.ready = false;
+     clearTimeout(this.resTimer);
+     this.app.destroy(false, { children: true });
++    clearImageTextures();
+   }
+ }
+diff --git a/src/render/imageTexture.ts b/src/render/imageTexture.ts
+new file mode 100644
+index 0000000..73ee206
+--- /dev/null
++++ b/src/render/imageTexture.ts
+@@ -0,0 +1,32 @@
++// Carrega imagens anexadas (data URL) como textura do Pixi, de forma assíncrona e com cache.
++// No PixiJS v8 `Texture.from(dataURL)` devolve uma textura VAZIA que só carrega depois (e sem avisar
++// o renderer): o print colado aparecia como um retângulo em branco. Aqui a imagem é decodificada
++// ANTES de virar textura, e quem desenha só recebe a textura quando ela está pronta.
++import { Texture } from "pixi.js";
++import { createLoaderCache } from "../core/loaderCache";
++
++/** Decodifica o data URL num <img> pronto (com largura/altura reais) e só então cria a textura. */
++async function loadTexture(src: string): Promise<Texture | null> {
++  const img = new Image();
++  img.decoding = "async";
++  img.src = src;
++  try {
++    if (img.decode) await img.decode();
++    else await new Promise<void>((ok, fail) => { img.onload = () => ok(); img.onerror = () => fail(new Error("imagem inválida")); });
++  } catch {
++    return null;
++  }
++  if (!img.naturalWidth || !img.naturalHeight) return null;
++  return Texture.from(img);
++}
++
++const cache = createLoaderCache<Texture>(loadTexture);
++
++export const peekImageTexture = (src: string) => cache.peek(src);
++export const loadImageTexture = (src: string) => cache.get(src);
++
++/** Libera as texturas (ao destruir o renderer). */
++export function clearImageTextures() {
++  for (const t of cache.values()) { try { t.destroy(true); } catch { /* já destruída */ } }
++  cache.clear();
++}
+-- 
+2.43.0
+

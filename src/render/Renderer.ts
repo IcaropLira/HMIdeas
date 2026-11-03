@@ -10,6 +10,7 @@ import { drawLinearElement, drawShapeElement } from "./shapeDraw";
 import { decimateForPreview } from "../core/ink";
 import { paintFrame, paintNode } from "./mindDraw";
 import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
+import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
 
 const LINE = "#1B2233";
 const INDIGO = "#2F4B8F";
@@ -265,12 +266,7 @@ export class Renderer {
       for (const ch of node.removeChildren()) ch.destroy({ children: true });
       node.alpha = el.opacity;
       if (el.kind === "image" && el.data) {
-        try {
-          const sprite = new Sprite(Texture.from(el.data));
-          sprite.position.set(el.x, el.y);
-          sprite.width = el.w; sprite.height = el.h;
-          node.addChild(sprite);
-        } catch (err) { console.warn("Não foi possível carregar a imagem anexada", err); }
+        this.paintImage(node, el);
       } else {
         const card = new Graphics().roundRect(el.x, el.y, el.w, el.h, 12).fill({ color: 0xF7F8FC }).stroke({ color: 0x9AA8C0, width: 1.5 });
         card.roundRect(el.x + 12, el.y + 12, 36, 36, 8).fill({ color: el.kind === "link" ? 0xDCE8FF : 0xE8E4F8 });
@@ -314,6 +310,37 @@ export class Renderer {
       g.clear();
       drawEl(g, el);
     }
+  }
+
+  /** Imagem anexada: com a textura já em cache desenha na hora; senão mostra um quadro "Carregando…"
+   *  e troca pelo sprite quando a imagem terminar de decodificar (sem depender de novo repaint). */
+  private imageKey = new WeakMap<Container, string>();
+
+  private paintImage(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
+    const src = el.data as string;
+    const put = (tex: Texture) => {
+      const sprite = new Sprite(tex);
+      sprite.position.set(el.x, el.y);
+      sprite.width = el.w; sprite.height = el.h; // só depois de a textura ter tamanho real
+      node.addChild(sprite);
+    };
+    this.imageKey.set(node, src);
+    const hit = peekImageTexture(src);
+    if (hit) { put(hit); return; }
+    const hold = new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xEEF1F7 }).stroke({ color: 0xB4BED0, width: 1 });
+    node.addChild(hold);
+    void loadImageTexture(src).then((tex) => {
+      // o nó pode ter sido destruído, repintado com outra imagem ou apagado enquanto carregava
+      if (node.destroyed || this.imageKey.get(node) !== src) return;
+      for (const ch of node.removeChildren()) ch.destroy({ children: true });
+      if (tex) put(tex);
+      else {
+        const bad = new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xFBECEC }).stroke({ color: 0xD9A0A0, width: 1 });
+        node.addChild(bad);
+        const t = new Text({ text: "Imagem inválida", style: { fontFamily: "Arial", fontSize: 14, fill: 0x8A3B3B } });
+        t.position.set(el.x + 10, el.y + 10); node.addChild(t);
+      }
+    });
   }
 
   // Texto é raster: ao dar zoom, rasteriza de novo em resolução maior (com atraso, para não travar o gesto).
@@ -485,5 +512,6 @@ export class Renderer {
     this.ready = false;
     clearTimeout(this.resTimer);
     this.app.destroy(false, { children: true });
+    clearImageTextures();
   }
 }

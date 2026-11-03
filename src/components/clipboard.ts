@@ -64,12 +64,14 @@ export async function addAttachmentFile(file: File | Blob, at: Point = worldPoin
   let w = 340, h = 220;
   if (isImage) {
     const img = await loadImage(data);
-    if (img && img.naturalWidth && img.naturalHeight) {
-      data = await shrinkIfHuge(file, data, img);
-      const s = Math.min(1, 640 / img.naturalWidth, 480 / img.naturalHeight);
-      w = Math.max(80, img.naturalWidth * s);
-      h = Math.max(60, img.naturalHeight * s);
+    if (!img || !img.naturalWidth || !img.naturalHeight) {
+      ui.showToast("Não consegui abrir esta imagem (formato não suportado ou arquivo corrompido).");
+      return false;
     }
+    data = await shrinkIfHuge(file, data, img);
+    const s = Math.min(1, 640 / img.naturalWidth, 480 / img.naturalHeight);
+    w = Math.max(80, img.naturalWidth * s);
+    h = Math.max(60, img.naturalHeight * s);
   }
   const title = name || (file as File).name || (isImage ? "Imagem colada" : "Arquivo anexado");
   const id = newId();

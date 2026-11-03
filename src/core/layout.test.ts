@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, clampPosition, loadLayout, moveBlock, normalizeLayout, placeBlock, saveLayout, snapPosition } from "./layout";
+import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, clampPosition, homeBlock, loadLayout, moveBlock, normalizeLayout, placeBlock, placeBlockAt, saveLayout, snapPosition } from "./layout";
 
 const memory = () => {
   const m = new Map<string, string>();
@@ -10,7 +10,7 @@ describe("layout das barras", () => {
   it("o padrão tem só o essencial embaixo, cor/espessura/pincéis na direita e o resto na esquerda", () => {
     expect(blocksOn(DEFAULT_LAYOUT, "bottom")).toEqual(["tools", "shapes", "history"]);
     expect(blocksOn(DEFAULT_LAYOUT, "right")).toEqual(["brush", "colors", "size"]);
-    expect(blocksOn(DEFAULT_LAYOUT, "left")).toEqual(["map", "page"]);
+    expect(blocksOn(DEFAULT_LAYOUT, "left")).toEqual(["insert", "map", "page"]);
     expect(blocksOn(DEFAULT_LAYOUT, "hidden")).toEqual([]);
   });
 
@@ -212,5 +212,33 @@ describe("snapPosition (ímã nas bordas)", () => {
     expect(Number.isFinite(r.x) && Number.isFinite(r.y)).toBe(true);
     expect(r.x).toBeGreaterThanOrEqual(8);
     expect(r.y).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("juntar blocos de volta", () => {
+  it("placeBlockAt encaixa antes de um vizinho, tirando o bloco do modo flutuante", () => {
+    const solto = placeBlock(DEFAULT_LAYOUT, "colors", "float", { x: 200, y: 200, vertical: false });
+    const l = placeBlockAt(solto, "colors", "bottom", "shapes");
+    expect(l.side.colors).toBe("bottom");
+    expect(l.floats.colors).toBeUndefined();
+    expect(blocksOn(l, "bottom")).toEqual(["tools", "colors", "shapes", "history"]);
+  });
+
+  it("placeBlockAt sem vizinho vai para o fim do lado; com lado vazio também funciona", () => {
+    expect(blocksOn(placeBlockAt(DEFAULT_LAYOUT, "tools", "right", null), "right")).toEqual(["brush", "colors", "size", "tools"]);
+    const vazio = placeBlock(DEFAULT_LAYOUT, "map", "hidden");
+    expect(blocksOn(placeBlockAt(vazio, "map", "left", null), "left")).toEqual(["insert", "page", "map"]);
+  });
+
+  it("homeBlock devolve ao lado de fábrica", () => {
+    const l = placeBlock(placeBlock(DEFAULT_LAYOUT, "size", "float", { x: 9, y: 9, vertical: true }), "tools", "hidden");
+    expect(homeBlock(homeBlock(l, "size"), "tools").side).toMatchObject({ size: "right", tools: "bottom" });
+  });
+
+  it("layout salvo sem o bloco novo (versão antiga) ganha o bloco Inserir no lugar padrão", () => {
+    const antigo = { version: 2, order: ["tools", "shapes", "history", "brush", "colors", "size", "map", "page"], side: { tools: "bottom" }, floats: {}, locked: false };
+    const l = normalizeLayout(antigo);
+    expect(l.side.insert).toBe("left");
+    expect(l.order).toContain("insert");
   });
 });

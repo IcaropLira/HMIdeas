@@ -9,9 +9,10 @@ import { initUpdates } from "./core/updater";
 import { PageNav, Sidebar, Toast } from "./components/Pages";
 import { Toolbar } from "./components/Toolbar";
 import { NotebookManager } from "./components/NotebookManager";
+import { copyWithMark, initPaste } from "./components/clipboard";
 import {
-  copySelection, cutSelection, deleteSelection, duplicateSelection, editSelectedText,
-  goPage, nudgeSelection, pasteClipboard, selectAll,
+  deleteSelection, duplicateSelection, editSelectedText,
+  goPage, nudgeSelection, selectAll,
 } from "./core/actions";
 import {
   addChildToSelection, addSiblingToSelection, collapseMap, connectSelection, editSelectedLabel, fitToSelection,
@@ -31,6 +32,7 @@ export default function App() {
   useEffect(() => initPageViewSync(), []);
   useEffect(() => initAutosave(false), []);
   useEffect(() => initUpdates(), []);
+  useEffect(() => initPaste(), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -44,9 +46,9 @@ export default function App() {
         else if (k === "y") run(() => useDoc.getState().redo());
         else if (k === "a") run(selectAll);
         else if (k === "d") run(duplicateSelection);
-        else if (k === "c") run(copySelection);
-        else if (k === "x") run(cutSelection);
-        else if (k === "v") run(pasteClipboard);
+        else if (k === "c") run(copyWithMark);
+        else if (k === "x") run(() => { copyWithMark(); deleteSelection(); });
+        // Ctrl+V: sem preventDefault aqui, para o navegador disparar o evento `paste` (ver components/clipboard.ts)
         else if (k === "g") run(() => (e.shiftKey ? ungroupSelection() : wrapSelectionInFrame()));
         else if (k === "enter") run(() => addChildToSelection());
         return;

@@ -4,13 +4,14 @@
 // interface, não é o documento — ver AGENTS.md, regra 9).
 import { create } from "zustand";
 
-export type BlockId = "tools" | "shapes" | "history" | "brush" | "colors" | "size" | "map" | "page";
+export type BlockId = "tools" | "shapes" | "history" | "insert" | "brush" | "colors" | "size" | "map" | "page";
 export type DockSide = "bottom" | "left" | "right" | "float" | "hidden";
 
 export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
   { id: "tools", label: "Ferramentas", hint: "Selecionar, laço, caneta, texto, borracha e mão" },
   { id: "shapes", label: "Formas e linhas", hint: "Retângulo, elipse, losango, seta e linha" },
   { id: "history", label: "Desfazer e refazer", hint: "Os dois botões de histórico" },
+  { id: "insert", label: "Inserir", hint: "Imagem, arquivo, link, colar e texto" },
   { id: "brush", label: "Pincéis", hint: "Abre o painel de pincéis" },
   { id: "colors", label: "Cores", hint: "Cores rápidas e seletor completo" },
   { id: "size", label: "Espessura", hint: "Controle de espessura do traço ou da borracha" },
@@ -43,8 +44,8 @@ export interface Layout {
 /** Padrão: embaixo só o essencial; cor, espessura e pincéis na direita; o resto na esquerda. */
 export const DEFAULT_LAYOUT: Layout = {
   version: 2,
-  order: ["tools", "shapes", "history", "brush", "colors", "size", "map", "page"],
-  side: { tools: "bottom", shapes: "bottom", history: "bottom", brush: "right", colors: "right", size: "right", map: "left", page: "left" },
+  order: ["tools", "shapes", "history", "insert", "brush", "colors", "size", "map", "page"],
+  side: { tools: "bottom", shapes: "bottom", history: "bottom", insert: "left", brush: "right", colors: "right", size: "right", map: "left", page: "left" },
   floats: {},
   locked: false,
 };
@@ -111,6 +112,27 @@ export function placeBlock(layout: Layout, id: BlockId, side: DockSide, pos?: Fl
   }
   const order = [...rest.slice(0, at), id, ...rest.slice(at)];
   return { ...layout, order, side: { ...layout.side, [id]: side }, floats };
+}
+
+/**
+ * Encaixa o bloco num lado, ANTES de `beforeId` (que deve estar nesse lado) ou no fim se for null.
+ * É o que permite juntar de novo uma barra solta: soltar sobre outra barra ou numa zona de encaixe.
+ */
+export function placeBlockAt(layout: Layout, id: BlockId, side: Exclude<DockSide, "float">, beforeId: BlockId | null): Layout {
+  const rest = layout.order.filter((x) => x !== id);
+  let at = rest.length;
+  if (beforeId && beforeId !== id && layout.side[beforeId] === side) at = rest.indexOf(beforeId);
+  else for (let i = rest.length - 1; i >= 0; i--) if (layout.side[rest[i]] === side) { at = i + 1; break; }
+  const order = [...rest.slice(0, at), id, ...rest.slice(at)];
+  const floats = { ...layout.floats };
+  delete floats[id];
+  return { ...layout, order, side: { ...layout.side, [id]: side }, floats };
+}
+
+/** "Voltar ao lugar": devolve o bloco ao lado padrão dele (nunca flutuante/oculto). */
+export function homeBlock(layout: Layout, id: BlockId): Layout {
+  const home = DEFAULT_LAYOUT.side[id];
+  return placeBlockAt(layout, id, home === "float" || home === "hidden" ? "bottom" : home, null);
 }
 
 /** Sobe (-1) ou desce (+1) o bloco entre os vizinhos do MESMO lado. */
@@ -211,6 +233,9 @@ export function saveLayout(layout: Layout, storage: Storage | null = browserStor
 interface LayoutState {
   layout: Layout;
   setSide: (id: BlockId, side: DockSide) => void;
+  /** Encaixa numa barra (lado) antes de `beforeId`. */
+  dockAt: (id: BlockId, side: Exclude<DockSide, "float">, beforeId: BlockId | null) => void;
+  home: (id: BlockId) => void;
   /** Posiciona um bloco flutuante. `persist: false` durante o arrastar (grava só ao soltar, com `commit`). */
   setFloat: (id: BlockId, pos: FloatPos, persist?: boolean) => void;
   setLocked: (locked: boolean) => void;
@@ -224,6 +249,8 @@ export const useLayout = create<LayoutState>((set, get) => {
   return {
     layout: loadLayout(),
     setSide: (id, side) => apply(placeBlock(get().layout, id, side)),
+    dockAt: (id, side, beforeId) => apply(placeBlockAt(get().layout, id, side, beforeId)),
+    home: (id) => apply(homeBlock(get().layout, id)),
     setFloat: (id, pos, persist = true) => apply(placeBlock(get().layout, id, "float", pos), persist),
     setLocked: (locked) => apply({ ...get().layout, locked }),
     move: (id, dir) => apply(moveBlock(get().layout, id, dir)),

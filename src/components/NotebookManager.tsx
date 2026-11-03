@@ -47,7 +47,8 @@ async function readLegacyAutosave(): Promise<HirakuDoc | null> {
 }
 
 export function NotebookManager() {
-  const [opened, setOpened] = useState(false), [items, setItems] = useState<Notebook[]>([]), [active, setActive] = useState("");
+  const opened = useUI((u) => u.notebooksOpen), setOpened = useUI.getState().setNotebooksOpen;
+  const [items, setItems] = useState<Notebook[]>([]), [active, setActive] = useState("");
   const [query, setQuery] = useState(""), [renameId, setRenameId] = useState(""), [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null), [ready, setReady] = useState(false);
   const itemsRef = useRef<Notebook[]>([]), activeRef = useRef(""), readyRef = useRef(false), switching = useRef(false);
@@ -88,6 +89,9 @@ export function NotebookManager() {
     });
     return unsub;
   }, [ready]);
+
+  // O nome do caderno atual aparece no topo (chip ao lado do botão de páginas).
+  useEffect(() => { useUI.getState().setNotebookName(items.find((n) => n.id === active)?.name ?? ""); }, [items, active]);
 
   const filtered = useMemo(() => items.filter((n) => n.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())), [items, query]);
   const saveCurrent = async () => {
@@ -132,11 +136,10 @@ export function NotebookManager() {
 
   if (!ready) return null;
   return <>
-    <button className="notebook-launch btn" onClick={() => setOpened(true)} title="Gerenciador de cadernos">▤ Cadernos</button>
     {opened && <div className="notebook-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpened(false); }}>
       <section className="notebook-dialog" role="dialog" aria-modal="true" aria-label="Meus cadernos">
         <header><div><strong>Meus cadernos</strong><small>Organize suas ideias em espaços separados.</small></div><button className="btn" onClick={() => setOpened(false)} aria-label="Fechar">×</button></header>
-        <div className="notebook-tools"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar cadernos…" /><button className="btn primary" onClick={() => void create()}>＋ Novo caderno</button></div>
+        <div className="notebook-tools"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar cadernos…" /><button className="btn primary" onClick={() => void create()}>+ Novo caderno</button></div>
         <div className="notebook-list">{filtered.map((n) => <article className={n.id === active ? "notebook-card active" : "notebook-card"} key={n.id}>
           <div className="notebook-open"><span className="notebook-cover">▤</span><span>{renameId === n.id ? <input value={renameValue} autoFocus onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void rename(n); if (e.key === "Escape") setRenameId(""); }} /> : <b>{n.name}</b>}<small>{n.doc.pages.length} páginas · {n.doc.pages.reduce((a, p) => a + p.elements.length, 0)} elementos</small><small>{new Date(n.updatedAt).toLocaleString()}</small></span></div>
           <div className="notebook-actions">{renameId === n.id ? <><button className="btn sm" onClick={() => void rename(n)}>Salvar</button><button className="btn sm" onClick={() => setRenameId("")}>Cancelar</button></> : <button className="btn sm" onClick={() => void switchTo(n)} disabled={n.id === active}>Abrir</button>}

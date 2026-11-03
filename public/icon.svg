@@ -1,7 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#2F4B8F"/>
-  <g stroke="#EDF0F4" stroke-width="40" stroke-linecap="round" fill="none">
-    <path d="M159 154V379M328 154V379M159 266H328"/>
-  </g>
-  <circle cx="394" cy="128" r="27" fill="#D98A1F"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><title>HM Ideas</title>
+<rect width="512" height="512" rx="112" fill="#14102b"/>
+<rect width="512" height="512" rx="112" fill="url(#glow)"/>
+<defs><radialGradient id="glow" cx="50%" cy="38%" r="70%"><stop offset="0" stop-color="#3b2477" stop-opacity=".55"/><stop offset="1" stop-color="#14102b" stop-opacity="0"/></radialGradient></defs>
+<g transform="translate(-529.08 55.23) scale(1.3846)"><defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="30" x2="0" y2="260"><stop offset="0" stop-color="#ee0f7f"/><stop offset="0.4" stop-color="#ff8db8"/><stop offset="0.68" stop-color="#d4a2c8"/><stop offset="1" stop-color="#3b2477"/></linearGradient></defs>
+<g fill="url(#g)"><rect x="502" y="40" width="50" height="5"/><rect x="582" y="40" width="50" height="5"/><rect x="516" y="45" width="22" height="210"/><rect x="596" y="45" width="22" height="210"/><rect x="502" y="255" width="50" height="5"/><rect x="582" y="255" width="50" height="5"/><rect x="538" y="148.5" width="58" height="3"/><path d="M567,112 Q570,147 589,150 Q570,153 567,188 Q564,153 545,150 Q564,147 567,112Z"/><circle cx="548" cy="96" r="4.5"/><circle cx="586" cy="204" r="4.5"/></g>
+<g stroke="url(#g)" stroke-width="1.5" fill="none"><line x1="567" y1="150" x2="548" y2="96"/><line x1="567" y1="150" x2="586" y2="204"/></g>
+</g>
 </svg>

@@ -135,12 +135,19 @@ export function PageNav() {
   const open = useUI((s) => s.sidebarOpen);
   const idx = pages.findIndex((p) => p.id === activeId);
   const last = idx >= pages.length - 1;
+  const notebook = useUI((s) => s.notebookName);
 
   return (
     <div className="topleft" role="toolbar" aria-label="Navegação de páginas">
       <button className={open ? "btn on" : "btn"} onClick={() => useUI.getState().setSidebar(!open)} aria-expanded={open} aria-label="Páginas" title="Páginas">
         <Icon><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M9 5v14" /></Icon>
       </button>
+      <button className="btn nbchip" onClick={() => useUI.getState().setNotebooksOpen(true)} aria-label="Abrir cadernos" title="Cadernos: trocar, criar e organizar">
+        <Icon size={20}><path d="M6 4h11a2 2 0 012 2v13a1 1 0 01-1 1H7a2 2 0 01-2-2V5a1 1 0 011-1z" /><path d="M9 4v16M12.5 9h3.5" /></Icon>
+        <span className="nbname">{notebook || "Cadernos"}</span>
+        <Icon size={14}><path d="M7 10l5 5 5-5" /></Icon>
+      </button>
+      <span className="vsep" aria-hidden="true" />
       <button className="btn" disabled={idx <= 0} onClick={() => goPage(-1)} aria-label="Página anterior" title="Página anterior (PageUp)">
         <Icon><path d="M14 6l-6 6 6 6" /></Icon>
       </button>

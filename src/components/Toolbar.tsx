@@ -16,7 +16,8 @@ import { checkForUpdates, isTauri } from "../core/updater";
 import { isInsideAny } from "../core/outside";
 import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, useLayout } from "../core/layout";
 import { BlockHandle } from "./BlockHandle";
-import { LayoutSettings } from "./LayoutSettings";
+import { Settings } from "./Settings";
+import { addAttachmentFile, pasteFromButton, worldPoint } from "./clipboard";
 
 const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
 const FILLS: { value: string | null; label: string }[] = [
@@ -39,7 +40,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
-type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map" | "templates";
+type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map" | "templates" | "insert";
 
 type InsertKind = "postit" | "table" | "timeline" | "kanban" | "doc" | "slides";
 
@@ -132,6 +133,16 @@ export function Toolbar() {
   const [panel, setPanel] = useState<Panel>(null);
   const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const attachRef = useRef<HTMLInputElement>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const off = (e: PointerEvent) => { if (!(e.target as HTMLElement).closest(".more-wrap")) setMoreOpen(false); };
+    window.addEventListener("pointerdown", off);
+    return () => window.removeEventListener("pointerdown", off);
+  }, [moreOpen]);
+  const dragging = useUI((s) => s.dragging);
+  const dropHint = useUI((s) => s.dropHint);
   const dockRef = useRef<HTMLDivElement>(null);
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -266,6 +277,13 @@ export function Toolbar() {
         </button>
       </div>
     ),
+    insert: (
+      <div className="group">
+        <button className={panel === "insert" ? "btn on" : "btn"} onClick={() => toggle("insert")} aria-expanded={panel === "insert"} aria-label="Inserir" title="Inserir: imagem, arquivo, link, colar (Ctrl+V)">
+          <Icon><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><circle cx="9" cy="10" r="1.8" /><path d="M4 17l5-4.5 3.5 3L16 12l4.5 4.5" /></Icon>
+        </button>
+      </div>
+    ),
     brush: (
       <div className="group">
                   <button className={panel === "brush" ? "btn on" : "btn"} onClick={() => toggle("brush")} aria-expanded={panel === "brush"} aria-label="Pincéis" title="Pincéis">
@@ -344,7 +362,7 @@ export function Toolbar() {
   };
 
   const renderBlock = (id: BlockId) => (
-    <div key={id} className="blk" data-block={id}>
+    <div key={id} className={dropHint?.startsWith(`block:${id}:`) ? `blk drop-${dropHint.endsWith("b") ? "before" : "after"}` : "blk"} data-block={id}>
       <BlockHandle id={id} />
       {blocks[id]}
     </div>
@@ -556,6 +574,17 @@ export function Toolbar() {
         </div>
       )}
 
+      {panel === "insert" && (
+        <div className="panel" role="dialog" aria-label="Inserir">
+          <div className="row" role="toolbar" aria-label="Inserir no quadro">
+            <button className="chip" onClick={() => { void pasteFromButton(); setPanel(null); }} title="Cola o que está na área de transferência (Ctrl+V também funciona)">Colar</button>
+            <button className="chip" onClick={() => { attachRef.current?.click(); setPanel(null); }}>Imagem ou arquivo…</button>
+            <button className="chip" onClick={() => { setPanel(null); useTool.getState().set({ tool: "text" }); }}>Texto</button>
+          </div>
+          <p className="hint">Dica: tire um print e aperte <b>Ctrl+V</b> com o quadro em foco. Também dá para arrastar arquivos e links para o quadro.</p>
+        </div>
+      )}
+
       {panel === "templates" && (
         <div className="panel" role="dialog" aria-label="Modelos prontos">
           <div className="row" role="toolbar" aria-label="Inserir modelos">
@@ -588,17 +617,34 @@ export function Toolbar() {
 
   return (
     <>
-      <div className="topbar">
-        <button className="btn text" onClick={() => useView.getState().setCamera(defaultCamera())} title="Voltar para 100%">
+      <div className="topbar" role="toolbar" aria-label="Arquivo e visualização">
+        <button className="btn text zoom" onClick={() => useView.getState().setCamera(defaultCamera())} title="Voltar para 100%">
           {Math.round(zoom * 100)}%
         </button>
-        {!isTauri() && <a className="btn text" href={`${import.meta.env.BASE_URL}download.html`} title="Instalar para Windows, Linux, Android e macOS">Baixar app</a>}
-        <button className="btn text" onClick={() => void checkForUpdates(true)} title="Verificar atualizações">v{APP_VERSION}</button>
-        <button className="btn text" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar</button>
-        <button className="btn text" onClick={() => fileRef.current?.click()}>Abrir</button>
-        <button className="btn" onClick={() => useUI.getState().setSettingsOpen(true)} aria-label="Configurações" title="Configurações: personalizar as barras">
+        <span className="vsep" aria-hidden="true" />
+        <button className="btn tb" onClick={() => downloadDoc(useDoc.getState().doc)} aria-label="Salvar" title="Salvar arquivo .hiraku">
+          <Icon size={20}><path d="M5 4h11l3 3v13H5z" /><path d="M8 4v5h7V4M8 20v-6h8v6" /></Icon><span className="lbl">Salvar</span>
+        </button>
+        <button className="btn tb" onClick={() => fileRef.current?.click()} aria-label="Abrir" title="Abrir arquivo .hiraku">
+          <Icon size={20}><path d="M3.5 7a2 2 0 012-2h4l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2h-13a2 2 0 01-2-2z" /></Icon><span className="lbl">Abrir</span>
+        </button>
+        <div className="more-wrap">
+          <button className={moreOpen ? "btn on" : "btn"} onClick={() => setMoreOpen(!moreOpen)} aria-expanded={moreOpen} aria-label="Mais opções" title="Mais opções">
+            <Icon><circle cx="5.5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="18.5" cy="12" r="1.2" /></Icon>
+          </button>
+          {moreOpen && (
+            <div className="menu" role="menu" onClick={() => setMoreOpen(false)}>
+              {!isTauri() && <a role="menuitem" href={`${import.meta.env.BASE_URL}download.html`}>Baixar o app</a>}
+              <button role="menuitem" onClick={() => void checkForUpdates(true)}>Verificar atualizações · v{APP_VERSION}</button>
+              <button role="menuitem" onClick={() => useUI.getState().setNotebooksOpen(true)}>Cadernos…</button>
+              <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("atalhos")}>Atalhos de teclado</button>
+            </div>
+          )}
+        </div>
+        <button className="btn" onClick={() => useUI.getState().setSettingsOpen(true)} aria-label="Configurações" title="Configurações">
           <Icon><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></Icon>
         </button>
+        <input ref={attachRef} type="file" multiple hidden onChange={(e) => { Array.from(e.target.files ?? []).forEach((f, i) => { const c = worldPoint(); void addAttachmentFile(f, { x: c.x + i * 24, y: c.y + i * 24 }); }); e.target.value = ""; }} />
         <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
 
@@ -648,6 +694,9 @@ export function Toolbar() {
                 onClickCapture={noteAnchor("float")}
               >
                 {renderBlock(id)}
+                <button className="btn fdock" onClick={() => useLayout.getState().home(id)} aria-label={`Encaixar ${BLOCKS.find((b) => b.id === id)?.label ?? id} de volta`} title="Encaixar de volta na barra">
+                  <Icon size={16}><path d="M12 4v10M7.5 10l4.5 4.5 4.5-4.5M5 19h14" /></Icon>
+                </button>
               </div>
             );
           })}
@@ -660,7 +709,17 @@ export function Toolbar() {
         </div>
       )}
 
-      <LayoutSettings />
+      {dragging && (
+        <div className="dropzones" aria-hidden="true">
+          {([["left", "Esquerda"], ["bottom", "Embaixo"], ["right", "Direita"]] as const).map(([side, label]) => (
+            <div key={side} data-dropzone={side} className={dropHint === `zone:${side}` ? "dz on" : "dz"} data-side={side}>
+              <span>Encaixar · {label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Settings />
     </>
   );
 }

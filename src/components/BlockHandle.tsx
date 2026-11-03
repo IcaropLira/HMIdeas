@@ -1,5 +1,5 @@
 import { PointerEvent as ReactPointerEvent } from "react";
-import { BLOCKS, BlockId, FloatPos, snapPosition, useLayout } from "../core/layout";
+import { BLOCKS, BlockId, FloatPos, blocksOn, snapPosition, useLayout } from "../core/layout";
 import { useUI } from "../core/ui";
 
 /** Margem da barra flutuante (padding 6px + borda 1px no CSS `.fbar`): o conteúdo não pula ao começar a arrastar. */
@@ -15,6 +15,26 @@ const sizeOf = (el: Element | null | undefined, fallback: { w: number; h: number
   const r = el?.getBoundingClientRect();
   return r && r.width > 0 ? { w: r.width, h: r.height } : fallback;
 };
+
+type Hint = { kind: "zone"; side: "bottom" | "left" | "right" } | { kind: "block"; id: BlockId; before: boolean };
+
+/** O que está sob o ponteiro: uma zona de encaixe, ou outro bloco já encaixado numa barra (para juntar). */
+function hintAt(x: number, y: number, id: BlockId): Hint | null {
+  const els = (document.elementsFromPoint?.(x, y) ?? []).filter((el) => !el.closest(`[data-fbar="${id}"]`));
+  for (const el of els) {
+    const z = el.closest<HTMLElement>("[data-dropzone]");
+    if (z) return { kind: "zone", side: z.dataset.dropzone as "bottom" | "left" | "right" };
+    const b = el.closest<HTMLElement>("[data-block]");
+    if (b && b.dataset.block !== id && !b.closest("[data-fbar]")) {
+      const r = b.getBoundingClientRect();
+      const vertical = !!b.closest(".vbar");
+      const before = vertical ? y < r.top + r.height / 2 : x < r.left + r.width / 2;
+      return { kind: "block", id: b.dataset.block as BlockId, before };
+    }
+  }
+  return null;
+}
+const hintKey = (h: Hint | null) => (!h ? null : h.kind === "zone" ? `zone:${h.side}` : `block:${h.id}:${h.before ? "b" : "a"}`);
 
 /**
  * Arrasta um bloco: ele vira flutuante no lugar onde está, segue o ponteiro (com ímã nas bordas e limite da tela)
@@ -49,6 +69,7 @@ export function startBlockDrag(e: ReactPointerEvent<HTMLElement>, id: BlockId) {
       useLayout.getState().setFloat(id, start, false);
     }
     size = sizeOf(floatBar(id), size);
+    useUI.getState().setDrag(id, hintKey(hintAt(ev.clientX, ev.clientY, id)));
     // Durante o gesto o ímã vale, mas a orientação só muda ao soltar (a troca mudaria o tamanho no meio do arraste e tremeria).
     const s = snapPosition({ x: ev.clientX - off.x, y: ev.clientY - off.y }, size, viewport(), last.vertical, { insetLeft: insetLeft() });
     last = { x: s.x, y: s.y, vertical: last.vertical };
@@ -62,11 +83,26 @@ export function startBlockDrag(e: ReactPointerEvent<HTMLElement>, id: BlockId) {
     window.removeEventListener("pointercancel", cancel);
     document.body.classList.remove("dragging-ui");
     const st = useLayout.getState();
+    const hint = moved && !cancelled ? hintAt(ev.clientX, ev.clientY, id) : null;
+    useUI.getState().setDrag(null);
     if (!moved) return; // só um toque: nada mudou
     if (cancelled) {
       // gesto cancelado pelo sistema: volta para onde estava
       st.setSide(id, before.side[id]);
       if (before.side[id] === "float" && before.floats[id]) st.setFloat(id, before.floats[id]!);
+      return;
+    }
+    if (hint) {
+      // soltou numa zona de encaixe ou sobre outra barra: junta de volta
+      if (hint.kind === "zone") st.dockAt(id, hint.side, null);
+      else {
+        const side = st.layout.side[hint.id];
+        if (side === "bottom" || side === "left" || side === "right") {
+          const order = blocksOn(st.layout, side);
+          const i = order.indexOf(hint.id);
+          st.dockAt(id, side, hint.before ? hint.id : order[i + 1] ?? null);
+        } else st.setFloat(id, last);
+      }
       return;
     }
     const final = snapPosition({ x: last.x, y: last.y }, size, viewport(), last.vertical, { insetLeft: insetLeft() });

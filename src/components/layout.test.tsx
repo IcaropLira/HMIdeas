@@ -121,13 +121,13 @@ describe("LayoutSettingsView", () => {
     const html = view();
     for (const b of BLOCKS) expect(html).toContain(b.label);
     for (const lado of ["Embaixo", "Esquerda", "Direita", "Flutuante", "Oculto"]) expect((html.match(new RegExp(`>${lado}<`, "g")) ?? []).length).toBe(BLOCKS.length);
-    expect(html).toContain("Restaurar padrão");
+    expect(html).toContain("Juntar tudo (restaurar padrão)");
     expect(html).toContain('role="dialog"');
   });
 
   it("marca a posição atual de cada bloco", () => {
     const html = view(placeBlock(DEFAULT_LAYOUT, "colors", "hidden"));
-    expect(html).toMatch(/aria-label="Onde fica: Cores"[^>]*>(?:(?!<\/div>).)*aria-checked="true" class="chip on"[^>]*>Oculto</s);
+    expect(html).toMatch(/aria-label="Onde fica: Cores"[^>]*>(?:(?!<\/div>).)*aria-checked="true" class="chip sm on"[^>]*>Oculto</s);
   });
 
   it("não deixa mover para cima o primeiro bloco de um lado, nem bloco oculto", () => {

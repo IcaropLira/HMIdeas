@@ -198,3 +198,13 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - Ícones (`src-tauri/icons`) estão versionados; mudanças binárias entram no patch normalmente.
 - O workflow `ci.yml` roda `typecheck` + `build` a cada push. Se o dono colar um erro de CI, responda com um patch de correção.
 - Versão e publicação: `npm run release -- x.y.z` (tag `v*` dispara `release.yml`).
+
+### Remodelagem visual, colar e re-encaixe das barras (0023)
+- **Colar:** `components/clipboard.ts` é o único caminho (Ctrl+V, botão Inserir, arrastar-e-soltar). O Ctrl+V NÃO é interceptado no `keydown`
+  (um `preventDefault` ali cancela o evento `paste` e o print nunca chegava); o ouvinte `paste` da janela decide: imagem > link > cópia interna
+  (marcador `INTERNAL_MARK` gravado na área de transferência ao copiar) > texto. Imagens acima de 2048 px são reduzidas.
+- **Barras:** além de arrastar, dá para juntar de volta: durante o arraste aparecem zonas de encaixe (esquerda/embaixo/direita) e soltar sobre outra
+  barra encaixa antes/depois dela (`placeBlockAt`). Barra solta tem o botão "encaixar" (`homeBlock`). Bloco novo `insert` (Inserir). Layout segue `version: 2`.
+- **Tema:** `core/theme.ts` (auto/claro/escuro + densidade), tokens CSS em `:root[data-theme]`. Configurações agora têm abas (`Settings.tsx`).
+- **Topo:** esquerda = páginas + chip do caderno (abre o gerenciador, estado em `useUI.notebooksOpen`) + navegação; direita = zoom, Salvar, Abrir, ⋯, ⚙.
+- Logo novo em `public/logo.svg` (sem metadados C2PA) e `public/icon.svg`; ícones regenerados.

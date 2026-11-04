@@ -70,7 +70,7 @@ export function EmbedLayer() {
       const id = useEmbedView.getState().playing;
       if (!id || (ev.target as HTMLElement | null)?.closest?.(".embed-layer button")) return;
       const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === id);
-      if (!el) return;
+      if (!el || el.type !== "attachment" || el.kind !== "video") return;
       const c = useView.getState().camera;
       const P = screenToWorld(c, ev.clientX, ev.clientY);
       const m = 16 / c.zoom; // inclui as alças de redimensionar, que ficam um pouco fora do quadro

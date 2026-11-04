@@ -346,7 +346,7 @@ const validElement = (e: any): boolean =>
   (e.type !== "text" || typeof e.text === "string") &&
   (e.type !== "node" || (typeof e.text === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))) &&
   (e.type !== "frame" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h))) &&
-  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) && typeof e.url === "string"));
+  (e.type !== "attachment" || (Number.isFinite(e.x) && Number.isFinite(e.y) && Number.isFinite(e.w) && Number.isFinite(e.h) && typeof e.url === "string"));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const cleanAttachment = (e: any): AttachmentElement => {

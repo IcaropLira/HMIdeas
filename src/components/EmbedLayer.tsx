@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { screenToWorld } from "../core/camera";
 import { AttachmentElement } from "../core/model";
 import { useEmbedView } from "../core/embedView";
 import { clampPage, clampScroll, maxScroll, pageAtScroll, parseYouTube, scrollLayout, youtubeEmbed, youtubeWatch } from "../core/embed";
@@ -51,6 +52,49 @@ export function EmbedLayer() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Anti-glitch do player (iframe = camada própria do compositor). No WebView2, mover/redimensionar um iframe
+  // por cima do canvas WebGL deixa rastros do quadro anterior. Por isso o iframe fica invisível (a miniatura do
+  // Pixi aparece no lugar, já na posição certa, com o aviso "Reproduzindo") enquanto a câmera se move e ~100 ms
+  // depois, e enquanto o próprio vídeo é arrastado/redimensionado. O vídeo continua tocando (só fica invisível).
+  const [moving, setMoving] = useState(false);
+  const [held, setHeld] = useState(false);
+  useEffect(() => {
+    setMoving(true);
+    const t = setTimeout(() => setMoving(false), 100);
+    return () => clearTimeout(t);
+    // Selecionar/desmarcar também conta: a barra "1 selecionado" some e a camada do iframe podia deixar um pedaço dela na tela.
+  }, [cam, sel, playing]);
+  useEffect(() => {
+    let release: ReturnType<typeof setTimeout> | undefined;
+    const down = (ev: PointerEvent) => {
+      const id = useEmbedView.getState().playing;
+      if (!id || (ev.target as HTMLElement | null)?.closest?.(".embed-layer button")) return;
+      const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === id);
+      if (!el) return;
+      const c = useView.getState().camera;
+      const P = screenToWorld(c, ev.clientX, ev.clientY);
+      const m = 16 / c.zoom; // inclui as alças de redimensionar, que ficam um pouco fora do quadro
+      if (P.x >= el.x - m && P.x <= el.x + el.w + m && P.y >= el.y - m && P.y <= el.y + el.h + m) { clearTimeout(release); setHeld(true); }
+    };
+    const up = () => { clearTimeout(release); release = setTimeout(() => setHeld(false), 80); };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      clearTimeout(release);
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
+
+  // Com um player vivo na tela, as sombras grandes das barras viram retângulos pretos no WebView2: desliga-as.
+  const live = !!playing && elements.some((e) => e.id === playing);
+  useEffect(() => {
+    document.documentElement.classList.toggle("embed-live", live);
+    return () => document.documentElement.classList.remove("embed-live");
+  }, [live]);
+
   const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
   const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
   const items = elements.filter((e): e is AttachmentElement => e.type === "attachment" && (e.kind === "video" || e.kind === "pdf"));
@@ -59,12 +103,15 @@ export function EmbedLayer() {
   return (
     <div className="embed-layer">
       {items.map((el) => {
-        const left = el.x * cam.zoom + cam.x, top = el.y * cam.zoom + cam.y;
+        const left = Math.round(el.x * cam.zoom + cam.x), top = Math.round(el.y * cam.zoom + cam.y);
         const w = el.w * cam.zoom, h = el.h * cam.zoom;
-        if (left > vw || top > vh || left + w < 0 || top + h < 0) return null; // fora da tela: nada de iframe vivo
-        const box = { left, top, width: w, height: h };
+        // Fora da tela: PDF e botões somem, mas o player que está tocando NÃO é desmontado (desmontar o iframe para o vídeo);
+        // ele só fica invisível até voltar à tela.
+        const off = left > vw || top > vh || left + w < 0 || top + h < 0;
+        // posiciona por transform (não relayouta o iframe a cada pan); o tamanho do iframe só muda no zoom
+        const box = { width: w, height: h, transform: `translate3d(${left}px, ${top}px, 0)` };
         if (el.kind === "pdf") {
-          if (!sel.includes(el.id)) return null;
+          if (off || !sel.includes(el.id)) return null;
           const count = Math.max(1, el.pages ?? 1);
           const L = scrollLayout(el.w, el.ratio ?? 1.414, count);
           const scrolling = el.mode === "scroll";
@@ -90,14 +137,18 @@ export function EmbedLayer() {
         if (!yt) return null;
         if (playing === el.id) {
           return (
-            <div key={el.id} className="embed-box" style={box}>
-              <iframe
-                src={youtubeEmbed(yt)}
-                title={el.title}
-                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                allowFullScreen
-                referrerPolicy="strict-origin-when-cross-origin"
-              />
+            <div key={el.id} className={`embed-box${moving || held ? " embed-hold" : ""}${off ? " embed-off" : ""}`} style={box}>
+              <div className="embed-frame" style={{ width: el.w, height: el.h, transform: `scale(${cam.zoom})` }}>
+                <iframe
+                  src={youtubeEmbed(yt)}
+                  title={el.title}
+                  allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                  allowFullScreen
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  style={{ pointerEvents: sel.includes(el.id) ? "auto" : "none" }}
+                />
+              </div>
+              {(moving || held) && !off && <div className="embed-pill">● Reproduzindo…</div>}
               <div className="embed-bar">
                 <button onClick={() => void openExternal(youtubeWatch(yt))} title="Abrir no navegador">Abrir no navegador ↗</button>
                 <button onClick={() => play(null)} title="Voltar à miniatura">Fechar</button>
@@ -105,7 +156,7 @@ export function EmbedLayer() {
             </div>
           );
         }
-        if (!sel.includes(el.id)) return null;
+        if (off || !sel.includes(el.id)) return null;
         const d = Math.max(44, Math.min(w, h) * 0.26);
         return (
           <div key={el.id} className="embed-box embed-idle" style={box}>

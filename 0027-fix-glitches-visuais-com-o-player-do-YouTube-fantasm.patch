@@ -1,0 +1,201 @@
+From fdc4729b8c78ff919d543a02669221e96fff7484 Mon Sep 17 00:00:00 2001
+From: HM Dev <dev@hm.local>
+Date: Tue, 3 Nov 2026 23:46:05 +0000
+Subject: [PATCH] fix: glitches visuais com o player do YouTube (fantasmas e
+ blocos pretos)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- O iframe é posicionado por transform e mantém o tamanho do elemento no mundo, com
+  scale(zoom): pan não relayouta o player e o zoom não redimensiona o iframe a cada passo.
+- Enquanto a câmera se move (e ~150 ms depois) ou o vídeo é arrastado/redimensionado, o
+  iframe fica invisível e a miniatura do canvas aparece na posição certa: some o quadro
+  duplicado/deslocado e as barras "Abrir no navegador / Fechar" repetidas.
+- Com um player vivo, html.embed-live zera --shadow: as sombras grandes das barras viravam
+  retângulos pretos sobre o iframe (compositor do WebView2).
+- O iframe só recebe o mouse com o vídeo selecionado: dá para selecionar/arrastar um vídeo
+  tocando e fazer pan/zoom por cima dele.
+- versão 0.5.1.
+---
+ AGENTS.md                     |  4 +++
+ package.json                  |  2 +-
+ src-tauri/Cargo.toml          |  2 +-
+ src-tauri/tauri.conf.json     |  2 +-
+ src/components/EmbedLayer.tsx | 68 +++++++++++++++++++++++++++++------
+ src/styles.css                | 10 ++++--
+ 6 files changed, 72 insertions(+), 16 deletions(-)
+
+diff --git a/AGENTS.md b/AGENTS.md
+index aed5b5c..5e3f97a 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -220,3 +220,7 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
+   Dois modos guardados no elemento (`mode`): **carrossel** (uma página; ‹ › / setas / PageUp-PageDown) e **rolagem** (páginas empilhadas com máscara; roda do mouse sobre o PDF selecionado).
+   A página atual e a rolagem ficam em `useEmbedView` (NÃO entram no desfazer: virar página não é edição); só trocar o modo é um passo de desfazer.
+   O PDF fica embutido no `.hiraku` como data URL (limite de 15 MB). PPTX não é lido: exporte para PDF.
++- **Player (iframe) sem glitch:** o iframe é uma camada própria do compositor do WebView2. Por isso `EmbedLayer` (a) posiciona por `transform` e deixa o iframe com o tamanho
++  do mundo + `scale(zoom)`; (b) esconde o iframe (`visibility`) enquanto a câmera se mexe e enquanto o vídeo é arrastado/redimensionado (a miniatura do Pixi fica no lugar);
++  (c) liga `html.embed-live`, que zera `--shadow` (sombras grandes das barras viravam blocos pretos sobre o player); (d) só deixa o iframe receber o mouse com o vídeo
++  selecionado (clicar num vídeo solto seleciona e permite arrastar; pan/zoom por cima dele funcionam).
+diff --git a/package.json b/package.json
+index 962be47..3b90bd3 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+     "type": "git",
+     "url": "https://github.com/IcaropLira/HMIdeas.git"
+   },
+-  "version": "0.5.0",
++  "version": "0.5.1",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index e9fb0c0..6217276 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "hm-ideas"
+-version = "0.5.0"
++version = "0.5.1"
+ description = "HM Ideas (Hiraku Manager Ideas): quadro branco e caderno de anotações com caneta"
+ edition = "2021"
+ 
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 94ecd9e..35daaff 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "HM Ideas",
+-  "version": "0.5.0",
++  "version": "0.5.1",
+   "identifier": "app.hiraku.hmideas",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+diff --git a/src/components/EmbedLayer.tsx b/src/components/EmbedLayer.tsx
+index 5d9a7d8..977cad0 100644
+--- a/src/components/EmbedLayer.tsx
++++ b/src/components/EmbedLayer.tsx
+@@ -1,4 +1,5 @@
+-import { useEffect } from "react";
++import { useEffect, useState } from "react";
++import { screenToWorld } from "../core/camera";
+ import { AttachmentElement } from "../core/model";
+ import { useEmbedView } from "../core/embedView";
+ import { clampPage, clampScroll, maxScroll, pageAtScroll, parseYouTube, scrollLayout, youtubeEmbed, youtubeWatch } from "../core/embed";
+@@ -51,6 +52,47 @@ export function EmbedLayer() {
+     return () => window.removeEventListener("keydown", onKey);
+   }, []);
+ 
++  // Anti-glitch do player (iframe = camada própria do compositor): enquanto a câmera se mexe, ou o vídeo é
++  // arrastado/redimensionado, o iframe fica invisível (a miniatura do Pixi aparece no lugar, já na posição certa)
++  // e volta ~150 ms depois. Isso evita o "fantasma" do quadro anterior.
++  const [moving, setMoving] = useState(false);
++  const [held, setHeld] = useState(false);
++  useEffect(() => {
++    setMoving(true);
++    const t = setTimeout(() => setMoving(false), 150);
++    return () => clearTimeout(t);
++  }, [cam]);
++  useEffect(() => {
++    let release: ReturnType<typeof setTimeout> | undefined;
++    const down = (ev: PointerEvent) => {
++      const id = useEmbedView.getState().playing;
++      if (!id || (ev.target as HTMLElement | null)?.closest?.(".embed-layer button")) return;
++      const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === id);
++      if (!el) return;
++      const c = useView.getState().camera;
++      const P = screenToWorld(c, ev.clientX, ev.clientY);
++      const m = 16 / c.zoom; // inclui as alças de redimensionar, que ficam um pouco fora do quadro
++      if (P.x >= el.x - m && P.x <= el.x + el.w + m && P.y >= el.y - m && P.y <= el.y + el.h + m) { clearTimeout(release); setHeld(true); }
++    };
++    const up = () => { clearTimeout(release); release = setTimeout(() => setHeld(false), 80); };
++    window.addEventListener("pointerdown", down, true);
++    window.addEventListener("pointerup", up, true);
++    window.addEventListener("pointercancel", up, true);
++    return () => {
++      clearTimeout(release);
++      window.removeEventListener("pointerdown", down, true);
++      window.removeEventListener("pointerup", up, true);
++      window.removeEventListener("pointercancel", up, true);
++    };
++  }, []);
++
++  // Com um player vivo na tela, as sombras grandes das barras viram retângulos pretos no WebView2: desliga-as.
++  const live = !!playing && elements.some((e) => e.id === playing);
++  useEffect(() => {
++    document.documentElement.classList.toggle("embed-live", live);
++    return () => document.documentElement.classList.remove("embed-live");
++  }, [live]);
++
+   const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
+   const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
+   const items = elements.filter((e): e is AttachmentElement => e.type === "attachment" && (e.kind === "video" || e.kind === "pdf"));
+@@ -59,10 +101,11 @@ export function EmbedLayer() {
+   return (
+     <div className="embed-layer">
+       {items.map((el) => {
+-        const left = el.x * cam.zoom + cam.x, top = el.y * cam.zoom + cam.y;
++        const left = Math.round(el.x * cam.zoom + cam.x), top = Math.round(el.y * cam.zoom + cam.y);
+         const w = el.w * cam.zoom, h = el.h * cam.zoom;
+         if (left > vw || top > vh || left + w < 0 || top + h < 0) return null; // fora da tela: nada de iframe vivo
+-        const box = { left, top, width: w, height: h };
++        // posiciona por transform (não relayouta o iframe a cada pan); o tamanho do iframe só muda no zoom
++        const box = { width: w, height: h, transform: `translate3d(${left}px, ${top}px, 0)` };
+         if (el.kind === "pdf") {
+           if (!sel.includes(el.id)) return null;
+           const count = Math.max(1, el.pages ?? 1);
+@@ -90,14 +133,17 @@ export function EmbedLayer() {
+         if (!yt) return null;
+         if (playing === el.id) {
+           return (
+-            <div key={el.id} className="embed-box" style={box}>
+-              <iframe
+-                src={youtubeEmbed(yt)}
+-                title={el.title}
+-                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+-                allowFullScreen
+-                referrerPolicy="strict-origin-when-cross-origin"
+-              />
++            <div key={el.id} className={`embed-box${moving || held ? " embed-hold" : ""}`} style={box}>
++              <div className="embed-frame" style={{ width: el.w, height: el.h, transform: `scale(${cam.zoom})` }}>
++                <iframe
++                  src={youtubeEmbed(yt)}
++                  title={el.title}
++                  allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
++                  allowFullScreen
++                  referrerPolicy="strict-origin-when-cross-origin"
++                  style={{ pointerEvents: sel.includes(el.id) ? "auto" : "none" }}
++                />
++              </div>
+               <div className="embed-bar">
+                 <button onClick={() => void openExternal(youtubeWatch(yt))} title="Abrir no navegador">Abrir no navegador ↗</button>
+                 <button onClick={() => play(null)} title="Voltar à miniatura">Fechar</button>
+diff --git a/src/styles.css b/src/styles.css
+index 2e43c82..ef33c52 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -620,8 +620,14 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
+ 
+ /* Incorporados (vídeo do YouTube, PDF): camada DOM sobre o canvas */
+ .embed-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+-.embed-box { position: absolute; pointer-events: none; }
+-.embed-box iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; pointer-events: auto; }
++.embed-box { position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform; }
++/* o iframe tem sempre o tamanho do elemento no mundo; o zoom é um scale (sem relayout do player a cada passo) */
++.embed-frame { transform-origin: 0 0; contain: layout paint size; }
++.embed-box iframe { display: block; width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; }
++/* câmera em movimento / vídeo sendo arrastado: esconde o iframe (a miniatura do canvas fica no lugar) */
++.embed-hold iframe, .embed-hold .embed-bar { visibility: hidden; }
++/* player vivo: sombras grandes sobre o iframe viram blocos pretos no WebView2 */
++:root.embed-live { --shadow: none; }
+ .embed-bar { position: absolute; right: 0; top: -34px; display: flex; gap: 6px; pointer-events: auto; }
+ .embed-bar button, .embed-nav button {
+   font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+-- 
+2.43.0
+

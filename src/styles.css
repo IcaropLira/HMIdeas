@@ -620,8 +620,19 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* Incorporados (vídeo do YouTube, PDF): camada DOM sobre o canvas */
 .embed-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.embed-box { position: absolute; pointer-events: none; }
-.embed-box iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; pointer-events: auto; }
+.embed-box { position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform; }
+/* o iframe tem sempre o tamanho do elemento no mundo; o zoom é um scale (sem relayout do player a cada passo) */
+.embed-frame { transform-origin: 0 0; contain: layout paint size; }
+.embed-box iframe { display: block; width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; }
+/* câmera em movimento / vídeo sendo arrastado: esconde o iframe (a miniatura do canvas fica no lugar) */
+.embed-hold iframe, .embed-hold .embed-bar { visibility: hidden; }
+.embed-off { visibility: hidden; pointer-events: none; }
+.embed-pill {
+  position: absolute; left: 10px; top: 10px; padding: 3px 10px; border-radius: 999px; pointer-events: none;
+  background: rgba(0, 0, 0, 0.62); color: #fff; font-size: 12px;
+}
+/* player vivo: sombras grandes sobre o iframe viram blocos pretos no WebView2 */
+:root.embed-live { --shadow: none; }
 .embed-bar { position: absolute; right: 0; top: -34px; display: flex; gap: 6px; pointer-events: auto; }
 .embed-bar button, .embed-nav button {
   font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; cursor: pointer;

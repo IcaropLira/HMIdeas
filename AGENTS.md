@@ -220,3 +220,7 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   Dois modos guardados no elemento (`mode`): **carrossel** (uma página; ‹ › / setas / PageUp-PageDown) e **rolagem** (páginas empilhadas com máscara; roda do mouse sobre o PDF selecionado).
   A página atual e a rolagem ficam em `useEmbedView` (NÃO entram no desfazer: virar página não é edição); só trocar o modo é um passo de desfazer.
   O PDF fica embutido no `.hiraku` como data URL (limite de 15 MB). PPTX não é lido: exporte para PDF.
+- **Player (iframe) sem glitch:** o iframe é uma camada própria do compositor do WebView2. Por isso `EmbedLayer` (a) posiciona por `transform` e deixa o iframe com o tamanho
+  do mundo + `scale(zoom)`; (b) esconde o iframe (`visibility`, o vídeo segue tocando) enquanto a câmera se move e enquanto o vídeo é arrastado/redimensionado: a miniatura do Pixi fica no lugar com o aviso "Reproduzindo" (sem isso o WebView2 deixa rastros do quadro anterior; testado, mover o iframe sempre visível piora); o player que toca NUNCA é desmontado ao sair da tela (só fica invisível);
+  (c) liga `html.embed-live`, que zera `--shadow` (sombras grandes das barras viravam blocos pretos sobre o player); (d) só deixa o iframe receber o mouse com o vídeo
+  selecionado (clicar num vídeo solto seleciona e permite arrastar; pan/zoom por cima dele funcionam).

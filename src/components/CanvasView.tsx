@@ -22,6 +22,7 @@ import { detectWebGL, useGfx } from "../core/webgl";
 import { EmbedLayer } from "./EmbedLayer";
 import { clampScroll, scrollLayout } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
+import { useAlgo } from "../core/algoView";
 import { interactiveElements, layerIdOf } from "../core/layers";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
@@ -274,6 +275,7 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
+        useAlgo.subscribe((s, prev) => { if (s.overlay !== prev.overlay) renderer.setAlgoOverlay(s.overlay); }),
         // O texto em edição some do canvas (a <textarea> o substitui).
         useEdit.subscribe((s) => renderer.setHidden(s.session?.id ?? null)),
         useTool.subscribe((s, prev) => {

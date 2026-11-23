@@ -11,6 +11,7 @@ import { Toolbar } from "./components/Toolbar";
 import { NotebookManager } from "./components/NotebookManager";
 import { zSelection } from "./components/LayersPanel";
 import { TemplateGallery } from "./components/TemplateGallery";
+import { AlgoPlayer } from "./components/AlgoPlayer";
 import { useTheme } from "./core/theme";
 import { copyWithMark, initPaste } from "./components/clipboard";
 import {
@@ -124,6 +125,7 @@ export default function App() {
       <Toolbar />
       <TemplateGallery />
       <FocusExit />
+      <AlgoPlayer />
       <TextEditor />
       <LabelEditor />
       <Toast />

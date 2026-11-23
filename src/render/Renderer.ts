@@ -16,6 +16,7 @@ import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visible
 import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
 import { figurePrims } from "../core/figures";
+import { AlgoOverlay } from "../core/algoView";
 import { arrowHead } from "./figureSvg";
 
 const LINE = "#1B2233";
@@ -62,6 +63,8 @@ export class Renderer {
   private layerRoot = new Container();
   private layerBox = new Map<string, { root: Container; frames: Container; committed: Container }>();
   private live = new Graphics();
+  /** Execução de algoritmo: anéis, arestas e etiquetas por cima dos elementos (mundo), fora do documento. */
+  private algoLayer = new Container();
   private liveInk = new InkNode();
   private selLayer = new Graphics();
   private overlay = new Graphics();
@@ -91,7 +94,7 @@ export class Renderer {
       autoDensity: true,
       powerPreference: "high-performance",
     });
-    this.world.addChild(this.layerRoot, this.live, this.liveInk);
+    this.world.addChild(this.layerRoot, this.algoLayer, this.live, this.liveInk);
     this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
@@ -638,6 +641,36 @@ export class Renderer {
     this.liveStyle = null;
     this.pendingLivePoints = null;
     this.liveDirty = false;
+  }
+
+  // ---------------- execução de algoritmo ----------------
+
+  setAlgoOverlay(o: AlgoOverlay | null) {
+    if (!this.ready) return;
+    for (const ch of this.algoLayer.removeChildren()) ch.destroy({ children: true });
+    if (!o) return;
+    const g = new Graphics();
+    this.algoLayer.addChild(g);
+    for (const e of o.edges) {
+      if (e.pts.length < 2) continue;
+      g.moveTo(e.pts[0].x, e.pts[0].y);
+      for (let i = 1; i < e.pts.length; i++) g.lineTo(e.pts[i].x, e.pts[i].y);
+      g.stroke({ width: e.width, color: e.color, alpha: e.alpha, cap: "round", join: "round" });
+    }
+    for (const r of o.rings) {
+      g.ellipse(r.cx, r.cy, r.rx, r.ry);
+      if (r.fill) g.fill({ color: r.fill, alpha: 0.35 });
+      g.ellipse(r.cx, r.cy, r.rx, r.ry).stroke({ width: r.width, color: r.color });
+    }
+    const res = this.textRes();
+    for (const b of o.badges) {
+      const t = new Text({ text: b.text, style: { fontFamily: "Inter, system-ui, sans-serif", fontSize: 13, fontWeight: "700", fill: 0xffffff } });
+      t.resolution = res;
+      t.anchor.set(0.5);
+      t.position.set(b.x, b.y);
+      const bg = new Graphics().roundRect(b.x - t.width / 2 - 6, b.y - t.height / 2 - 2, t.width + 12, t.height + 4, 9).fill({ color: b.color });
+      this.algoLayer.addChild(bg, t);
+    }
   }
 
   // ---------------- seleção (espaço de tela) ----------------

@@ -15,8 +15,8 @@ import { PaperPanel } from "./PaperPanel";
 import { APP_VERSION } from "../core/repo";
 import { checkForUpdates, isTauri } from "../core/updater";
 import { isInsideAny } from "../core/outside";
-import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, useLayout } from "../core/layout";
-import { BlockHandle } from "./BlockHandle";
+import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, floatLeaders, groupMembers, useLayout } from "../core/layout";
+import { BarHandle, BlockHandle } from "./BlockHandle";
 import { Settings } from "./Settings";
 import { addAttachmentFile, pasteFromButton, worldPoint } from "./clipboard";
 
@@ -368,7 +368,7 @@ export function Toolbar() {
     </div>
   );
   const renderBlocks = (side: "bottom" | "left" | "right") => blocksOn(layout, side).map(renderBlock);
-  const floatIds = blocksOn(layout, "float");
+  const floatIds = floatLeaders(layout);
   const leftIds = blocksOn(layout, "left");
   const rightIds = blocksOn(layout, "right");
   const bottomIds = blocksOn(layout, "bottom");
@@ -387,7 +387,7 @@ export function Toolbar() {
     if (!floatIds.length) return;
     const fix = () => {
       const st = useLayout.getState();
-      for (const id of blocksOn(st.layout, "float")) {
+      for (const id of floatLeaders(st.layout)) {
         const pos = st.layout.floats[id];
         const el = document.querySelector<HTMLElement>(`[data-fbar="${id}"]`);
         if (!pos || !el) continue;
@@ -634,12 +634,14 @@ export function Toolbar() {
       </div>
 
       {leftIds.length > 0 && (
-        <div className="toolbar rail vbar rail-left" ref={leftRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (esquerda)" onClickCapture={noteAnchor("left")}>
+        <div className="toolbar rail vbar rail-left" data-rail="left" ref={leftRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (esquerda)" onClickCapture={noteAnchor("left")}>
+          {leftIds.length > 1 && <BarHandle side="left" vertical />}
           {renderBlocks("left")}
         </div>
       )}
       {rightIds.length > 0 && (
-        <div className="toolbar rail vbar rail-right" ref={rightRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (direita)" onClickCapture={noteAnchor("right")}>
+        <div className="toolbar rail vbar rail-right" data-rail="right" ref={rightRef} role="toolbar" aria-orientation="vertical" aria-label="Ferramentas (direita)" onClickCapture={noteAnchor("right")}>
+          {rightIds.length > 1 && <BarHandle side="right" vertical />}
           {renderBlocks("right")}
         </div>
       )}
@@ -657,7 +659,8 @@ export function Toolbar() {
         )}
 
         {bottomIds.length > 0 && (
-          <div className="toolbar" role="toolbar" aria-label="Ferramentas" onClickCapture={noteAnchor("bottom")}>
+          <div className="toolbar" data-rail="bottom" role="toolbar" aria-label="Ferramentas" onClickCapture={noteAnchor("bottom")}>
+            {bottomIds.length > 1 && <BarHandle side="bottom" vertical={false} />}
             {renderBlocks("bottom")}
           </div>
         )}
@@ -667,6 +670,8 @@ export function Toolbar() {
         <div className="float-layer" ref={floatsRef}>
           {floatIds.map((id) => {
             const f = layout.floats[id] ?? defaultFloat(layout);
+            const members = groupMembers(layout, id);
+            const name = members.map((m) => BLOCKS.find((b) => b.id === m)?.label ?? m).join(", ");
             return (
               <div
                 key={id}
@@ -675,11 +680,12 @@ export function Toolbar() {
                 style={{ left: f.x, top: f.y }}
                 role="toolbar"
                 aria-orientation={f.vertical ? "vertical" : "horizontal"}
-                aria-label={`Barra flutuante: ${BLOCKS.find((b) => b.id === id)?.label ?? id}`}
+                aria-label={`Barra flutuante: ${name}`}
                 onClickCapture={noteAnchor("float")}
               >
-                {renderBlock(id)}
-                <button className="btn fdock" onClick={() => useLayout.getState().home(id)} aria-label={`Encaixar ${BLOCKS.find((b) => b.id === id)?.label ?? id} de volta`} title="Encaixar de volta na barra">
+                {members.length > 1 && <BarHandle leader={id} vertical={f.vertical} />}
+                {members.map(renderBlock)}
+                <button className="btn fdock" onClick={() => useLayout.getState().homeGroup(id)} aria-label={`Encaixar ${name} de volta`} title="Encaixar de volta nas barras">
                   <Icon size={16}><path d="M12 4v10M7.5 10l4.5 4.5 4.5-4.5M5 19h14" /></Icon>
                 </button>
               </div>

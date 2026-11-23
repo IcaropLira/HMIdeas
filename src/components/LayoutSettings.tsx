@@ -17,9 +17,10 @@ export function BarsPane({ layout, onSide, onMove, onRotate, onLocked, onReset }
     <section aria-labelledby="cfg-bars" className="pane">
       <h3 id="cfg-bars">Barras de ferramentas</h3>
       <p className="hint">
-        Cada grupo de botões pode ficar embaixo, na esquerda, na direita, flutuando ou oculto. Arraste pelos seis pontinhos:
-        enquanto arrasta aparecem as <b>zonas de encaixe</b> (esquerda, embaixo, direita). Solte numa zona, ou em cima de
-        outra barra, para juntar de novo. Barras soltas também têm o botão <b>encaixar</b>.
+        As barras funcionam como peças de lego. Os <b>seis pontinhos</b> arrastam um bloco sozinho (desacopla); a <b>pílula</b> no
+        começo de cada barra arrasta a barra inteira, com todos os blocos juntos. Solte sobre outra barra (encaixada ou
+        flutuante) para juntar antes/depois do bloco embaixo do ponteiro, ou numa <b>zona de encaixe</b> (esquerda, embaixo,
+        direita). As barras soltas grudam nas bordas da tela e umas nas outras. Duplo clique na pílula gira a barra.
       </p>
       <div className="row" role="group" aria-label="Posições">
         <button className={layout.locked ? "chip on" : "chip"} aria-pressed={layout.locked} onClick={() => onLocked(!layout.locked)}>

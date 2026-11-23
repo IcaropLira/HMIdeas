@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, clampPosition, homeBlock, loadLayout, moveBlock, normalizeLayout, placeBlock, placeBlockAt, saveLayout, snapPosition } from "./layout";
+import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, clampPosition, detachBlock, dockGroup, floatLeaders, floatSide, groupMembers, homeBlock, homeGroup, joinGroup, loadLayout, mergeGroups, moveBlock, moveGroup, normalizeLayout, placeBlock, placeBlockAt, saveLayout, snapPosition, snapToRects } from "./layout";
 
 const memory = () => {
   const m = new Map<string, string>();
@@ -240,5 +240,76 @@ describe("juntar blocos de volta", () => {
     const l = normalizeLayout(antigo);
     expect(l.side.insert).toBe("left");
     expect(l.order).toContain("insert");
+  });
+});
+
+describe("grupos flutuantes (lego)", () => {
+  const solto = (l = DEFAULT_LAYOUT) => placeBlock(l, "colors", "float", { x: 300, y: 200, vertical: false });
+
+  it("juntar um bloco a um flutuante forma um grupo com uma posição só", () => {
+    const l = joinGroup(solto(), "size", "colors", false);
+    expect(groupMembers(l, "colors")).toEqual(["colors", "size"]);
+    expect(l.group.size).toBe("colors");
+    expect(l.floats.size).toBeUndefined();
+    expect(floatLeaders(l)).toEqual(["colors"]);
+    expect(blocksOn(l, "right")).toEqual(["brush"]);
+  });
+
+  it("antes/depois do alvo define a ordem dentro do grupo", () => {
+    const l = joinGroup(solto(), "tools", "colors", true);
+    expect(groupMembers(l, "colors")).toEqual(["tools", "colors"]);
+  });
+
+  it("tirar o líder do grupo passa a posição e a liderança para o próximo", () => {
+    let l = joinGroup(joinGroup(solto(), "size", "colors", false), "brush", "size", false);
+    l = detachBlock(l, "colors");
+    expect(floatLeaders(l).sort()).toEqual(["colors", "size"]);
+    expect(groupMembers(l, "size")).toEqual(["size", "brush"]);
+    expect(l.floats.size).toEqual({ x: 300, y: 200, vertical: false });
+  });
+
+  it("mover o grupo move todos; encaixar o grupo leva todos para a barra, na ordem", () => {
+    let l = joinGroup(solto(), "size", "colors", false);
+    l = moveGroup(l, "colors", { x: 10, y: 20, vertical: true });
+    expect(l.floats.colors).toEqual({ x: 10, y: 20, vertical: true });
+    const d = dockGroup(l, "colors", "bottom", "shapes");
+    expect(blocksOn(d, "bottom")).toEqual(["tools", "colors", "size", "shapes", "history"]);
+    expect(floatLeaders(d)).toEqual([]);
+    expect(d.group).toEqual({});
+  });
+
+  it("arrancar a barra lateral inteira vira um grupo flutuante com os mesmos blocos", () => {
+    const { layout, leader } = floatSide(DEFAULT_LAYOUT, "left", { x: 50, y: 60, vertical: true });
+    expect(leader).toBe("insert");
+    expect(blocksOn(layout, "left")).toEqual([]);
+    expect(groupMembers(layout, "insert")).toEqual(["insert", "map", "page"]);
+  });
+
+  it("juntar dois grupos flutuantes", () => {
+    let l = joinGroup(solto(), "size", "colors", false);
+    l = placeBlock(l, "tools", "float", { x: 600, y: 50, vertical: false });
+    l = joinGroup(l, "shapes", "tools", false);
+    const m = mergeGroups(l, "tools", "size", false);
+    expect(groupMembers(m, "colors")).toEqual(["colors", "size", "tools", "shapes"]);
+    expect(floatLeaders(m)).toEqual(["colors"]);
+  });
+
+  it("encaixar de volta (home) devolve cada bloco do grupo ao seu lugar de fábrica", () => {
+    const l = homeGroup(joinGroup(solto(), "tools", "colors", false), "colors");
+    expect(l.side).toMatchObject({ colors: "right", tools: "bottom" });
+  });
+
+  it("normalize: grupo apontando para quem não flutua (ou corrente) é desfeito", () => {
+    const l = normalizeLayout({ side: { colors: "float", size: "float" }, floats: { colors: { x: 1, y: 2, vertical: false } }, group: { size: "colors", tools: "colors" } });
+    expect(l.group).toEqual({ size: "colors" });
+    const ruim = normalizeLayout({ side: { size: "float" }, group: { size: "colors" } });
+    expect(ruim.side.size).toBe("right");
+    expect(ruim.group).toEqual({});
+  });
+
+  it("ímã entre barras encosta lado a lado", () => {
+    const p = snapToRects({ x: 410, y: 105 }, { w: 100, h: 40 }, [{ x: 200, y: 100, w: 200, h: 44 }]);
+    expect(p).toEqual({ x: 406, y: 100 });
+    expect(snapToRects({ x: 700, y: 500 }, { w: 100, h: 40 }, [{ x: 200, y: 100, w: 200, h: 44 }])).toEqual({ x: 700, y: 500 });
   });
 });

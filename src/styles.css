@@ -681,3 +681,12 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .hsv-field { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
 .cp-sv.sm { height: 110px; }
 .paperpanel, .panel.scroll { max-height: min(78vh, 680px); overflow-y: auto; }
+
+/* ---- barras "lego": alça da barra inteira (pílula) ---- */
+.bargrip { flex: none; display: grid; place-items: center; width: 16px; min-height: 40px; align-self: stretch; cursor: grab; touch-action: none; }
+.bargrip i { display: block; width: 4px; height: 26px; border-radius: 4px; background: var(--ink-soft); opacity: .45; }
+.bargrip.v { width: auto; min-height: 16px; height: 16px; align-self: stretch; }
+.bargrip.v i { width: 26px; height: 4px; }
+.bargrip:hover i { opacity: 1; background: var(--accent); }
+.fbar .blk + .blk, .rail .blk + .blk { border-left: 1px solid var(--line); }
+.vbar.fbar .blk + .blk, .rail.vbar .blk + .blk { border-left: 0; border-top: 1px solid var(--line); }

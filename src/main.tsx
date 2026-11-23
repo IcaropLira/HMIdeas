@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initCustomBrushes } from "./core/brushPresets";
 import { initTheme } from "./core/theme";
 import "./styles.css";
@@ -10,4 +11,4 @@ import "./styles.css";
 initCustomBrushes();
 initTheme();
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<ErrorBoundary><App /></ErrorBoundary>);

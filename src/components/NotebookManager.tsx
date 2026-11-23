@@ -4,7 +4,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { PaperSwatch } from "./PaperPanel";
-import { DEFAULT_BACKGROUND, HirakuDoc, Page, PaperKind, createDoc, newId } from "../core/model";
+import { DEFAULT_BACKGROUND, HirakuDoc, Page, PaperKind, createDoc, newId, normalizeDoc } from "../core/model";
 import { downloadDoc, parseDoc, serializeDoc } from "../core/serialize";
 import { useDoc } from "../core/store";
 import { useUI } from "../core/ui";
@@ -26,7 +26,17 @@ function openDb(): Promise<IDBDatabase> {
 }
 async function all(): Promise<Notebook[]> {
   const db = await openDb();
-  try { return await new Promise((resolve, reject) => { const r = db.transaction(STORE).objectStore(STORE).getAll(); r.onsuccess = () => resolve((r.result as Notebook[]).filter((n) => n?.id && n.doc?.pages?.length)); r.onerror = () => reject(r.error); }); }
+  try {
+    const raw = await new Promise<Notebook[]>((resolve, reject) => { const r = db.transaction(STORE).objectStore(STORE).getAll(); r.onsuccess = () => resolve(r.result as Notebook[]); r.onerror = () => reject(r.error); });
+    // Cadernos salvos por versões antigas (sem camadas, campos novos…) passam pela mesma migração do arquivo .hiraku.
+    // Sem isso a capa lia `page.layers` indefinido e a tela inicial inteira quebrava (tela vazia).
+    const out: Notebook[] = [];
+    for (const n of raw) {
+      if (!n?.id || !n.doc?.pages?.length) continue;
+      try { out.push({ ...n, doc: normalizeDoc(n.doc) }); } catch { /* caderno ilegível: fica de fora em vez de derrubar tudo */ }
+    }
+    return out;
+  }
   finally { db.close(); }
 }
 async function put(n: Notebook): Promise<void> {

@@ -382,7 +382,7 @@ function FunctionsTab({ sel }: { sel: AttachmentElement | null }) {
         <button className="chip sm" onClick={() => apply({ ...spec, xmin: -1, xmax: 10, ymin: -1, ymax: 10 })}>1º quadrante</button>
       </div>
       <div className="row tight">
-        <input className="cp-hex" placeholder="Ponto: 2; 3  ou  A = (2, 3)" value={pt} onChange={(e) => setPt(e.target.value)} onKeyDown={(e) => {
+        <input className="cp-hex fn-in" placeholder="Ponto: 2; 3  ou  A = (2, 3)" value={pt} onChange={(e) => setPt(e.target.value)} onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           const m = /^\s*(?:([^=()]+?)\s*=\s*)?\(?\s*(-?[\d.,]+)\s*[;,\s]\s*(-?[\d.,]+)\s*\)?\s*$/.exec(pt);
           if (!m) { toast("Escreva o ponto como 2; 3 ou A = (2, 3)."); return; }

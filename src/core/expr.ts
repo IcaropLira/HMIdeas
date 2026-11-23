@@ -225,3 +225,9 @@ export function fmt(v: number, digits = 10): string {
   const s = Math.abs(v) >= 1e12 || Math.abs(v) < 1e-6 ? v.toExponential(6) : String(Number(v.toPrecision(digits)));
   return s.replace(".", ",").replace("-", "−");
 }
+
+/** Compila uma função de duas variáveis, f(x, y) ("z = x^2 + y^2"). */
+export function compile2(src: string): (x: number, y: number) => number {
+  const n = parse(src);
+  return (x: number, y: number) => evaluate(n, { x, y });
+}

@@ -914,3 +914,10 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .tiles.compact .tile { font-size: 11px; padding: 4px 4px 5px; gap: 3px; }
 .algo-ctrl .btn.play:hover { filter: brightness(1.1); background: linear-gradient(135deg, var(--accent-2), var(--accent-strong, #5b2fb8)); }
 @media (max-width: 700px) { .algo-player { right: 12px; left: 12px; width: auto; } }
+.vec-name { width: 46px; flex: none; }
+.matrix-in { display: grid; grid-template-columns: repeat(2, 80px); gap: 6px; padding: 6px 10px; border-left: 2px solid var(--ink); border-right: 2px solid var(--ink); border-radius: 6px; width: max-content; }
+.mat-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mat-box { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.mini-field input.wide { width: 110px; }
+.result-box.mono pre { margin: 6px 0; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+.slider output { grid-row: 1; grid-column: 2; }

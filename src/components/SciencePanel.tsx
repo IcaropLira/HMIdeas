@@ -9,18 +9,19 @@ import {
   edgeStyle, graphFromElements, graphToText, hasCycle, layoutGraph, mst, parseGraph, shortestPath, vertexStyle,
 } from "../core/graph";
 import {
-  FIGURE_KINDS, FigureSpec, PLOT_COLORS, SOLIDS, SolidId, defaultFigure, defaultFigureSize, figureTitle, plotPrims,
+  FIGURE_KINDS, FigureSpec, PLOT_COLORS, SOLIDS, SolidId, defaultFigure, defaultFigureSize, figureErrors, figureTitle, plotPrims, revolutionVolume,
 } from "../core/figures";
 import { calc, fmt } from "../core/expr";
 import { ALGORITHMS, AlgoId, GENERATORS, GenId, adjacencyMatrix, generate, matrixToEdges, runAlgorithm } from "../core/graphAlgo";
 import { useAlgo } from "../core/algoView";
+import { add as addM, angle, cross, det, distance, dot, eigenvalues, eigenvector, formatMatrix, inverse, multiply, norm, parseMatrix, parseVector, projection, rref, solve, transpose } from "../core/linalg";
 import { viewCenter } from "../core/mapActions";
 import { selectActivePage, useDoc, useSel, useTool } from "../core/store";
 import { makeText, measureBlock } from "../core/text";
 import { useUI } from "../core/ui";
 import { BRANCH_PALETTE } from "../core/mindmap";
 
-type Tab = "grafos" | "geometria" | "funcoes" | "calc";
+type Tab = "grafos" | "geometria" | "funcoes" | "algebra" | "calc";
 
 // ---------------- utilidades ----------------
 const toast = (m: string) => useUI.getState().showToast(m);
@@ -321,7 +322,47 @@ function FigureEditor({ el }: { el: AttachmentElement }) {
   return (
     <div className="fig-editor">
       <div className="sec-title">Editar: {figureTitle(f)}</div>
-      {(f.kind === "solid" || f.kind === "space") && (<>{angle("Girar", "yaw", -180, 180)}{angle("Inclinar", "pitch", -85, 85)}</>)}
+      {(f.kind === "solid" || f.kind === "space" || f.kind === "revolution" || f.kind === "surface") && (<>{angle("Girar", "yaw", -180, 180)}{angle("Inclinar", "pitch", -85, 85)}</>)}
+      {f.kind === "revolution" && (
+        <>
+          <div className="fn-row"><span className="fn-name">y =</span>
+            <input className="cp-hex fn-in" defaultValue={f.expr} key={el.id + f.expr} spellCheck={false} onBlur={(e) => e.target.value !== f.expr && set({ expr: e.target.value } as Partial<FigureSpec>)} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
+          </div>
+          <div className="row tight">
+            {(["a", "b"] as const).map((k) => (
+              <label key={k} className="mini-field">{k === "a" ? "x de" : "até"}
+                <input type="number" defaultValue={f[k]} key={el.id + k + f[k]} onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v !== f[k]) set({ [k]: v } as Partial<FigureSpec>); }} />
+              </label>
+            ))}
+            <button className={f.axis === "x" ? "chip sm on" : "chip sm"} onClick={() => set({ axis: "x" } as Partial<FigureSpec>)}>Eixo x</button>
+            <button className={f.axis === "y" ? "chip sm on" : "chip sm"} onClick={() => set({ axis: "y" } as Partial<FigureSpec>)}>Eixo y</button>
+            <button className={f.slices ? "chip sm on" : "chip sm"} onClick={() => set({ slices: !f.slices } as Partial<FigureSpec>)}>Malha</button>
+          </div>
+          <div className="row tight">
+            {["sqrt(x)", "x", "x^2", "sin(x)+1.5", "1/x", "sqrt(4-x^2)", "e^(-x)"].map((ex) => <button key={ex} className="chip sm" onClick={() => set({ expr: ex, ...(ex === "sqrt(4-x^2)" ? { a: -2, b: 2 } : ex === "1/x" ? { a: 1, b: 5 } : ex === "sin(x)+1.5" ? { a: 0, b: 6.283 } : { a: 0, b: 4 }) } as Partial<FigureSpec>)}>{ex}</button>)}
+          </div>
+          <div className="result-box">Volume ≈ <b>{fmt(revolutionVolume(f), 6)}</b> {f.axis === "x" ? "· método dos discos: V = π∫ f(x)² dx" : "· método das cascas: V = 2π∫ |x·f(x)| dx"}</div>
+        </>
+      )}
+      {f.kind === "surface" && (
+        <>
+          <div className="fn-row"><span className="fn-name">z =</span>
+            <input className="cp-hex fn-in" defaultValue={f.expr} key={el.id + f.expr} spellCheck={false} onBlur={(e) => e.target.value !== f.expr && set({ expr: e.target.value } as Partial<FigureSpec>)} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
+          </div>
+          <div className="row tight">
+            {[["Ondas", "sin(x) * cos(y)"], ["Paraboloide", "x^2 + y^2"], ["Sela", "x^2 - y^2"], ["Sombreiro", "sin(sqrt(x^2+y^2)) / sqrt(x^2+y^2+0.01)"], ["Gaussiana", "3e^(-(x^2+y^2)/2)"], ["Plano", "x + y/2"]].map(([n2, ex]) => <button key={n2} className="chip sm" onClick={() => set({ expr: ex } as Partial<FigureSpec>)}>{n2}</button>)}
+          </div>
+          <div className="row tight">
+            {(["xmin", "xmax", "ymin", "ymax"] as const).map((k) => (
+              <label key={k} className="mini-field">{k.replace("min", " mín").replace("max", " máx")}
+                <input type="number" defaultValue={f[k]} key={el.id + k + f[k]} onBlur={(e) => { const v = Number(e.target.value); const nx = { ...f, [k]: v }; if (Number.isFinite(v) && nx.xmax > nx.xmin && nx.ymax > nx.ymin) set({ [k]: v } as Partial<FigureSpec>); }} />
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      {f.kind === "vectors" && <VectorsEditor el={el} />}
+      {f.kind === "points" && <PointsEditor el={el} />}
       {f.kind === "solid" && (
         <div className="row tight">
           <button className={f.hidden ? "chip sm on" : "chip sm"} onClick={() => set({ hidden: !f.hidden })}>Arestas ocultas</button>
@@ -351,13 +392,84 @@ function FigureEditor({ el }: { el: AttachmentElement }) {
         </div>
       )}
       {f.kind === "plot" && <p className="hint">Edite as funções na aba <b>Funções</b>.</p>}
+      {figureErrors(f).map((e) => <p key={e} className="hint err">{e}</p>)}
     </div>
+  );
+}
+
+const MATRIX_PRESETS: [string, [number, number, number, number]][] = [
+  ["Rotação 90°", [0, -1, 1, 0]], ["Rotação 45°", [0.7071, -0.7071, 0.7071, 0.7071]], ["Reflexão em y=x", [0, 1, 1, 0]],
+  ["Cisalhamento", [1, 1, 0, 1]], ["Escala 2×", [2, 0, 0, 2]], ["Projeção em x", [1, 0, 0, 0]], ["Esticar", [2, 1, 1, 2]],
+];
+
+function VectorsEditor({ el }: { el: AttachmentElement }) {
+  const f = el.figure as Extract<FigureSpec, { kind: "vectors" }>;
+  const set = (patch: Partial<typeof f>) => useDoc.getState().updateElements([{ ...el, figure: { ...f, ...patch } }]);
+  const num = (v: string, d: number) => { const r = calc(v); return r.ok ? r.value : d; };
+  return (
+    <>
+      {f.vectors.map((v, i) => (
+        <div key={i} className="fn-row">
+          <span className="fn-dot" style={{ background: v.color }} />
+          <input className="cp-hex fn-in vec-name" defaultValue={v.name} key={el.id + "n" + i + v.name} onBlur={(e) => set({ vectors: f.vectors.map((x, k) => (k === i ? { ...x, name: e.target.value.slice(0, 6) || x.name } : x)) })} />
+          <span className="fn-name">=(</span>
+          <input className="cp-hex fn-in" defaultValue={String(v.x)} key={el.id + "x" + i + v.x} onBlur={(e) => set({ vectors: f.vectors.map((x, k) => (k === i ? { ...x, x: num(e.target.value, x.x) } : x)) })} />
+          <span className="fn-name">;</span>
+          <input className="cp-hex fn-in" defaultValue={String(v.y)} key={el.id + "y" + i + v.y} onBlur={(e) => set({ vectors: f.vectors.map((x, k) => (k === i ? { ...x, y: num(e.target.value, x.y) } : x)) })} />
+          <span className="fn-name">)</span>
+          <button className="btn sm" aria-label="Remover vetor" onClick={() => set({ vectors: f.vectors.filter((_, k) => k !== i) })}>×</button>
+        </div>
+      ))}
+      <div className="row tight">
+        <button className="chip sm" disabled={f.vectors.length >= 6} onClick={() => set({ vectors: [...f.vectors, { name: String.fromCharCode(117 + f.vectors.length), x: 1, y: -1, color: PLOT_COLORS[(f.vectors.length + 2) % PLOT_COLORS.length] }] })}>+ Vetor</button>
+        <button className={f.sum ? "chip sm on" : "chip sm"} onClick={() => set({ sum: !f.sum })}>Soma</button>
+        <button className={f.proj ? "chip sm on" : "chip sm"} onClick={() => set({ proj: !f.proj })}>Projeção</button>
+        <label className="mini-field">Alcance <input type="number" defaultValue={f.range} key={el.id + "r" + f.range} onBlur={(e) => { const v = Number(e.target.value); if (v >= 1 && v <= 50) set({ range: v }); }} /></label>
+      </div>
+      <div className="sec-title">Transformação linear (matriz 2×2)</div>
+      <div className="row tight">
+        <button className={!f.matrix ? "chip sm on" : "chip sm"} onClick={() => set({ matrix: null })}>Nenhuma</button>
+        {MATRIX_PRESETS.map(([n2, m]) => <button key={n2} className={f.matrix?.join() === m.join() ? "chip sm on" : "chip sm"} onClick={() => set({ matrix: m })}>{n2}</button>)}
+      </div>
+      {f.matrix && (
+        <div className="matrix-in">
+          {f.matrix.map((v, i) => (
+            <input key={el.id + i + v} className="cp-hex fn-in" defaultValue={String(v)} onBlur={(e) => { const m = [...f.matrix!] as [number, number, number, number]; m[i] = num(e.target.value, v); set({ matrix: m }); }} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function PointsEditor({ el }: { el: AttachmentElement }) {
+  const f = el.figure as Extract<FigureSpec, { kind: "points" }>;
+  const set = (patch: Partial<typeof f>) => useDoc.getState().updateElements([{ ...el, figure: { ...f, ...patch } }]);
+  const text = f.points.map((p) => `${fmt(p.x, 6)}; ${fmt(p.y, 6)}`).join("\n");
+  return (
+    <>
+      <textarea className="outline-in" rows={4} defaultValue={text} key={el.id + text} spellCheck={false} placeholder={"1; 2\n3; 5\n…"}
+        onBlur={(e) => {
+          const pts = e.target.value.split("\n").map((l) => l.trim().replace(/[()]/g, "").split(/\s*[;\s]\s*/).map((c) => Number(c.replace(",", ".")))).filter((p) => p.length >= 2 && p.every(Number.isFinite)).map(([x, y]) => ({ x, y }));
+          if (pts.length && e.target.value !== text) set({ points: pts.slice(0, 300) });
+        }} />
+      <div className="row tight">
+        <button className="chip sm" onClick={() => set({ points: Array.from({ length: 14 }, () => ({ x: Math.round(Math.random() * 100) / 10, y: Math.round(Math.random() * 100) / 10 })) })}>🎲 Pontos aleatórios</button>
+        <button className={f.hull ? "chip sm on" : "chip sm"} onClick={() => set({ hull: !f.hull })}>Fecho convexo</button>
+        <button className={f.tri ? "chip sm on" : "chip sm"} onClick={() => set({ tri: !f.tri })}>Delaunay</button>
+        <button className={f.closest ? "chip sm on" : "chip sm"} onClick={() => set({ closest: !f.closest })}>Par mais próximo</button>
+        <button className={f.circle ? "chip sm on" : "chip sm"} onClick={() => set({ circle: !f.circle })}>Círculo mínimo</button>
+      </div>
+      <p className="hint">Um ponto por linha (x; y). Clique fora da caixa para aplicar.</p>
+    </>
   );
 }
 
 function GeometryTab({ sel }: { sel: AttachmentElement | null }) {
   const solids = useMemo(() => SOLIDS.map((s) => ({ ...s, spec: defaultFigure(s.id) })), []);
   const others = useMemo(() => FIGURE_KINDS.filter((k) => k.id !== "plot").map((k) => ({ ...k, spec: defaultFigure(k.id) })), []);
+  const three = others.filter((k) => ["space", "revolution", "surface"].includes(k.id));
+  const two = others.filter((k) => !["space", "revolution", "surface"].includes(k.id));
   return (
     <>
       {sel && sel.figure && sel.figure.kind !== "plot" && <FigureEditor el={sel} />}
@@ -370,9 +482,18 @@ function GeometryTab({ sel }: { sel: AttachmentElement | null }) {
           </button>
         ))}
       </div>
-      <div className="sec-title">Planos e instrumentos</div>
+      <div className="sec-title">3D: espaço, revolução e superfícies</div>
+      <div className="tiles three">
+        {three.map((k) => (
+          <button key={k.id} className="tile" onClick={() => insertFigure(k.spec)} title={k.hint}>
+            <ElementsPreview elements={figurePreview(k.spec)} w={120} h={90} pad={4} bg="#FFFFFF" />
+            <span>{k.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="sec-title">2D: vetores, pontos e instrumentos</div>
       <div className="tiles">
-        {others.map((k) => (
+        {two.map((k) => (
           <button key={k.id} className="tile" onClick={() => insertFigure(k.spec)} title={k.hint}>
             <ElementsPreview elements={figurePreview(k.spec)} w={150} h={90} pad={4} bg="#FFFFFF" />
             <span>{k.label}</span>
@@ -418,6 +539,7 @@ function FunctionsTab({ sel }: { sel: AttachmentElement | null }) {
           <button key={ex} className="chip sm" onClick={() => apply({ ...spec, fns: [...spec.fns.slice(0, 5), { expr: ex, color: PLOT_COLORS[spec.fns.length % PLOT_COLORS.length] }] })}>{ex}</button>
         ))}
       </div>
+      <AreasEditor spec={spec} apply={apply} />
       <div className="row tight">
         {(["xmin", "xmax", "ymin", "ymax"] as const).map((k) => (
           <label key={k} className="mini-field">{k.replace("min", " mín").replace("max", " máx")}
@@ -453,6 +575,129 @@ function FunctionsTab({ sel }: { sel: AttachmentElement | null }) {
         </>
       )}
       <p className="hint">Escreva como na calculadora: <code>x^2 - 3x + 2</code>, <code>2sen(x)</code>, <code>sqrt(x)</code>, <code>ln x</code>, <code>|x|</code> como <code>abs(x)</code>. Multiplicação implícita vale (<code>2x</code>, <code>3(x+1)</code>).</p>
+    </>
+  );
+}
+
+type PlotSpec = Extract<FigureSpec, { kind: "plot" }>;
+/** Área entre curvas: escolhe f, g (ou o eixo x) e o intervalo; a área e a integral aparecem no gráfico. */
+function AreasEditor({ spec, apply }: { spec: PlotSpec; apply: (s: PlotSpec) => void }) {
+  const [f, setF] = useState(0);
+  const [g, setG] = useState(-1);
+  const [a, setA] = useState("0");
+  const [b, setB] = useState("2");
+  const areas = spec.areas ?? [];
+  return (
+    <details className="editor" open={areas.length > 0}>
+      <summary>Área entre curvas / integral {areas.length ? `(${areas.length})` : ""}</summary>
+      <div className="editor-body">
+        <div className="row tight">
+          <label className="mini-field">Entre <select value={f} onChange={(e) => setF(+e.target.value)}>{spec.fns.map((_, i) => <option key={i} value={i}>f{i + 1}</option>)}</select></label>
+          <label className="mini-field">e <select value={g} onChange={(e) => setG(+e.target.value)}><option value={-1}>eixo x</option>{spec.fns.map((_, i) => <option key={i} value={i}>f{i + 1}</option>)}</select></label>
+          <label className="mini-field">de <input value={a} onChange={(e) => setA(e.target.value)} /></label>
+          <label className="mini-field">até <input value={b} onChange={(e) => setB(e.target.value)} /></label>
+        </div>
+        <div className="row tight">
+          <button className="chip sm" onClick={() => {
+            const A = calc(a), B = calc(b);
+            if (!A.ok || !B.ok || A.value === B.value) { toast("Intervalo inválido (use números ou expressões como pi/2)."); return; }
+            apply({ ...spec, areas: [...areas, { f, g, a: A.value, b: B.value, color: PLOT_COLORS[(areas.length + 2) % PLOT_COLORS.length] }] });
+          }}>+ Sombrear área</button>
+          {areas.length > 0 && <button className="chip sm danger" onClick={() => apply({ ...spec, areas: [] })}>Tirar áreas</button>}
+        </div>
+        <p className="hint">Mostra a área (∫|f − g|) e a integral com sinal. Os limites aceitam expressões: <code>pi</code>, <code>sqrt(2)</code>.</p>
+      </div>
+    </details>
+  );
+}
+
+// ---------------- álgebra linear ----------------
+function AlgebraTab() {
+  const [A, setA] = useState("2 1\n1 3");
+  const [B, setB] = useState("1 0\n0 1");
+  const [bv, setBv] = useState("3 5");
+  const [u, setU] = useState("3 1");
+  const [v, setV] = useState("1 2");
+  const [out, setOut] = useState<{ title: string; text: string } | null>(null);
+  const run = (title: string, fn: () => string) => {
+    try { setOut({ title, text: fn() }); } catch (e) { setOut({ title, text: e instanceof Error ? e.message : "Erro" }); }
+  };
+  const M = (t: string) => parseMatrix(t);
+  const V = (t: string) => parseVector(t);
+  const fv = (x: number[]) => `(${x.map((c) => fmt(c, 6)).join("; ")})`;
+  const insertText = () => {
+    if (!out) return;
+    const c = viewCenter();
+    const t = makeText(newId(), c.x, c.y, `${out.title}\n${out.text}`, { fontSize: 20, fontFamily: "mono", align: "left", color: useTool.getState().color });
+    useDoc.getState().addElement({ ...t, x: c.x - t.w / 2, y: c.y - t.h / 2 });
+    toast("Resultado inserido no quadro.");
+  };
+  const visualize = () => {
+    try {
+      const vu = V(u), vv = V(v);
+      const m = (() => { try { const a = M(A); return a.length === 2 && a[0].length === 2 ? ([a[0][0], a[0][1], a[1][0], a[1][1]] as [number, number, number, number]) : null; } catch { return null; } })();
+      const img = (x: number[]) => (m ? [m[0] * x[0] + m[1] * (x[1] ?? 0), m[2] * x[0] + m[3] * (x[1] ?? 0)] : x);
+      const r = Math.max(3, Math.ceil(Math.max(...[...img(vu), ...img(vv), ...vu, ...vv].map(Math.abs)) * 1.25));
+      insertFigure({ kind: "vectors", vectors: [{ name: "u", x: vu[0], y: vu[1] ?? 0, color: "#D2453A" }, { name: "v", x: vv[0], y: vv[1] ?? 0, color: "#2F5BD3" }], matrix: m, range: r, sum: true, proj: true });
+    } catch (e) { toast(e instanceof Error ? e.message : "Vetores inválidos"); }
+  };
+  return (
+    <>
+      <div className="sec-title">Matrizes</div>
+      <div className="mat-pair">
+        <label className="mat-box"><span>A</span><textarea className="outline-in" rows={3} value={A} onChange={(e) => setA(e.target.value)} spellCheck={false} /></label>
+        <label className="mat-box"><span>B</span><textarea className="outline-in" rows={3} value={B} onChange={(e) => setB(e.target.value)} spellCheck={false} /></label>
+      </div>
+      <div className="row tight">
+        <button className="chip sm" onClick={() => run("det(A)", () => fmt(det(M(A)), 10))}>det A</button>
+        <button className="chip sm" onClick={() => run("A⁻¹", () => formatMatrix(inverse(M(A))))}>A⁻¹</button>
+        <button className="chip sm" onClick={() => run("Aᵀ", () => formatMatrix(transpose(M(A))))}>Aᵀ</button>
+        <button className="chip sm" onClick={() => run("A·B", () => formatMatrix(multiply(M(A), M(B))))}>A·B</button>
+        <button className="chip sm" onClick={() => run("A + B", () => formatMatrix(addM(M(A), M(B))))}>A+B</button>
+        <button className="chip sm" onClick={() => run("A − B", () => formatMatrix(addM(M(A), M(B), -1)))}>A−B</button>
+        <button className="chip sm" onClick={() => run("Escalonada de A", () => { const r = rref(M(A)); return `${formatMatrix(r.R)}\nposto = ${r.rank}`; })}>Escalonar</button>
+        <button className="chip sm" onClick={() => run("Autovalores de A", () => {
+          const a = M(A);
+          return eigenvalues(a).map((e, i) => {
+            const val = Math.abs(e.im) < 1e-9 ? fmt(e.re, 8) : `${fmt(e.re, 6)} ${e.im < 0 ? "−" : "+"} ${fmt(Math.abs(e.im), 6)}i`;
+            const vec = Math.abs(e.im) < 1e-9 ? eigenvector(a, e.re) : null;
+            return `λ${i + 1} = ${val}${vec ? `   v = ${fv(vec)}` : ""}`;
+          }).join("\n");
+        })}>Autovalores</button>
+      </div>
+      <div className="row tight">
+        <label className="mini-field">b = <input className="wide" value={bv} onChange={(e) => setBv(e.target.value)} /></label>
+        <button className="chip sm" onClick={() => run("Sistema A·x = b", () => {
+          const r = solve(M(A), V(bv));
+          return r.kind === "unique" ? `x = ${fv(r.x)}` : r.kind === "none" ? "Sistema impossível (sem solução)." : `Infinitas soluções (${r.free} variável${r.free > 1 ? "is" : ""} livre${r.free > 1 ? "s" : ""}, posto ${r.rank}).`;
+        })}>Resolver A·x = b</button>
+      </div>
+
+      <div className="sec-title">Vetores</div>
+      <div className="row tight">
+        <label className="mini-field">u = <input className="wide" value={u} onChange={(e) => setU(e.target.value)} /></label>
+        <label className="mini-field">v = <input className="wide" value={v} onChange={(e) => setV(e.target.value)} /></label>
+      </div>
+      <div className="row tight">
+        <button className="chip sm" onClick={() => run("u · v", () => fmt(dot(V(u), V(v)), 10))}>u·v</button>
+        <button className="chip sm" onClick={() => run("u × v", () => fv(cross(V(u), V(v))))}>u×v</button>
+        <button className="chip sm" onClick={() => run("|u|, |v|", () => `|u| = ${fmt(norm(V(u)), 8)}\n|v| = ${fmt(norm(V(v)), 8)}`)}>Normas</button>
+        <button className="chip sm" onClick={() => run("Ângulo entre u e v", () => { const t = angle(V(u), V(v)); return `${fmt((t * 180) / Math.PI, 8)}°  (${fmt(t, 8)} rad)`; })}>Ângulo</button>
+        <button className="chip sm" onClick={() => run("proj_v u", () => fv(projection(V(u), V(v))))}>Projeção</button>
+        <button className="chip sm" onClick={() => run("Distância entre os pontos u e v", () => fmt(distance(V(u), V(v)), 10))}>Distância</button>
+      </div>
+      {out && (
+        <div className="result-box mono">
+          <b>{out.title}</b>
+          <pre>{out.text}</pre>
+          <div className="row tight">
+            <button className="chip sm" onClick={insertText}>Inserir no quadro</button>
+            <button className="chip sm" onClick={() => void navigator.clipboard?.writeText(out.text)}>Copiar</button>
+          </div>
+        </div>
+      )}
+      <button className="btn primary" onClick={visualize}>Visualizar u, v e a transformação A</button>
+      <p className="hint">Matrizes: uma linha por linha, números separados por espaço (aceita <code>sqrt(2)</code>, <code>pi/4</code>). Vetores: <code>3 1</code> ou <code>(1, 2, 3)</code>. “Visualizar” desenha u, v, a soma, a projeção e, se A for 2×2, a malha transformada com o determinante.</p>
     </>
   );
 }
@@ -507,7 +752,7 @@ export function SciencePanel() {
   const selKind = sel?.figure?.kind;
   useEffect(() => { if (selId) setTab(selKind === "plot" ? "funcoes" : "geometria"); }, [selId, selKind]);
   const effective = tab;
-  const TABS: [Tab, string][] = [["grafos", "Grafos"], ["geometria", "Geometria"], ["funcoes", "Funções"], ["calc", "Calculadora"]];
+  const TABS: [Tab, string][] = [["grafos", "Grafos"], ["geometria", "Geometria"], ["funcoes", "Funções"], ["algebra", "Álgebra"], ["calc", "Calc."]];
   return (
     <div className="panel sciencepanel" role="dialog" aria-label="Grafos e matemática">
       <div className="seg" role="tablist">
@@ -516,6 +761,7 @@ export function SciencePanel() {
       {effective === "grafos" && <GraphTab />}
       {effective === "geometria" && <GeometryTab sel={sel} />}
       {effective === "funcoes" && <FunctionsTab sel={sel} />}
+      {effective === "algebra" && <AlgebraTab />}
       {effective === "calc" && <CalcTab />}
     </div>
   );

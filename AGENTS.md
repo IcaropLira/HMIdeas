@@ -279,6 +279,20 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - Temas (`MAP_THEMES`, `applyMapTheme`), `numberBranches`, `sortChildren`, `balanceSides`, `toMarkdown` em `core/mindmap.ts`.
   Painel com prévias (temas, layout, ligações, formas) e modelos.
 
+### Grafos passo a passo, GeoGebra e conteúdo rico (0.6)
+- `core/graphAlgo.ts`: algoritmos como LISTA DE PASSOS (`Step`: atual, fronteira, concluídos, árvore, descartadas, rótulos,
+  estrutura auxiliar, frase). `runAlgorithm` (BFS, DFS, Dijkstra, Prim, Kruskal, Kahn, pontes/articulações de Tarjan, percursos
+  de árvore), `generate` (12 geradores com semente), `bstEdges`, `adjacencyMatrix`/`matrixToEdges`.
+- `core/algoView.ts` (UI, fora do desfazer) + `components/AlgoPlayer.tsx` (barra flutuante): o passo vira um `AlgoOverlay` que o
+  `Renderer.setAlgoOverlay` desenha numa camada própria acima dos elementos. Ver o algoritmo NUNCA muda o documento.
+- Figuras novas: `revolution` (volume por discos/cascas), `surface` (z = f(x, y), pintor de trás para frente em `paintMesh`),
+  `vectors` (soma, projeção, ângulo, transformação 2×2), `points` (fecho convexo, Delaunay, par mais próximo, círculo mínimo) e
+  áreas entre curvas no `plot` (`areas`). `clipPrims` recorta à caixa. Matemática pura em `core/linalg.ts` e `core/compgeo.ts`.
+- Nós de mapa: `note` (linhas "- [ ]" = tarefas → progresso automático), `link`, `tags`, `progress`, `due`, `image`/`imageRatio`,
+  forma `card`. `nodeLayout` (puro) posiciona tudo e dá o tamanho; `render/mindDraw.ts` desenha num 5º filho (`extras`).
+- `core/recognize.ts` (traço → linha/retângulo/elipse/losango/polígono), ferramenta `laser` (camada de tela que se apaga sozinha),
+  `Layer.blend` (normal/multiplicar/tela/somar).
+
 ### Tela inicial e aparência (0.6)
 - `components/NotebookManager.tsx` virou a **Home** (`useUI.notebooksOpen`): capas com a primeira página, criar com papel, favoritos,
   ordenação, cores de capa, importar. Abre ao iniciar (`hm-ideas:start-home`, desligável).

@@ -16,7 +16,7 @@ import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visible
 import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
 import { figurePrims } from "../core/figures";
-import { paintBlock } from "./blockDraw";
+import { paintBlock } from "./blockPaint";
 import { AlgoOverlay } from "../core/algoView";
 import { arrowHead } from "./figureSvg";
 

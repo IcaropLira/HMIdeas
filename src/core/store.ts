@@ -30,7 +30,11 @@ interface DocState {
   previewElements: (els: HirakuElement[]) => void;
   endPreview: (base: HirakuDoc) => void;
   cancelPreview: (base: HirakuDoc) => void;
-  setPaper: (patch: Partial<Pick<Page, "paper" | "background">>) => void;
+  setPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  /** Muda o papel SEM histórico (arrastar no seletor de cor); `endPreview(base)` grava como um passo só. */
+  /** Aplica o papel a TODAS as páginas (um passo de desfazer). */
+  setPaperAll: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  previewPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
 
   // páginas (alterações do documento → entram no desfazer), exceto setActivePage
   setActivePage: (id: ID) => void;
@@ -118,9 +122,17 @@ export const useDoc = create<DocState>((set, get) => {
 
     setPaper: (patch) => {
       const page = selectActivePage(get());
-      if ((patch.paper ?? page.paper) === page.paper && (patch.background ?? page.background) === page.background) return;
+      const keys = Object.keys(patch) as (keyof typeof patch)[];
+      if (keys.every((k) => patch[k] === page[k])) return;
       commit(mapActivePage((p) => ({ ...p, ...patch })));
     },
+
+    setPaperAll: (patch) => {
+      const { doc } = get();
+      commit({ ...doc, pages: doc.pages.map((p) => ({ ...p, ...patch })) });
+    },
+
+    previewPaper: (patch) => set({ doc: mapActivePage((p) => ({ ...p, ...patch })) }),
 
     setActivePage: (id) => {
       if (get().doc.pages.some((p) => p.id === id)) set({ activePageId: id });

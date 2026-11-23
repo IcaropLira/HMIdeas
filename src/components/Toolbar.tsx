@@ -1,16 +1,17 @@
 import { MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { defaultCamera, screenToWorld } from "../core/camera";
-import { ARROW_HEADS, LineStyle, LinearElement, PAPER_COLORS, PAPER_KINDS, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
+import { ARROW_HEADS, LineStyle, LinearElement, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
 import { resetPageCameras } from "../core/pageView";
 import { downloadDoc, parseDoc } from "../core/serialize";
 import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
-import { ToolId, selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
+import { ToolId, useDoc, useSel, useTool, useView } from "../core/store";
 import { FONTS, FONT_SIZES, makeText } from "../core/text";
 import { useUI } from "../core/ui";
 import { BrushPanel } from "./BrushPanel";
 import { ColorPicker } from "./ColorPicker";
 import { MapPanel } from "./MapPanel";
+import { PaperPanel } from "./PaperPanel";
 import { APP_VERSION } from "../core/repo";
 import { checkForUpdates, isTauri } from "../core/updater";
 import { isInsideAny } from "../core/outside";
@@ -125,7 +126,6 @@ function insertTemplate(kind: InsertKind) {
 
 export function Toolbar() {
   const t = useTool();
-  const page = useDoc((s) => selectActivePage(s));
   const canUndo = useDoc((s) => s.past.length > 0);
   const canRedo = useDoc((s) => s.future.length > 0);
   const zoom = useView((s) => s.camera.zoom);
@@ -404,22 +404,7 @@ export function Toolbar() {
   // Painéis (pincéis, cores, borracha…): ficam em cima da barra de baixo ou, se abertos por um botão da lateral/botão direito, junto dele.
   const panelsNode = (
     <>
-      {panel === "paper" && (
-        <div className="panel" role="dialog" aria-label="Papel">
-          <div className="row" role="radiogroup" aria-label="Estilo da folha">
-            {PAPER_KINDS.map((k) => (
-              <button key={k.id} role="radio" aria-checked={page.paper === k.id} className={page.paper === k.id ? "chip on" : "chip"} onClick={() => useDoc.getState().setPaper({ paper: k.id })}>
-                {k.label}
-              </button>
-            ))}
-          </div>
-          <div className="row" role="radiogroup" aria-label="Cor da folha">
-            {PAPER_COLORS.map((c) => (
-              <button key={c.value} role="radio" aria-checked={page.background === c.value} aria-label={c.label} title={c.label} className={page.background === c.value ? "swatch on" : "swatch"} style={{ background: c.value }} onClick={() => useDoc.getState().setPaper({ background: c.value })} />
-            ))}
-          </div>
-        </div>
-      )}
+      {panel === "paper" && <PaperPanel />}
 
       {panel === "brush" && <BrushPanel />}
       {panel === "map" && <MapPanel />}

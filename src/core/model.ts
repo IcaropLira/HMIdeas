@@ -275,13 +275,20 @@ export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES a
 export const isNode = (el: HirakuElement): el is NodeElement => el.type === "node";
 export const isFrame = (el: HirakuElement): el is FrameElement => el.type === "frame";
 
-export type PaperKind = "blank" | "ruled" | "grid" | "dots";
+export type PaperKind = "blank" | "ruled" | "margin" | "grid" | "mm" | "dots" | "iso" | "isodots" | "hex" | "music" | "cartesian";
 
-export const PAPER_KINDS: { id: PaperKind; label: string }[] = [
-  { id: "blank", label: "Liso" },
-  { id: "ruled", label: "Pautado" },
-  { id: "grid", label: "Quadriculado" },
-  { id: "dots", label: "Pontilhado" },
+export const PAPER_KINDS: { id: PaperKind; label: string; hint: string }[] = [
+  { id: "blank", label: "Liso", hint: "Folha sem linhas" },
+  { id: "ruled", label: "Pautado", hint: "Linhas horizontais" },
+  { id: "margin", label: "Caderno", hint: "Pautado com margem vermelha" },
+  { id: "grid", label: "Quadriculado", hint: "Quadrados com linha forte a cada 5" },
+  { id: "mm", label: "Milimetrado", hint: "Grade fina para gráficos e desenho técnico" },
+  { id: "dots", label: "Pontilhado", hint: "Pontos (bullet journal)" },
+  { id: "iso", label: "Isométrico", hint: "Grade triangular para perspectiva e sólidos" },
+  { id: "isodots", label: "Pontos isométricos", hint: "Pontos em triângulos" },
+  { id: "hex", label: "Hexagonal", hint: "Colmeia (química, jogos, mapas)" },
+  { id: "music", label: "Pauta musical", hint: "Pentagramas de 5 linhas" },
+  { id: "cartesian", label: "Plano cartesiano", hint: "Quadriculado com eixos x e y na origem" },
 ];
 
 export const DEFAULT_BACKGROUND = "#EDF0F4";
@@ -290,6 +297,16 @@ export const PAPER_COLORS: { value: string; label: string }[] = [
   { value: "#EDF0F4", label: "Cinza-azulado" },
   { value: "#FFFFFF", label: "Branco" },
   { value: "#FAF1C7", label: "Amarelo" },
+  { value: "#F6EEDF", label: "Marfim" },
+  { value: "#E9DCC3", label: "Kraft" },
+  { value: "#E4F1E8", label: "Menta" },
+  { value: "#E3ECFA", label: "Azul-claro" },
+  { value: "#F4E4EE", label: "Rosa" },
+  { value: "#ECE6F8", label: "Lavanda" },
+  { value: "#2B2F3A", label: "Grafite" },
+  { value: "#14213D", label: "Azul-marinho" },
+  { value: "#1F3B2D", label: "Lousa verde" },
+  { value: "#121212", label: "Preto" },
 ];
 
 export interface Page {
@@ -297,6 +314,10 @@ export interface Page {
   name: string;
   paper: PaperKind;
   background: string;
+  /** Espaçamento do padrão do papel (1 = padrão; 0.5..2). Ausente = 1. */
+  paperScale?: number;
+  /** Cor das linhas do papel; ausente/null = automática (escura no papel claro, clara no escuro). */
+  lineColor?: string | null;
   /** Ordem de empilhamento (último = por cima). */
   elements: HirakuElement[];
 }
@@ -425,7 +446,9 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       id: typeof p.id === "string" ? p.id : newId(),
       name: typeof p.name === "string" ? p.name : `Página ${i + 1}`,
       paper: kinds.includes(p.paper) ? p.paper : "blank",
-      background: typeof p.background === "string" ? p.background : DEFAULT_BACKGROUND,
+      background: hex(p.background, DEFAULT_BACKGROUND),
+      paperScale: Number.isFinite(p.paperScale) ? Math.max(0.5, Math.min(2, p.paperScale)) : undefined,
+      lineColor: typeof p.lineColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lineColor) ? p.lineColor : undefined,
       elements: Array.isArray(p.elements)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ? p.elements.filter(validElement).map((e: any) =>

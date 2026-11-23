@@ -8,6 +8,7 @@ import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
 import { decimateForPreview } from "../core/ink";
+import { MARGIN_COLOR, PaperLayer, autoLineColor, drawPaperPattern, layerAlpha } from "../core/paper";
 import { paintFrame, paintNode } from "./mindDraw";
 import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
 import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visiblePages, youtubeThumb } from "../core/embed";
@@ -55,7 +56,7 @@ export class Renderer {
   private resTimer: ReturnType<typeof setTimeout> | undefined;
 
   private cam: Camera = defaultCamera();
-  private paper: { kind: PaperKind; bg: string } = { kind: "blank", bg: DEFAULT_BACKGROUND };
+  private paper: { kind: PaperKind; bg: string; scale: number; line: string | null } = { kind: "blank", bg: DEFAULT_BACKGROUND, scale: 1, line: null };
   private paperSize = { w: 0, h: 0 };
   ready = false;
 
@@ -98,63 +99,50 @@ export class Renderer {
     this.scheduleTextRes();
   }
 
-  setPaper(kind: PaperKind, bg: string) {
-    if (kind === this.paper.kind && bg === this.paper.bg) return;
-    this.paper = { kind, bg };
+  setPaper(kind: PaperKind, bg: string, scale = 1, line: string | null = null) {
+    const p = this.paper;
+    if (kind === p.kind && bg === p.bg && scale === p.scale && line === p.line) return;
+    this.paper = { kind, bg, scale, line };
     this.app.renderer.background.color = bg;
     this.drawPaper();
   }
 
-  /** O papel é desenhado em espaço de TELA (só o que está visível) com nível de detalhe por zoom. */
+  /** O papel é desenhado em espaço de TELA (só o que está visível) com nível de detalhe por zoom (core/paper.ts). */
   private drawPaper() {
     const g = this.paperLayer;
-    const { x, y, zoom } = this.cam;
     const W = this.app.screen.width;
     const H = this.app.screen.height;
     this.paperSize = { w: W, h: H };
     g.clear();
-    const kind = this.paper.kind;
+    const { kind, bg, scale, line } = this.paper;
     if (kind === "blank") return;
-
-    const base = kind === "ruled" ? 36 : 32;
-    const minPx = kind === "dots" ? 14 : 9;
-    let step = base;
-    while (step * zoom < minPx) step *= 2; // zoom afastado → linhas mais espaçadas
-    const sp = step * zoom;
-
-    const firstX = x + Math.floor(-x / sp) * sp;
-    const firstY = y + Math.floor(-y / sp) * sp;
+    const color = line ?? autoLineColor(bg);
+    const dark = autoLineColor(bg) !== "#1B2233";
     const snap = (v: number) => Math.round(v) + 0.5;
-
-    if (kind === "dots") {
-      for (let sx = firstX; sx < W + sp; sx += sp) {
-        for (let sy = firstY; sy < H + sp; sy += sp) g.circle(sx, sy, 1.3);
-      }
-      g.fill({ color: LINE, alpha: 0.3 });
-      return;
+    const layers: number[][] = [[], [], []];
+    const dots: number[] = [];
+    drawPaperPattern(kind, this.cam, W, H, {
+      line: (x1, y1, x2, y2, layer: PaperLayer) => {
+        // retas horizontais/verticais caem no meio do pixel (nítidas); diagonais ficam como estão
+        if (x1 === x2) { x1 = x2 = snap(x1); } else if (y1 === y2) { y1 = y2 = snap(y1); }
+        layers[layer].push(x1, y1, x2, y2);
+      },
+      dot: (x, y, r) => dots.push(x, y, r),
+    }, { scale });
+    layers.forEach((arr, layer) => {
+      if (!arr.length) return;
+      for (let i = 0; i < arr.length; i += 4) g.moveTo(arr[i], arr[i + 1]).lineTo(arr[i + 2], arr[i + 3]);
+      const accent = layer === 2;
+      g.stroke({
+        width: accent ? 1.5 : 1,
+        color: accent && kind === "margin" ? MARGIN_COLOR : color,
+        alpha: layerAlpha(layer as PaperLayer, dark),
+      });
+    });
+    if (dots.length) {
+      for (let i = 0; i < dots.length; i += 3) g.circle(dots[i], dots[i + 1], dots[i + 2]);
+      g.fill({ color, alpha: layerAlpha("dot", dark) });
     }
-
-    if (kind === "ruled") {
-      for (let sy = firstY; sy < H + sp; sy += sp) g.moveTo(0, snap(sy)).lineTo(W, snap(sy));
-      g.stroke({ width: 1, color: LINE, alpha: 0.14 });
-      return;
-    }
-
-    // quadriculado: linha forte a cada 5 células
-    for (let sx = firstX; sx < W + sp; sx += sp) {
-      if (Math.round((sx - x) / sp) % 5 !== 0) g.moveTo(snap(sx), 0).lineTo(snap(sx), H);
-    }
-    for (let sy = firstY; sy < H + sp; sy += sp) {
-      if (Math.round((sy - y) / sp) % 5 !== 0) g.moveTo(0, snap(sy)).lineTo(W, snap(sy));
-    }
-    g.stroke({ width: 1, color: LINE, alpha: 0.09 });
-    for (let sx = firstX; sx < W + sp; sx += sp) {
-      if (Math.round((sx - x) / sp) % 5 === 0) g.moveTo(snap(sx), 0).lineTo(snap(sx), H);
-    }
-    for (let sy = firstY; sy < H + sp; sy += sp) {
-      if (Math.round((sy - y) / sp) % 5 === 0) g.moveTo(0, snap(sy)).lineTo(W, snap(sy));
-    }
-    g.stroke({ width: 1, color: LINE, alpha: 0.2 });
   }
 
   // ---------------- elementos gravados ----------------

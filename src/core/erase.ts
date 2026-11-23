@@ -95,12 +95,18 @@ export function cutStroke(el: StrokeElement, cx: number, cy: number, radius: num
  * linhas, texto) é apagado por inteiro se o círculo o toca, como na borracha de traço.
  * Devolve a MESMA lista (mesma referência) se nada mudou, para o chamador evitar redesenhos.
  */
-export function eraseStep(elements: HirakuElement[], cx: number, cy: number, radius: number): { elements: HirakuElement[]; removedIds: Set<string> } {
+export function eraseStep(
+  elements: HirakuElement[], cx: number, cy: number, radius: number,
+  /** Elementos protegidos (camada travada/oculta) ficam intactos. */
+  keep?: (el: HirakuElement) => boolean,
+): { elements: HirakuElement[]; removedIds: Set<string> } {
   const out: HirakuElement[] = [];
   const removedIds = new Set<string>();
   let changed = false;
   for (const el of elements) {
-    if (el.type === "stroke") {
+    if (keep?.(el)) {
+      out.push(el);
+    } else if (el.type === "stroke") {
       const res = cutStroke(el, cx, cy, radius);
       if (!res) {
         out.push(el);

@@ -9,6 +9,7 @@ import { initUpdates } from "./core/updater";
 import { PageNav, Sidebar, Toast } from "./components/Pages";
 import { Toolbar } from "./components/Toolbar";
 import { NotebookManager } from "./components/NotebookManager";
+import { zSelection } from "./components/LayersPanel";
 import { copyWithMark, initPaste } from "./components/clipboard";
 import {
   deleteSelection, duplicateSelection, editSelectedText,
@@ -51,6 +52,8 @@ export default function App() {
         // Ctrl+V: sem preventDefault aqui, para o navegador disparar o evento `paste` (ver components/clipboard.ts)
         else if (k === "g") run(() => (e.shiftKey ? ungroupSelection() : wrapSelectionInFrame()));
         else if (k === "enter") run(() => addChildToSelection());
+        else if (e.code === "BracketRight") run(() => zSelection(e.shiftKey ? "front" : "forward"));
+        else if (e.code === "BracketLeft") run(() => zSelection(e.shiftKey ? "back" : "backward"));
         return;
       }
 

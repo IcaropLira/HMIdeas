@@ -17,6 +17,7 @@ import { beginEditText, beginNewText } from "../core/textEdit";
 import { beginLabel, settleMoved } from "../core/mapActions";
 import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
 import { settleFrames } from "../core/frames";
+import { interactiveElements } from "../core/layers";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
@@ -58,7 +59,7 @@ export function createSelectController(renderer: Renderer) {
   const refresh = (marquee: SelectionUI["marquee"] = null) => renderer.setSelectionUI(buildUI(marquee));
 
   const topHit = (P: Pt, tol: number): HirakuElement | null => {
-    const els = page().elements;
+    const els = interactiveElements(page()); // camadas ocultas/travadas não respondem
     for (let i = els.length - 1; i >= 0; i--) if (elementHit(els[i], P.x, P.y, tol)) return els[i];
     return null;
   };
@@ -282,7 +283,7 @@ export function createSelectController(renderer: Renderer) {
         case "box": {
           if (!g.moved && Math.hypot(s.x - g.startS.x, s.y - g.startS.y) < 3) return;
           g.moved = true;
-          const inside = boxSelect(page().elements, g.startP, P);
+          const inside = boxSelect(interactiveElements(page()), g.startP, P);
           useSel.getState().set([...g.base, ...inside]);
           renderer.setSelectionUI(buildUI({ kind: "box", a: g.startP, b: P }));
           break;
@@ -321,7 +322,7 @@ export function createSelectController(renderer: Renderer) {
       } else if (done.kind === "vertex") {
         if (done.next) useDoc.getState().updateElements([done.next]);
       } else if (done.kind === "lasso") {
-        const ids = lassoSelect(page().elements, done.pts, useTool.getState().lassoMode, cam().zoom);
+        const ids = lassoSelect(interactiveElements(page()), done.pts, useTool.getState().lassoMode, cam().zoom);
         useSel.getState().set([...done.base, ...ids]);
       }
       refresh();

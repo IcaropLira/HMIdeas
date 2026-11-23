@@ -4,6 +4,7 @@ import { AttachmentElement } from "../core/model";
 import { useEmbedView } from "../core/embedView";
 import { clampPage, clampScroll, maxScroll, pageAtScroll, parseYouTube, scrollLayout, youtubeCommand, youtubeEmbed, youtubeWatch } from "../core/embed";
 import { openExternal } from "../core/openExternal";
+import { visibleElements } from "../core/layers";
 import { selectActivePage, useDoc, useSel, useView } from "../core/store";
 
 /** Passa `delta` páginas no PDF (carrossel: troca a página; rolagem: salta para o início da página vizinha). */
@@ -24,7 +25,7 @@ function turnPage(el: AttachmentElement, delta: number) {
  * dos incorporados. Acompanha a câmera; só os botões recebem clique, o resto deixa o canvas funcionar.
  */
 export function EmbedLayer() {
-  const elements = useDoc((s) => selectActivePage(s).elements);
+  const elements = useDoc((s) => visibleElements(selectActivePage(s)));
   const cam = useView((s) => s.camera);
   const sel = useSel((s) => s.ids);
   const playing = useEmbedView((s) => s.playing);

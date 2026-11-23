@@ -2,7 +2,7 @@
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
 import { Application, Container, Graphics, Matrix, Text, Sprite, Texture } from "pixi.js";
 import { Camera, defaultCamera } from "../core/camera";
-import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+import { DEFAULT_BACKGROUND, Layer, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
@@ -39,8 +39,9 @@ export class Renderer {
   private app = new Application();
   private paperLayer = new Graphics();
   private world = new Container();
-  private frames = new Container(); // quadros ficam SEMPRE abaixo do resto
-  private committed = new Container();
+  /** Uma pilha por camada da página: [quadros (sempre abaixo), resto]. Ordem dos filhos = ordem das camadas. */
+  private layerRoot = new Container();
+  private layerBox = new Map<string, { root: Container; frames: Container; committed: Container }>();
   private live = new Graphics();
   private liveInk = new InkNode();
   private selLayer = new Graphics();
@@ -71,7 +72,7 @@ export class Renderer {
       autoDensity: true,
       powerPreference: "high-performance",
     });
-    this.world.addChild(this.frames, this.committed, this.live, this.liveInk);
+    this.world.addChild(this.layerRoot, this.live, this.liveInk);
     this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
@@ -148,7 +149,10 @@ export class Renderer {
   // ---------------- elementos gravados ----------------
 
   /** Reconcilia os nós do Pixi com a lista de elementos. Elementos são imutáveis: referência nova = redesenhar. */
-  syncPage(elements: HirakuElement[]) {
+  syncPage(elements: HirakuElement[], layers: Layer[] = []) {
+    const boxes = this.syncLayers(layers);
+    const firstLayer = layers[0]?.id ?? "";
+    const boxOf = (el: HirakuElement) => boxes.get(el.layerId && boxes.has(el.layerId) ? el.layerId : firstLayer)!;
     const alive = new Set<string>();
     // contexto de mapa: pai, raiz e nº de filhos (só calculado se houver nós)
     const byId = new Map<string, HirakuElement>();
@@ -161,7 +165,8 @@ export class Renderer {
         if (el.parentId) kids.set(el.parentId, (kids.get(el.parentId) ?? 0) + 1);
       }
     }
-    for (const el of elements) {
+    for (let i = 0; i < elements.length; i++) {
+      const el = elements[i];
       alive.add(el.id);
       let n = this.nodes.get(el.id);
       const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
@@ -169,7 +174,6 @@ export class Renderer {
         const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
         n = { g, el, dep };
         this.nodes.set(el.id, n);
-        (el.type === "frame" ? this.frames : this.committed).addChild(g);
         this.paint(g, el, n);
       } else if (n.el !== el || !sameDep(n.dep, dep)) {
         n.g.setFromMatrix(new Matrix()); // descarta qualquer pré-visualização por matriz
@@ -179,6 +183,11 @@ export class Renderer {
         n.dep = dep;
         this.paint(n.g, el, n);
       }
+      // camada certa (o elemento pode ter mudado de camada) e ordem dentro dela (trazer para frente/enviar para trás)
+      const box = boxOf(el);
+      const parent = el.type === "frame" ? box.frames : box.committed;
+      if (n.g.parent !== parent) parent.addChild(n.g);
+      if (n.g.zIndex !== i) n.g.zIndex = i;
     }
     for (const [id, n] of this.nodes) {
       if (!alive.has(id)) {
@@ -187,6 +196,37 @@ export class Renderer {
         this.ghosts.delete(id);
       }
     }
+  }
+
+  /** Cria/remove/ordena os contêineres das camadas e aplica visibilidade e opacidade. */
+  private syncLayers(layers: Layer[]) {
+    const list = layers.length ? layers : [{ id: "", name: "", visible: true, locked: false, opacity: 1 }];
+    const keep = new Set(list.map((l) => l.id));
+    for (const [id, b] of this.layerBox) {
+      if (keep.has(id)) continue;
+      // os nós que estavam aqui são reaproveitados (mudam de camada) ou destruídos pelo syncPage: só solta os filhos
+      for (const c of [...b.frames.children, ...b.committed.children]) c.removeFromParent();
+      b.root.destroy({ children: true });
+      this.layerBox.delete(id);
+    }
+    list.forEach((l, i) => {
+      let b = this.layerBox.get(l.id);
+      if (!b) {
+        const root = new Container();
+        const frames = new Container();
+        const committed = new Container();
+        frames.sortableChildren = true;
+        committed.sortableChildren = true;
+        root.addChild(frames, committed);
+        b = { root, frames, committed };
+        this.layerBox.set(l.id, b);
+        this.layerRoot.addChild(root);
+      }
+      if (this.layerRoot.getChildIndex(b.root) !== i) this.layerRoot.setChildIndex(b.root, i);
+      b.root.visible = l.visible;
+      b.root.alpha = l.opacity;
+    });
+    return this.layerBox;
   }
 
   private nodeDep(el: NodeElement, byId: Map<string, HirakuElement>, kids: Map<string, number>): unknown[] {

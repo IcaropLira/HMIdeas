@@ -12,6 +12,7 @@ import { BrushPanel } from "./BrushPanel";
 import { ColorPicker } from "./ColorPicker";
 import { MapPanel } from "./MapPanel";
 import { PaperPanel } from "./PaperPanel";
+import { LayersPanel } from "./LayersPanel";
 import { APP_VERSION } from "../core/repo";
 import { checkForUpdates, isTauri } from "../core/updater";
 import { isInsideAny } from "../core/outside";
@@ -41,7 +42,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
-type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map" | "templates" | "insert";
+type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map" | "templates" | "insert" | "layers" | "science";
 
 type InsertKind = "postit" | "table" | "timeline" | "kanban" | "doc" | "slides";
 
@@ -343,6 +344,20 @@ export function Toolbar() {
         </button>
       </div>
     ),
+    layers: (
+      <div className="group">
+        <button className={panel === "layers" ? "btn on" : "btn"} onClick={() => toggle("layers")} aria-expanded={panel === "layers"} aria-label="Camadas" title="Camadas">
+          <Icon><path d="M12 3.5l8.5 4.5L12 12.5 3.5 8z" /><path d="M3.5 12L12 16.5 20.5 12" /><path d="M3.5 16L12 20.5 20.5 16" /></Icon>
+        </button>
+      </div>
+    ),
+    science: (
+      <div className="group">
+        <button className={panel === "science" ? "btn on" : "btn"} onClick={() => toggle("science")} aria-expanded={panel === "science"} aria-label="Grafos e matemática" title="Grafos, sólidos, planos, gráficos e calculadora">
+          <Icon><circle cx="6" cy="6" r="2.2" /><circle cx="18" cy="7" r="2.2" /><circle cx="11" cy="18" r="2.2" /><path d="M8 6.4l7.8.4M7 7.8l3 8.3M16.9 9l-4.6 7.2" /></Icon>
+        </button>
+      </div>
+    ),
     page: (
       <div className="group">
         <button className={panel === "paper" ? "btn on" : "btn"} onClick={() => toggle("paper")} aria-expanded={panel === "paper"} aria-label="Papel" title="Papel">
@@ -407,6 +422,7 @@ export function Toolbar() {
       {panel === "paper" && <PaperPanel />}
 
       {panel === "brush" && <BrushPanel />}
+      {panel === "layers" && <LayersPanel />}
       {panel === "map" && <MapPanel />}
 
       {panel === "eraser" && (

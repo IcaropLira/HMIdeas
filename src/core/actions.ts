@@ -7,6 +7,7 @@ import { applyXform, moveXform } from "./selection";
 import { selectActivePage, useDoc, useSel, useTool } from "./store";
 import { beginEditText, useEdit } from "./textEdit";
 import { measureBlock } from "./text";
+import { interactiveElements } from "./layers";
 
 let clipboard: HirakuElement[] = [];
 let pasteCount = 0;
@@ -27,7 +28,7 @@ const cloneAt = (els: HirakuElement[], dx: number, dy: number): HirakuElement[] 
   reidentify(els.map((e) => applyXform(e, moveXform(dx, dy))));
 
 export function selectAll() {
-  useSel.getState().set(selectActivePage(useDoc.getState()).elements.map((e) => e.id));
+  useSel.getState().set(interactiveElements(selectActivePage(useDoc.getState())).map((e) => e.id));
 }
 
 export function deleteSelection() {

@@ -4,7 +4,7 @@
 // interface, não é o documento — ver AGENTS.md, regra 9).
 import { create } from "zustand";
 
-export type BlockId = "tools" | "shapes" | "history" | "insert" | "brush" | "colors" | "size" | "map" | "page";
+export type BlockId = "tools" | "shapes" | "history" | "insert" | "brush" | "colors" | "size" | "map" | "science" | "layers" | "page";
 export type DockSide = "bottom" | "left" | "right" | "float" | "hidden";
 
 export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
@@ -16,6 +16,8 @@ export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
   { id: "colors", label: "Cores", hint: "Cores rápidas e seletor completo" },
   { id: "size", label: "Espessura", hint: "Controle de espessura do traço ou da borracha" },
   { id: "map", label: "Mapa mental e modelos", hint: "Mapa mental, quadros e modelos prontos" },
+  { id: "science", label: "Grafos e matemática", hint: "Grafos, sólidos geométricos, planos, gráficos de funções e calculadora" },
+  { id: "layers", label: "Camadas", hint: "Painel de camadas e ordem dos elementos" },
   { id: "page", label: "Papel e ajustes", hint: "Papel, ajustes da caneta, estilo do texto e dedo" },
 ];
 
@@ -49,8 +51,8 @@ export interface Layout {
 /** Padrão: embaixo só o essencial; cor, espessura e pincéis na direita; o resto na esquerda. */
 export const DEFAULT_LAYOUT: Layout = {
   version: 2,
-  order: ["tools", "shapes", "history", "insert", "brush", "colors", "size", "map", "page"],
-  side: { tools: "bottom", shapes: "bottom", history: "bottom", insert: "left", brush: "right", colors: "right", size: "right", map: "left", page: "left" },
+  order: ["tools", "shapes", "history", "insert", "brush", "colors", "size", "map", "science", "layers", "page"],
+  side: { tools: "bottom", shapes: "bottom", history: "bottom", insert: "left", brush: "right", colors: "right", size: "right", map: "left", science: "left", layers: "right", page: "left" },
   floats: {},
   locked: false,
   group: {},

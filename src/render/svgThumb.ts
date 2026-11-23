@@ -5,6 +5,7 @@ import { linearPath } from "../core/linear";
 import { Bounds, elementBounds } from "../core/selection";
 import { shapePath } from "../core/shapes";
 import { cleanPoints } from "../core/strokeMesh";
+import { visibleElements } from "../core/layers";
 
 export interface ThumbPath {
   d: string;
@@ -113,6 +114,6 @@ export function thumbViewBox(paths: ThumbPath[]): string {
 }
 
 export const pageThumb = (page: Page) => {
-  const paths = page.elements.map(thumbPath);
+  const paths = visibleElements(page).map(thumbPath);
   return { paths, viewBox: thumbViewBox(paths) };
 };

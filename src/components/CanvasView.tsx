@@ -22,6 +22,7 @@ import { detectWebGL, useGfx } from "../core/webgl";
 import { EmbedLayer } from "./EmbedLayer";
 import { clampScroll, scrollLayout } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
+import { interactiveElements, layerIdOf } from "../core/layers";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
 type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
@@ -193,11 +194,15 @@ export function CanvasView() {
       // Interpola entre amostras: arrastar rápido não "pula" elementos.
       const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / (r * 0.5)));
       if (eraseMode === "pixel") {
-        const base = eraseEls ?? selectActivePage(useDoc.getState()).elements;
+        const pg = selectActivePage(useDoc.getState());
+        const base = eraseEls ?? pg.elements;
+        // camadas ocultas/travadas ficam intactas (os pedaços de um traço cortado herdam a camada do original)
+        const blocked = new Set(pg.layers.filter((l) => !l.visible || l.locked).map((l) => l.id));
+        const keep = blocked.size ? (e: HirakuElement) => blocked.has(layerIdOf(pg, e)) : undefined;
         let els = base;
         const gone = new Set<string>();
         for (let i = 1; i <= steps; i++) {
-          const res = eraseStep(els, from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps, r);
+          const res = eraseStep(els, from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps, r, keep);
           els = res.elements;
           res.removedIds.forEach((id) => gone.add(id));
         }
@@ -207,7 +212,7 @@ export function CanvasView() {
           useDoc.getState().previewElements(eraseEls);
         }
       } else {
-        const elements = selectActivePage(useDoc.getState()).elements;
+        const elements = interactiveElements(selectActivePage(useDoc.getState()));
         for (let i = 1; i <= steps; i++) {
           const x = from.x + ((to.x - from.x) * i) / steps;
           const y = from.y + ((to.y - from.y) * i) / steps;
@@ -225,7 +230,7 @@ export function CanvasView() {
     const syncDoc = () => {
       const page = selectActivePage(useDoc.getState());
       renderer.setPaper(page.paper, page.background, page.paperScale ?? 1, page.lineColor ?? null);
-      renderer.syncPage(page.elements);
+      renderer.syncPage(page.elements, page.layers);
       // Poda ids de elementos que não existem mais (apagados, desfeitos…).
       const alive = new Set(page.elements.map((e) => e.id));
       const ids = useSel.getState().ids;
@@ -308,7 +313,7 @@ export function CanvasView() {
               mode = "text";
               const cam = useView.getState().camera;
               const P = screenToWorld(cam, s.x, s.y);
-              const els = selectActivePage(useDoc.getState()).elements;
+              const els = interactiveElements(selectActivePage(useDoc.getState()));
               let hit: TextElement | null = null;
               for (let i = els.length - 1; i >= 0 && !hit; i--) {
                 const e = els[i];
@@ -321,7 +326,7 @@ export function CanvasView() {
               mode = "text";
               const cam = useView.getState().camera;
               const P = screenToWorld(cam, s.x, s.y);
-              const els = selectActivePage(useDoc.getState()).elements;
+              const els = interactiveElements(selectActivePage(useDoc.getState()));
               let hit: string | null = null;
               for (let i = els.length - 1; i >= 0 && !hit; i--) {
                 const e = els[i];

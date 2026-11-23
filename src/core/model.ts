@@ -37,6 +37,8 @@ export interface StrokeDyn {
 
 export interface StrokeElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: "stroke";
@@ -65,6 +67,8 @@ export type LineStyle = "solid" | "dashed" | "dotted";
 
 export interface ShapeElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: ShapeType;
@@ -106,6 +110,8 @@ export interface ArrowBinding {
 /** Linha ou seta com 2+ pontos (retos ou suavizados). */
 export interface LinearElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: LinearType;
@@ -130,6 +136,8 @@ export type TextAlign = "left" | "center" | "right";
 /** Texto de bloco único (sem quebra automática): w/h são medidos ao confirmar a edição. */
 export interface TextElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: "text";
@@ -182,6 +190,8 @@ export const BRANCH_STYLES: { id: BranchStyle; label: string }[] = [
  */
 export interface NodeElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   type: "node";
   frameId?: ID | null;
   x: number;
@@ -223,6 +233,8 @@ export interface NodeElement {
 /** Quadro (como o do Figma/Miro): contém outros elementos — inclusive outros quadros. */
 export interface FrameElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   type: "frame";
   /** Quadro pai (quadros aninhados). */
   frameId?: ID | null;
@@ -247,6 +259,8 @@ export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
 export interface AttachmentElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   frameId?: ID | null;
   type: "attachment";
   x: number; y: number; w: number; h: number;
@@ -309,6 +323,18 @@ export const PAPER_COLORS: { value: string; label: string }[] = [
   { value: "#121212", label: "Preto" },
 ];
 
+/** Camada da página (como no Photoshop/Procreate): ordem = ordem do array (último = por cima). */
+export interface Layer {
+  id: ID;
+  name: string;
+  visible: boolean;
+  /** Travada: aparece, mas não seleciona nem apaga. */
+  locked: boolean;
+  opacity: number;
+}
+
+export const makeLayer = (name = "Camada 1", id: ID = newId()): Layer => ({ id, name, visible: true, locked: false, opacity: 1 });
+
 export interface Page {
   id: ID;
   name: string;
@@ -318,7 +344,9 @@ export interface Page {
   paperScale?: number;
   /** Cor das linhas do papel; ausente/null = automática (escura no papel claro, clara no escuro). */
   lineColor?: string | null;
-  /** Ordem de empilhamento (último = por cima). */
+  /** Camadas (de baixo para cima). Sempre ≥ 1 depois de normalizeDoc/createPage. */
+  layers: Layer[];
+  /** Ordem de empilhamento (último = por cima). Entre camadas, vale a ordem das camadas. */
   elements: HirakuElement[];
 }
 
@@ -330,7 +358,7 @@ export interface HirakuDoc {
 export const newId = (): ID => crypto.randomUUID();
 
 export function createPage(name = "Página 1"): Page {
-  return { id: newId(), name, paper: "blank", background: DEFAULT_BACKGROUND, elements: [] };
+  return { id: newId(), name, paper: "blank", background: DEFAULT_BACKGROUND, layers: [makeLayer()], elements: [] };
 }
 
 export function createDoc(): HirakuDoc {
@@ -431,6 +459,26 @@ const cleanFrame = (e: any): FrameElement => ({
   opacity: num(e.opacity, 1),
 });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function cleanLayers(raw: any): Layer[] {
+  const out: Layer[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(raw)) {
+    for (const l of raw) {
+      if (!l || typeof l.id !== "string" || seen.has(l.id)) continue;
+      seen.add(l.id);
+      out.push({
+        id: l.id,
+        name: str(l.name, `Camada ${out.length + 1}`).slice(0, 60),
+        visible: l.visible !== false,
+        locked: l.locked === true,
+        opacity: Math.max(0.05, Math.min(1, num(l.opacity, 1))),
+      });
+    }
+  }
+  return out.length ? out : [makeLayer()];
+}
+
 /** Valida e completa campos novos de arquivos antigos (migração leve, ainda versão 1). */
 export function normalizeDoc(raw: unknown): HirakuDoc {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -449,6 +497,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       background: hex(p.background, DEFAULT_BACKGROUND),
       paperScale: Number.isFinite(p.paperScale) ? Math.max(0.5, Math.min(2, p.paperScale)) : undefined,
       lineColor: typeof p.lineColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lineColor) ? p.lineColor : undefined,
+      layers: cleanLayers(p.layers),
       elements: Array.isArray(p.elements)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ? p.elements.filter(validElement).map((e: any) =>

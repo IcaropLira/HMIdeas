@@ -9,8 +9,8 @@ const memory = () => {
 describe("layout das barras", () => {
   it("o padrão tem só o essencial embaixo, cor/espessura/pincéis na direita e o resto na esquerda", () => {
     expect(blocksOn(DEFAULT_LAYOUT, "bottom")).toEqual(["tools", "shapes", "history"]);
-    expect(blocksOn(DEFAULT_LAYOUT, "right")).toEqual(["brush", "colors", "size"]);
-    expect(blocksOn(DEFAULT_LAYOUT, "left")).toEqual(["insert", "map", "page"]);
+    expect(blocksOn(DEFAULT_LAYOUT, "right")).toEqual(["brush", "colors", "size", "layers"]);
+    expect(blocksOn(DEFAULT_LAYOUT, "left")).toEqual(["insert", "map", "science", "page"]);
     expect(blocksOn(DEFAULT_LAYOUT, "hidden")).toEqual([]);
   });
 
@@ -21,7 +21,7 @@ describe("layout das barras", () => {
 
   it("placeBlock leva o bloco para o fim do outro lado, sem mexer no resto", () => {
     const l = placeBlock(DEFAULT_LAYOUT, "tools", "right");
-    expect(blocksOn(l, "right")).toEqual(["brush", "colors", "size", "tools"]);
+    expect(blocksOn(l, "right")).toEqual(["brush", "colors", "size", "layers", "tools"]);
     expect(blocksOn(l, "bottom")).toEqual(["shapes", "history"]);
     expect(placeBlock(DEFAULT_LAYOUT, "tools", "bottom")).toBe(DEFAULT_LAYOUT); // nada a fazer
   });
@@ -29,12 +29,12 @@ describe("layout das barras", () => {
   it("placeBlock para um lado vazio funciona (e oculto tira da tela)", () => {
     const l = placeBlock(DEFAULT_LAYOUT, "colors", "hidden");
     expect(blocksOn(l, "hidden")).toEqual(["colors"]);
-    expect(blocksOn(l, "right")).toEqual(["brush", "size"]);
+    expect(blocksOn(l, "right")).toEqual(["brush", "size", "layers"]);
   });
 
   it("moveBlock troca com o vizinho do MESMO lado e para nas pontas", () => {
-    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", -1), "right")).toEqual(["colors", "brush", "size"]);
-    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", 1), "right")).toEqual(["brush", "size", "colors"]);
+    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", -1), "right")).toEqual(["colors", "brush", "size", "layers"]);
+    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", 1), "right")).toEqual(["brush", "size", "colors", "layers"]);
     expect(moveBlock(DEFAULT_LAYOUT, "tools", -1)).toBe(DEFAULT_LAYOUT);
     expect(moveBlock(DEFAULT_LAYOUT, "history", 1)).toBe(DEFAULT_LAYOUT);
   });
@@ -225,9 +225,9 @@ describe("juntar blocos de volta", () => {
   });
 
   it("placeBlockAt sem vizinho vai para o fim do lado; com lado vazio também funciona", () => {
-    expect(blocksOn(placeBlockAt(DEFAULT_LAYOUT, "tools", "right", null), "right")).toEqual(["brush", "colors", "size", "tools"]);
+    expect(blocksOn(placeBlockAt(DEFAULT_LAYOUT, "tools", "right", null), "right")).toEqual(["brush", "colors", "size", "layers", "tools"]);
     const vazio = placeBlock(DEFAULT_LAYOUT, "map", "hidden");
-    expect(blocksOn(placeBlockAt(vazio, "map", "left", null), "left")).toEqual(["insert", "page", "map"]);
+    expect(blocksOn(placeBlockAt(vazio, "map", "left", null), "left")).toEqual(["insert", "science", "page", "map"]);
   });
 
   it("homeBlock devolve ao lado de fábrica", () => {
@@ -252,7 +252,7 @@ describe("grupos flutuantes (lego)", () => {
     expect(l.group.size).toBe("colors");
     expect(l.floats.size).toBeUndefined();
     expect(floatLeaders(l)).toEqual(["colors"]);
-    expect(blocksOn(l, "right")).toEqual(["brush"]);
+    expect(blocksOn(l, "right")).toEqual(["brush", "layers"]);
   });
 
   it("antes/depois do alvo define a ordem dentro do grupo", () => {
@@ -282,7 +282,7 @@ describe("grupos flutuantes (lego)", () => {
     const { layout, leader } = floatSide(DEFAULT_LAYOUT, "left", { x: 50, y: 60, vertical: true });
     expect(leader).toBe("insert");
     expect(blocksOn(layout, "left")).toEqual([]);
-    expect(groupMembers(layout, "insert")).toEqual(["insert", "map", "page"]);
+    expect(groupMembers(layout, "insert")).toEqual(["insert", "map", "science", "page"]);
   });
 
   it("juntar dois grupos flutuantes", () => {

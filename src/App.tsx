@@ -139,6 +139,8 @@ export default function App() {
         nudgeSelection(k === "arrowleft" ? -n : k === "arrowright" ? n : 0, k === "arrowup" ? -n : k === "arrowdown" ? n : 0);
       } else if (k === "enter") {
         if (editSelectedText() || editSelectedLabel() || editSelectedBlock()) e.preventDefault(); // Enter edita o texto selecionado
+      } else if (k === "z" && !mod) {
+        useTool.getState().setTool(e.shiftKey ? "laserpen" : "laser");
       } else if (k === "b" && !e.shiftKey) {
         useUI.getState().setLibraryOpen(true);
       } else if (TOOL_KEYS[k]) {

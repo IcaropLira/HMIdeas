@@ -63,6 +63,12 @@ export class Renderer {
   private laserLayer = new Graphics();
   private laser: { x: number; y: number; t: number }[] = [];
   private laserDown = false;
+  private laserCursor: Pt | null = null;
+  private laserSeen = 0;
+  private laserOpt = { color: "#FF3B30", trail: 450, hold: 1500 };
+  private penStrokes: Pt[][] = [];
+  private penLast = 0;
+  private laserDirty = false;
 
   private nodes = new Map<string, Node>();
   private ghosts = new Set<string>();
@@ -95,7 +101,8 @@ export class Renderer {
     this.app.ticker.add(() => {
       const { width, height } = this.app.screen;
       if (width !== this.paperSize.w || height !== this.paperSize.h) this.drawPaper();
-      if (this.laser.length) this.drawLaser();
+      if (this.laserActive) this.drawLaser();
+      else if (this.laserDirty) { this.laserDirty = false; this.laserLayer.clear(); }
       // Eventos de ponteiro podem chegar muito mais rápido que a tela. Agrupa-os por frame:
       // evita redesenhar o polígono completo dezenas/centenas de vezes entre dois frames.
       if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
@@ -684,25 +691,72 @@ export class Renderer {
     this.liveDirty = false;
   }
 
-  // ---------------- ponteiro laser ----------------
+  // ---------------- laser ----------------
+  // Ponteiro: bolinha que segue o ponteiro (mesmo sem clicar) com rastro configurável (0 = só a bolinha), em espaço de TELA.
+  // Caneta laser: traços no MUNDO (acompanham o conteúdo) que somem juntos depois de `hold` ms sem escrever.
 
-  laserPoint(x: number, y: number) { this.laserDown = true; this.laser.push({ x, y, t: performance.now() }); }
+  laserConfig(o: { color: string; trail: number; hold: number }) { this.laserOpt = o; }
+  /** Ponteiro: posição atual (down = pressionado → bolinha mais forte). */
+  laserPoint(x: number, y: number, down = true) {
+    this.laserDown = down;
+    this.laserCursor = { x, y };
+    this.laserSeen = performance.now();
+    if (this.laserOpt.trail > 0) this.laser.push({ x, y, t: this.laserSeen });
+  }
   laserEnd() { this.laserDown = false; }
+  /** Esconde o ponteiro (saiu do canvas / trocou de ferramenta). */
+  laserHide() { this.laserCursor = null; this.laser = []; this.laserLayer.clear(); }
+
+  laserPenStart(p: Pt) { this.penStrokes.push([p]); this.penLast = performance.now(); }
+  laserPenMove(p: Pt) { const s = this.penStrokes[this.penStrokes.length - 1]; if (s) s.push(p); this.penLast = performance.now(); }
+  laserPenEnd() { this.penLast = performance.now(); }
+  private get laserActive() { return this.laser.length > 0 || !!this.laserCursor || this.penStrokes.length > 0; }
 
   private drawLaser() {
     const now = performance.now();
-    const life = this.laserDown ? 900 : 600;
-    this.laser = this.laser.filter((p) => now - p.t < life);
+    const { color, trail, hold } = this.laserOpt;
     const g = this.laserLayer;
     g.clear();
+    this.laserDirty = true;
+    if (this.laserCursor && now - this.laserSeen >= 2500 && !this.laserDown) this.laserCursor = null;
+    // rastro do ponteiro
+    const life = Math.max(1, trail);
+    this.laser = trail > 0 ? this.laser.filter((p) => now - p.t < life) : [];
     const pts = this.laser;
     for (let i = 1; i < pts.length; i++) {
       const a = 1 - (now - pts[i].t) / life;
-      g.moveTo(pts[i - 1].x, pts[i - 1].y).lineTo(pts[i].x, pts[i].y).stroke({ width: 10 * a + 2, color: 0xff3b30, alpha: 0.25 * a, cap: "round" });
-      g.moveTo(pts[i - 1].x, pts[i - 1].y).lineTo(pts[i].x, pts[i].y).stroke({ width: 3.5 * a + 1, color: 0xff3b30, alpha: 0.95 * a, cap: "round" });
+      g.moveTo(pts[i - 1].x, pts[i - 1].y).lineTo(pts[i].x, pts[i].y).stroke({ width: 12 * a + 2, color, alpha: 0.22 * a, cap: "round" });
+      g.moveTo(pts[i - 1].x, pts[i - 1].y).lineTo(pts[i].x, pts[i].y).stroke({ width: 4 * a + 1, color, alpha: 0.95 * a, cap: "round" });
     }
-    const last = pts[pts.length - 1];
-    if (last && this.laserDown) g.circle(last.x, last.y, 6).fill({ color: 0xff3b30, alpha: 0.9 }).circle(last.x, last.y, 13).fill({ color: 0xff3b30, alpha: 0.2 });
+    // bolinha (some 2,5 s depois do último movimento do mouse parado)
+    const c = this.laserCursor;
+    if (c && now - this.laserSeen < 2500) {
+      const r = this.laserDown ? 7.5 : 6;
+      g.circle(c.x, c.y, r * 2.6).fill({ color, alpha: this.laserDown ? 0.22 : 0.14 });
+      g.circle(c.x, c.y, r).fill({ color, alpha: 0.95 });
+      g.circle(c.x - r * 0.3, c.y - r * 0.3, r * 0.35).fill({ color: 0xffffff, alpha: 0.55 });
+    }
+    // caneta laser (mundo → tela)
+    if (this.penStrokes.length) {
+      const idle = now - this.penLast;
+      const writing = this.penStrokes.length && idle < 30;
+      const alpha = writing || idle < hold ? 1 : Math.max(0, 1 - (idle - hold) / 600);
+      if (alpha <= 0) this.penStrokes = [];
+      const cam = this.cam;
+      for (const s of this.penStrokes) {
+        if (s.length < 1) continue;
+        const sp = s.map((p) => ({ x: p.x * cam.zoom + cam.x, y: p.y * cam.zoom + cam.y }));
+        const draw = (w: number, a: number) => {
+          if (sp.length === 1) { g.circle(sp[0].x, sp[0].y, w / 2).fill({ color, alpha: a }); return; }
+          g.moveTo(sp[0].x, sp[0].y);
+          for (let i = 1; i < sp.length; i++) g.lineTo(sp[i].x, sp[i].y);
+          g.stroke({ width: w, color, alpha: a, cap: "round", join: "round" });
+        };
+        draw(14, 0.18 * alpha);
+        draw(4, 0.95 * alpha);
+        draw(1.6, 0.8 * alpha * 0.7);
+      }
+    }
   }
 
   // ---------------- execução de algoritmo ----------------

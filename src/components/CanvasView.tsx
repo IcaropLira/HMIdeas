@@ -29,7 +29,7 @@ import { wheelFlip } from "../core/pageView";
 import { makeEdge, makeVertex, nextVertexName, useEdgeLabel, useGraphTool, vertexAt } from "../core/graphEdit";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
-type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "laser" | "graph";
+type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "laser" | "laserpen" | "graph";
 
 const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
 const isLinearTool = (t: string): t is LinearType => t === "line" || t === "arrow";
@@ -298,11 +298,14 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
+        (() => { const t = useTool.getState(); renderer.laserConfig({ color: t.laserColor, trail: t.laserTrail, hold: t.laserHold }); return () => undefined; })(),
         useAlgo.subscribe((s, prev) => { if (s.overlay !== prev.overlay) renderer.setAlgoOverlay(s.overlay); }),
         // O texto em edição some do canvas (a <textarea> o substitui).
         useEdit.subscribe((s) => renderer.setHidden(s.session?.id ?? null)),
         useTool.subscribe((s, prev) => {
+          if (s.laserColor !== prev.laserColor || s.laserTrail !== prev.laserTrail || s.laserHold !== prev.laserHold) renderer.laserConfig({ color: s.laserColor, trail: s.laserTrail, hold: s.laserHold });
           if (s.tool === prev.tool) return;
+          if (s.tool !== "laser") renderer.laserHide();
           commitText();
           if (s.tool !== "eraser") renderer.hideEraserCursor();
           // Trocar para uma ferramenta de desenho desfaz a seleção.
@@ -379,9 +382,12 @@ export function CanvasView() {
                   useUI.getState().showToast("Arraste de um vértice até outro para ligar (soltar no vazio cria um vértice novo).");
                 }
               }
+            } else if (t.tool === "laserpen") {
+              mode = "laserpen";
+              renderer.laserPenStart(screenToWorld(useView.getState().camera, s.x, s.y));
             } else if (t.tool === "laser") {
               mode = "laser";
-              renderer.laserPoint(s.x, s.y);
+              renderer.laserPoint(s.x, s.y, true);
             } else if (t.tool === "frame") {
               mode = "frame";
               shapeStart = screenToWorld(useView.getState().camera, s.x, s.y);
@@ -431,7 +437,8 @@ export function CanvasView() {
               bindHintUI(target && target.id !== graphFrom.id ? outlinePath(target) : null);
               return;
             }
-            if (mode === "laser") { samples.forEach((p) => renderer.laserPoint(p.x, p.y)); return; }
+            if (mode === "laser") { samples.forEach((p) => renderer.laserPoint(p.x, p.y, true)); return; }
+            if (mode === "laserpen") { const cam = useView.getState().camera; samples.forEach((p) => renderer.laserPenMove(screenToWorld(cam, p.x, p.y))); return; }
             if (mode === "select") {
               selectCtl.move(samples);
               return;
@@ -520,6 +527,7 @@ export function CanvasView() {
               return;
             }
             if (mode === "laser") { renderer.laserEnd(); return; }
+            if (mode === "laserpen") { renderer.laserPenEnd(); return; }
             if (mode === "select") {
               selectCtl.end();
               return;
@@ -600,6 +608,7 @@ export function CanvasView() {
             if (mode === "text") return;
             if (mode === "graph") { renderer.previewElement(null); graphFrom = null; selectCtl.refresh(); return; }
             if (mode === "laser") { renderer.laserEnd(); return; }
+            if (mode === "laserpen") { renderer.laserPenEnd(); return; }
             if (mode === "select") {
               selectCtl.cancel();
               return;
@@ -653,16 +662,18 @@ export function CanvasView() {
             if (t.tool === "eraser" || s.eraserTip) renderer.drawEraserCursor(s.x, s.y, t.eraserSize / 2);
             else renderer.hideEraserCursor();
             if (t.tool === "select") selectCtl.hover(s);
+            if (t.tool === "laser") renderer.laserPoint(s.x, s.y, false);
           },
           hoverEnd() {
             renderer.hideEraserCursor();
+            renderer.laserHide();
             selectCtl.hoverEnd();
           },
         },
         {
           getTool: () => useTool.getState().tool,
           // Com Selecionar, o dedo seleciona/arrasta; pan e zoom ficam com 2 dedos.
-          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame", "laser"].includes(useTool.getState().tool),
+          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame", "laser", "laserpen"].includes(useTool.getState().tool),
         },
       );
     })();

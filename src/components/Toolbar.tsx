@@ -1,4 +1,3 @@
-import { editSelectedBlock } from "../core/blockView";
 import { BlockTiles } from "./BlockGallery";
 import { useGraphTool } from "../core/graphEdit";
 import { MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
@@ -7,9 +6,8 @@ import { defaultCamera } from "../core/camera";
 import { ARROW_HEADS, LineStyle, SHAPE_TYPES } from "../core/model";
 import { resetPageCameras } from "../core/pageView";
 import { downloadDoc, parseDoc } from "../core/serialize";
-import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
-import { ToolId, selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
-import { FONTS, FONT_SIZES } from "../core/text";
+import { applyColor } from "../core/actions";
+import { ToolId, useDoc, useTool, useView } from "../core/store";
 import { useUI } from "../core/ui";
 import { BrushPanel } from "./BrushPanel";
 import { ColorPicker } from "./ColorPicker";
@@ -23,6 +21,10 @@ import { isInsideAny } from "../core/outside";
 import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, floatLeaders, groupMembers, useLayout } from "../core/layout";
 import { BarHandle, BlockHandle } from "./BlockHandle";
 import { Settings } from "./Settings";
+import { ToolGroupBtn, ToolItem } from "./ToolGroup";
+import { withKey } from "./commands";
+import { TextPanelBody } from "./TextControls";
+import { listBrushes } from "../core/brushes";
 import { useTheme } from "../core/theme";
 import { addAttachmentFile, pasteFromButton, worldPoint } from "./clipboard";
 
@@ -59,6 +61,29 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
+const ICON = {
+  select: <path d="M5 3l14 7-6 2-2 6L5 3z" />,
+  lasso: <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>,
+  pen: <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>,
+  text: <path d="M5 6h14M12 6v13M9 19h6" />,
+  eraser: <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>,
+  eraserPx: <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M14 16l2 2M17 13l2 2" strokeDasharray="1.5 1.5" /></>,
+  laser: <><circle cx="16" cy="8" r="3" /><circle cx="16" cy="8" r="6" opacity=".35" /><path d="M11 12.5C8 15 6 17 4 20" strokeDasharray="2 2.5" /></>,
+  laserpen: <><path d="M4 20l3.5-1 9-9a2 2 0 00-2.8-2.8l-9 9L4 20z" /><path d="M15 4.5c2 .5 3.8 2.3 4.5 4.5" strokeDasharray="1.5 2" /></>,
+  hand: <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />,
+  arrow: <><path d="M5 19L19 5" /><path d="M10 5h9v9" /></>,
+  line: <path d="M5 19L19 5" />,
+};
+const BRUSH_ICON: Record<string, ReactNode> = {
+  pen: ICON.pen,
+  ballpoint: <><path d="M5 19l2-6 9-9 3 3-9 9z" /><path d="M5 19l2-.5" /></>,
+  ink: <><path d="M12 3l4 7-4 11-4-11z" /><path d="M12 10v4" /></>,
+  marker: <><path d="M6 18l3-8 8-6 3 3-6 8z" /><path d="M4 20h7" /></>,
+  highlighter: <><path d="M8 14l7-9 4 3-7 9z" /><path d="M5 20h14" strokeWidth="4" opacity=".45" /></>,
+  writer: <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M3 22h8" /></>,
+  brushpen: <><path d="M20 4l-8.5 8.5" /><path d="M11.5 12.5c-2.5-.5-4.5 1-4.5 3.5 0 1.5-1 2.5-3 3 2.5 2 7.5 1 8-1.5.4-2-.2-3.8-.5-5z" /></>,
+};
+
 type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "laser" | "map" | "templates" | "insert" | "layers" | "science";
 
 export function Toolbar() {
@@ -66,15 +91,7 @@ export function Toolbar() {
   const canUndo = useDoc((s) => s.past.length > 0);
   const canRedo = useDoc((s) => s.future.length > 0);
   const zoom = useView((s) => s.camera.zoom);
-  const selCount = useSel((s) => s.ids.length);
   const graph = useGraphTool();
-  const oneSel = useSel((s) => (s.ids.length === 1 ? s.ids[0] : null));
-  const selBlock = useDoc((s) => {
-    if (!oneSel) return false;
-    const ids = [oneSel];
-    const e = selectActivePage(s).elements.find((x) => x.id === ids[0]);
-    return !!e && e.type === "attachment" && e.kind === "block";
-  });
   const [panel, setPanel] = useState<Panel>(null);
   const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -166,35 +183,47 @@ export function Toolbar() {
   const sizeMax = erasing ? 80 : 14;
   const sizeStep = erasing ? 2 : 0.5;
   const sizeValue = erasing ? t.eraserSize : t.width;
+  // dica com o atalho ATUAL (o usuário pode ter trocado): "Mapa mental (M) — clique no vazio…"
   const toolBtn = (id: ToolId, label: string, icon: ReactNode, hint = label) => (
-    <button key={id} className={t.tool === id ? "btn on" : "btn"} onClick={() => t.setTool(id)} aria-label={label} aria-pressed={t.tool === id} title={hint}>
+    <button key={id} className={t.tool === id ? "btn on" : "btn"} onClick={() => t.setTool(id)} aria-label={label} aria-pressed={t.tool === id}
+      title={withKey(label, `tool.${id}`) + (hint.includes(":") ? ` — ${hint.split(":").slice(1).join(":").trim()}` : "")}>
       <Icon>{icon}</Icon>
     </button>
   );
+
+  const ti = (id: ToolId, label: string, icon: ReactNode): ToolItem => ({ id, label, icon, cmd: `tool.${id}`, active: t.tool === id, run: () => t.setTool(id) });
 
   // Cada BLOCO é um grupo de botões que o usuário posiciona (embaixo, esquerda, direita ou oculto) em Configurações.
   const blocks: Record<BlockId, ReactNode> = {
     tools: (
       <>
         <div className="group">
-          {toolBtn("select", "Selecionar", <path d="M5 3l14 7-6 2-2 6L5 3z" />, "Selecionar (V)")}
-          {toolBtn("lasso", "Laço", <><path d="M12 4c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5z" strokeDasharray="3 2.5" /><path d="M9 14c-1 2 0 4 3 5" /></>, "Laço (L)")}
-          {toolBtn("pen", "Caneta", <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /><path d="M14 7l3 3" /></>, "Caneta (P)")}
-          {toolBtn("text", "Texto", <path d="M5 6h14M12 6v13M9 19h6" />, "Texto (T ou 8)")}
-          {toolBtn("eraser", "Borracha", <><path d="M7 21h11" /><path d="M5.6 14.4l8.5-8.5a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L11.5 19H8.8l-3.2-3.2a2 2 0 010-1.4z" /><path d="M9 11l5 5" /></>, "Borracha (E)")}
+          <ToolGroupBtn group="select" label="Seleção" items={[
+            ti("select", "Selecionar", ICON.select), ti("lasso", "Laço", ICON.lasso),
+          ]} />
+          <ToolGroupBtn group="pen" label="Caneta e pincéis" items={listBrushes().map((b) => ({
+            id: b.id, label: b.label, icon: BRUSH_ICON[b.id] ?? ICON.pen, cmd: `brush.${b.id}`,
+            active: t.tool === "pen" && t.brush === b.id, run: () => { t.setTool("pen"); t.setBrush(b.id); },
+          }))} />
+          <ToolGroupBtn group="text" label="Texto" items={[ti("text", "Texto", ICON.text)]} />
+          <ToolGroupBtn group="eraser" label="Borracha" items={[
+            { id: "stroke", label: "Borracha de traço inteiro", icon: ICON.eraser, cmd: "tool.eraser", active: t.tool === "eraser" && t.eraserMode === "stroke", run: () => { t.setTool("eraser"); t.set({ eraserMode: "stroke" }); } },
+            { id: "pixel", label: "Borracha de pixel (só o trecho)", icon: ICON.eraserPx, cmd: "tool.eraserMode", active: t.tool === "eraser" && t.eraserMode === "pixel", run: () => { t.setTool("eraser"); t.set({ eraserMode: "pixel" }); } },
+          ]} />
           {erasing && (
             <button className={panel === "eraser" ? "btn on" : "btn"} onClick={() => toggle("eraser")} aria-expanded={panel === "eraser"} aria-label="Opções da borracha" title="Opções da borracha">
               <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
             </button>
           )}
-          {toolBtn("laser", "Ponteiro laser", <><circle cx="16" cy="8" r="3" /><circle cx="16" cy="8" r="6" opacity=".35" /><path d="M11 12.5C8 15 6 17 4 20" strokeDasharray="2 2.5" /></>, "Ponteiro laser (Z): bolinha que segue o mouse, com rastro ajustável")}
-          {toolBtn("laserpen", "Caneta laser", <><path d="M4 20l3.5-1 9-9a2 2 0 00-2.8-2.8l-9 9L4 20z" /><path d="M15 4.5c2 .5 3.8 2.3 4.5 4.5" strokeDasharray="1.5 2" /></>, "Caneta laser (Shift+Z): escreve e some sozinha")}
+          <ToolGroupBtn group="laser" label="Laser" items={[
+            ti("laser", "Ponteiro laser", ICON.laser), ti("laserpen", "Caneta laser", ICON.laserpen),
+          ]} />
           {(t.tool === "laser" || t.tool === "laserpen") && (
             <button className={panel === "laser" ? "btn on" : "btn"} onClick={() => toggle("laser")} aria-expanded={panel === "laser"} aria-label="Opções do laser" title="Cor, rastro e tempo para sumir">
               <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
             </button>
           )}
-          {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
+          <ToolGroupBtn group="hand" label="Navegar" items={[ti("hand", "Mover tela", ICON.hand)]} />
         </div>
         {t.tool === "pen" && (
           <div className="group">
@@ -219,9 +248,8 @@ export function Toolbar() {
     ),
     shapes: (
       <div className="group">
-        {SHAPE_TYPES.map((s) => toolBtn(s, SHAPE_META[s].label, SHAPE_META[s].icon, `${SHAPE_META[s].label} (${SHAPE_META[s].key})`))}
-        {toolBtn("arrow", "Seta", <><path d="M5 19L19 5" /><path d="M10 5h9v9" /></>, "Seta (A ou 5)")}
-        {toolBtn("line", "Linha", <path d="M5 19L19 5" />, "Linha (6)")}
+        <ToolGroupBtn group="shape" label="Formas" items={SHAPE_TYPES.map((s) => ti(s, SHAPE_META[s].label, SHAPE_META[s].icon))} />
+        <ToolGroupBtn group="line" label="Linhas e setas" items={[ti("arrow", "Seta", ICON.arrow), ti("line", "Linha", ICON.line)]} />
         <button className={panel === "shape" ? "btn on" : "btn"} onClick={() => toggle("shape")} aria-expanded={panel === "shape"} aria-label="Estilo das formas" title="Estilo das formas">
           <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
         </button>
@@ -229,10 +257,10 @@ export function Toolbar() {
     ),
     history: (
       <div className="group">
-        <button className="btn" disabled={!canUndo} onClick={() => useDoc.getState().undo()} aria-label="Desfazer" title="Desfazer (Ctrl+Z)">
+        <button className="btn" disabled={!canUndo} onClick={() => useDoc.getState().undo()} aria-label="Desfazer" title={withKey("Desfazer", "edit.undo")}>
           <Icon><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-3" /></Icon>
         </button>
-        <button className="btn" disabled={!canRedo} onClick={() => useDoc.getState().redo()} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)">
+        <button className="btn" disabled={!canRedo} onClick={() => useDoc.getState().redo()} aria-label="Refazer" title={withKey("Refazer", "edit.redo")}>
           <Icon><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 000 12h3" /></Icon>
         </button>
       </div>
@@ -474,50 +502,9 @@ export function Toolbar() {
       )}
 
       {panel === "text" && (
-        <div className="panel" role="dialog" aria-label="Estilo do texto" data-text-ui onMouseDown={(e) => e.preventDefault()}>
-          <div className="row" role="radiogroup" aria-label="Fonte">
-            {FONTS.map((f) => (
-              <button
-                key={f.id}
-                role="radio"
-                aria-checked={t.fontFamily === f.id}
-                className={t.fontFamily === f.id ? "chip on" : "chip"}
-                style={{ fontFamily: f.css }}
-                onClick={() => { t.set({ fontFamily: f.id }); restyleText({ fontFamily: f.id }); }}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <div className="row" role="radiogroup" aria-label="Tamanho">
-            <span className="rowlabel">Tamanho</span>
-            {FONT_SIZES.map((z) => (
-              <button
-                key={z.value}
-                role="radio"
-                aria-checked={t.fontSize === z.value}
-                className={t.fontSize === z.value ? "chip on" : "chip"}
-                onClick={() => { t.set({ fontSize: z.value }); restyleText({ fontSize: z.value }); }}
-              >
-                {z.label}
-              </button>
-            ))}
-          </div>
-          <div className="row" role="radiogroup" aria-label="Alinhamento">
-            <span className="rowlabel">Alinhar</span>
-            {([["left", "Esquerda"], ["center", "Centro"], ["right", "Direita"]] as const).map(([id, label]) => (
-              <button
-                key={id}
-                role="radio"
-                aria-checked={t.textAlign === id}
-                className={t.textAlign === id ? "chip on" : "chip"}
-                onClick={() => { t.set({ textAlign: id }); restyleText({ align: id }); }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="hint">Com a ferramenta Texto, clique no canvas para escrever. Enter quebra a linha; Esc, Ctrl+Enter ou clicar fora confirma. Com Selecionar: duplo toque num texto edita e no vazio cria. Estilo e cor mudam o texto selecionado.</p>
+        <div className="panel" role="dialog" aria-label="Estilo do texto" data-text-ui>
+          <TextPanelBody />
+          <p className="hint">Com a ferramenta Texto, clique no canvas para escrever. Enter quebra a linha; Esc, Ctrl+Enter ou clicar fora confirma. Ctrl+B/I/U formatam enquanto escreve.</p>
         </div>
       )}
 
@@ -642,7 +629,7 @@ export function Toolbar() {
           <Icon><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></Icon>
         </button>
         <input ref={attachRef} id="hm-attach-input" type="file" multiple hidden onChange={(e) => { Array.from(e.target.files ?? []).forEach((f, i) => { const c = worldPoint(); void addAttachmentFile(f, { x: c.x + i * 24, y: c.y + i * 24 }); }); e.target.value = ""; }} />
-        <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
+        <input ref={fileRef} id="hm-open-input" type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
 
       {leftIds.length > 0 && (
@@ -660,17 +647,6 @@ export function Toolbar() {
 
       <div className="dock" ref={dockRef}>
         {!panelPosition && panelsNode}
-        {selCount > 0 && (
-          <div className="toolbar selbar" role="toolbar" aria-label="Ações da seleção" onClickCapture={() => { anchorRef.current = null; }}>
-            <span className="count">{selCount} {selCount === 1 ? "selecionado" : "selecionados"}</span>
-            {selBlock && <button className="btn text" onClick={() => editSelectedBlock()}>Editar</button>}
-            <button className="btn text" onClick={() => toggle("map")}>Mapa…</button>
-            <button className="btn text" onClick={duplicateSelection}>Duplicar</button>
-            <button className="btn text danger" onClick={deleteSelection}>Apagar</button>
-            <button className="btn text" onClick={() => useSel.getState().clear()}>Desmarcar</button>
-          </div>
-        )}
-
         {bottomIds.length > 0 && (
           <div className="toolbar" data-rail="bottom" role="toolbar" aria-label="Ferramentas" onClickCapture={noteAnchor("bottom")}>
             {bottomIds.length > 1 && <BarHandle side="bottom" vertical={false} />}

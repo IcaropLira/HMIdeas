@@ -2,6 +2,7 @@
 import { create } from "zustand";
 import { ID } from "./model";
 import { selectActivePage, useDoc, useSel } from "./store";
+import { usePageEdit } from "./pageEdit";
 
 interface BlockEditState {
   id: ID | null;
@@ -21,6 +22,15 @@ export function editSelectedBlock(): boolean {
   if (ids.length !== 1) return false;
   const e = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
   if (!e || e.type !== "attachment" || e.kind !== "block") return false;
-  useBlockEdit.getState().open(e.id);
+  if (e.block?.kind === "page") usePageEdit.getState().open(e.id);
+  else useBlockEdit.getState().open(e.id);
   return true;
 }
+
+/** Campo de um bloco sendo editado direto no quadro (duplo toque num texto do bloco). */
+interface InlineState { id: ID | null; key: string; caret: number | null; open: (id: ID, key: string, caret?: number | null) => void; close: () => void }
+export const useBlockInline = create<InlineState>((set) => ({
+  id: null, key: "", caret: null,
+  open: (id, key, caret = null) => set({ id, key, caret }),
+  close: () => set({ id: null, key: "", caret: null }),
+}));

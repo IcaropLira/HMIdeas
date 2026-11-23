@@ -84,6 +84,9 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [x] 0.7: blocos nativos (post-it, cartão, tarefas, tabela, linha do tempo, kanban, slide, documento, destaque, código), modelos feitos
   de blocos, ferramentas Vértice/Aresta (Tab cria vizinho ligado, arestas com peso/direção) e correção da tela em branco
 - [ ] 0.7: validar no tablet o toque na caixinha de tarefa e o arraste de aresta com o dedo
+- [x] 0.8 (Blocks Update): registro de blocos (40+ tipos, 140 variações, adesivos), biblioteca, transformar bloco, edição no próprio bloco,
+  bloco Página (editor do Hiraku Comic Manager), cadernos com páginas de tamanho fixo, setas puxadas das bordas, laser em dois modos
+- [ ] 0.8: validar no tablet a edição no bloco (teclado virtual), o editor de Página (contenteditable no WebKitGTK/Android) e a caneta laser
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -303,7 +306,8 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   `--accent-soft` em estilo inline do `<html>`), densidade, alças discretas (`data-grips`) e modo foco (`html.focus-mode`, Ctrl+.).
 
 ### Blocos nativos (0.7)
-- Bloco = `AttachmentElement` com `kind: "block"` e `block: BlockSpec` (`core/blocks.ts`, puro; saneado em `cleanBlock`). Cada tipo tem DADOS
+- (0.8: `core/blocks.ts` virou a pasta `core/blocks/` — ver "Blocks Update" abaixo.)
+- Bloco = `AttachmentElement` com `kind: "block"` e `block: BlockSpec` (`core/blocks/`, puro; saneado em `cleanBlock`). Cada tipo tem DADOS
   próprios (post-it: texto+cor; tarefas: itens com `done`; tabela: `rows`; linha do tempo: marcos; kanban: colunas…). `.hiraku` segue `version: 1`.
 - `blockPrims(spec, w, h, measure)` gera retângulos/linhas/círculos/textos em coordenadas locais + `hits` (áreas clicáveis: caixinha da tarefa).
   `render/blockDraw.ts` desenha as MESMAS primitivas no Pixi (`paintBlock`) e em SVG (`blockSvg`, prévias/miniaturas); a medida de texto é o
@@ -312,7 +316,6 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   (`useBlockEdit`), que edita AO VIVO com `previewElements` e grava um único passo ao fechar. Setas ligam blocos (`isBindable` inclui blocos).
 - Modelos (`core/templates.ts`) são CONJUNTOS de blocos (`Builder.block`, `Builder.fit` ajusta o quadro ao conteúdo); diagramas seguem com
   formas + setas ligadas. A aba "Blocos avulsos" da galeria e o painel Inserir criam um bloco por vez.
-- Novo tipo de bloco = entrada em `BLOCK_KINDS` + `defaultBlock`/`defaultBlockSize`/`cleanBlock`/`blockPrims` + campos no `BlockEditor`.
 
 ### Ferramentas de grafo (0.7)
 - `core/graphEdit.ts`: ferramenta **Vértice** (N; toque no vazio cria A, B, C…; arrastar de um vértice liga/cria vizinho) e **Aresta** (G; arraste
@@ -320,3 +323,34 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   (não viram filhos de mapa ao serem soltos sobre outro nó). Tab no vértice selecionado → `connectedVertex` (direção mais livre, `freeSpotNear`).
 - Peso/rótulo: `components/EdgeLabelEditor.tsx` (`useEdgeLabel`) — abre ao criar aresta ponderada, com duplo toque numa seta ou Enter com ela
   selecionada. Apagar vértice apaga as arestas dele (`incidentEdges` em `deleteSelection`). Os algoritmos leem tudo por `graphFromElements`.
+
+### Blocks Update (0.8)
+- **Registro** (`core/blocks/`): `types.ts` (união `BlockSpec` com os dados de cada tipo), `kit.ts` (primitivas, `wrap`, cores, saneamento,
+  `getAt/setAt` por caminho "items.2.text"), `def.ts` (`BlockDef`: `make`, `size`, `clean`, `draw`, `minH`, `tap`, `fields`, `split`, `form`,
+  `text`, `toContent`/`fromContent`, `resize`), `defs/*.ts` (um arquivo por família) e `index.ts` (API: `blockPrims`, `cleanBlock`, `fitBlock`,
+  `convertBlock`, `blockFields`, `splitField`, `removeFieldItem`…). **Novo tipo = um objeto `defineBlock({...})` em `defs/` + entrada em `ALL`.**
+  O `.hiraku` segue `version: 1` (tipos novos são aditivos; tipo desconhecido vira arquivo em `cleanAttachment`).
+- **Comportamentos** são `hits` (áreas com `action`) + `tap`: marcar tarefa, virar flashcard, escolher alternativa, estrelas, hábito, −/+ da meta,
+  dia do calendário, status do projeto, ícone do destaque, "Abrir página". O renderer só desenha; `selectTool` aplica o toque (1 passo de desfazer).
+- **Edição no bloco**: `fields()` devolve retângulos com fonte/cor/fundo; duplo toque num campo abre `components/BlockInlineEditor.tsx`
+  (input/textarea do sistema sobre o canvas, acompanhando câmera e giro). Enter em item de lista chama `split` (novo item), Backspace em item
+  vazio remove (`removeFieldItem`, só listas de tamanho livre), Tab percorre os campos. Ao vivo via `previewElements`, 1 passo ao sair.
+- **Editor flutuante** (`BlockEditor.tsx`) é gerado do `form` de cada tipo; "Transformar em…" usa `toContent`/`fromContent` (conteúdo neutro:
+  título, texto, itens com feito/sub) — `blockActions.ts`: `transformBlock`, `blockToMap` (bloco → mapa mental), `nodeToBlock`.
+- **Biblioteca** (`core/blocks/library.ts` + `components/BlockGallery.tsx`, tecla B): presets (tipo + campos + tamanho) por categoria, busca
+  sem acento, arrastar para o quadro (`LIB_MIME` em `clipboard.ts`) e abas de ferramentas (mapas, conexões, mídia, desenho).
+- Desenho: `render/blockDraw.ts` (medida de texto + SVG, SEM Pixi — usado em Node/testes) e `render/blockPaint.ts` (Pixi). Primitivas aceitam
+  `dash`, `fill` em polilinhas (pizza, fita), `italic`, `angle` e `tilt` do bloco inteiro (adesivos).
+- **Página** (`kind: "page"`): `md` + `pages` (subpáginas `{id,parentId,title,icon,md}`). `core/pageMd.ts` lê/escreve o MESMO Markdown das
+  Páginas do Hiraku Comic Manager (títulos, listas, tarefas, toggles `<details>`, callouts `> [!tip]`, código, `$$`, tabelas, `<!--sheet-->`,
+  `[toc]`, `---`, imagens, `▤ [[np:id]]`) e calcula a planilha sem `eval` (`sheetEval`). `core/pageTree.ts`: árvore, mover sem ciclo, apagar com
+  filhas, exportar tudo em toggles. UI: `components/PageEditor.tsx` (modal; desliga os atalhos do quadro) + `components/page/PageBlocks.ts`
+  (editor contenteditable em TS puro, sem globais: `/`, `@`, barra de formatação, menu do bloco, arrastar, colar Markdown/imagem).
+  Soltar um `.md` no quadro cria uma Página. Interop com o Manager = copiar/colar/exportar/importar Markdown.
+- **Cadernos com páginas**: `Page.size` (`core/pageSize.ts`: A4, carta, A5, 16:9, quadrado). Renderer desenha mesa + folha (`sheetLayer`),
+  mascara padrão e elementos na folha; `pageView.ts` enquadra (`fitSheet`), prende (`clampToSheet`) e vira a página rolando (`wheelFlip`).
+  Formato na Home (ao criar) e no painel Papel (todas as páginas); `addPage` herda formato e papel.
+- **Conexão rápida** (`core/quickConnect.ts` + `selectTool` gesto `connect`): pontos nas bordas do item selecionado (e/s/w; blocos também n) ou
+  sob o mouse (4 lados). Soltar sobre item liga; no vazio (ou toque) cria irmão do mesmo tipo ligado e abre o texto dele.
+- **Laser**: ferramentas `laser` (Z, ponteiro em tela com rastro 0–2 s; segue o mouse pelo `hover`) e `laserpen` (Shift+Z, traços no mundo que
+  somem juntos após `laserHold`). Opções em `useTool` (`laserColor`, `laserTrail`, `laserHold`, persistidas). Nunca entram no documento.

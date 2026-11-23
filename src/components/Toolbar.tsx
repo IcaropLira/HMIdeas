@@ -59,7 +59,7 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
   diamond: { label: "Losango", key: "D", icon: <path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z" /> },
 };
 
-type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map" | "templates" | "insert" | "layers" | "science";
+type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "laser" | "map" | "templates" | "insert" | "layers" | "science";
 
 export function Toolbar() {
   const t = useTool();
@@ -187,7 +187,13 @@ export function Toolbar() {
               <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
             </button>
           )}
-          {toolBtn("laser", "Laser", <><circle cx="17" cy="7" r="2.6" /><path d="M15 9.5C11 13 7 15 4 20" strokeDasharray="2 2.5" /></>, "Ponteiro laser (apresentar sem riscar)")}
+          {toolBtn("laser", "Ponteiro laser", <><circle cx="16" cy="8" r="3" /><circle cx="16" cy="8" r="6" opacity=".35" /><path d="M11 12.5C8 15 6 17 4 20" strokeDasharray="2 2.5" /></>, "Ponteiro laser (Z): bolinha que segue o mouse, com rastro ajustável")}
+          {toolBtn("laserpen", "Caneta laser", <><path d="M4 20l3.5-1 9-9a2 2 0 00-2.8-2.8l-9 9L4 20z" /><path d="M15 4.5c2 .5 3.8 2.3 4.5 4.5" strokeDasharray="1.5 2" /></>, "Caneta laser (Shift+Z): escreve e some sozinha")}
+          {(t.tool === "laser" || t.tool === "laserpen") && (
+            <button className={panel === "laser" ? "btn on" : "btn"} onClick={() => toggle("laser")} aria-expanded={panel === "laser"} aria-label="Opções do laser" title="Cor, rastro e tempo para sumir">
+              <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
+            </button>
+          )}
           {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
         </div>
         {t.tool === "pen" && (
@@ -410,6 +416,32 @@ export function Toolbar() {
         </div>
       )}
 
+      {panel === "laser" && (
+        <div className="panel" role="dialog" aria-label="Laser">
+          <div className="row" role="radiogroup" aria-label="Tipo de laser">
+            <button role="radio" aria-checked={t.tool === "laser"} className={t.tool === "laser" ? "chip on" : "chip"} onClick={() => t.setTool("laser")}>● Ponteiro</button>
+            <button role="radio" aria-checked={t.tool === "laserpen"} className={t.tool === "laserpen" ? "chip on" : "chip"} onClick={() => t.setTool("laserpen")}>✎ Caneta laser</button>
+          </div>
+          <div className="sec-title">Cor</div>
+          <div className="swatch-grid" role="radiogroup" aria-label="Cor do laser">
+            {["#FF3B30", "#FF9500", "#FFD60A", "#34C759", "#0A84FF", "#BF5AF2", "#FF2D92", "#FFFFFF"].map((c) => (
+              <button key={c} role="radio" aria-checked={t.laserColor === c} aria-label={`Laser ${c}`} className={t.laserColor === c ? "swatch on" : "swatch"} style={{ background: c }} onClick={() => t.set({ laserColor: c })} />
+            ))}
+          </div>
+          <label className="slider">
+            <span>Rastro do ponteiro</span>
+            <input type="range" min={0} max={2000} step={50} value={t.laserTrail} onChange={(e) => t.set({ laserTrail: +e.target.value })} />
+            <output>{t.laserTrail === 0 ? "só a bolinha" : `${(t.laserTrail / 1000).toFixed(2).replace(/0$/, "")} s`}</output>
+          </label>
+          <label className="slider">
+            <span>Caneta some em</span>
+            <input type="range" min={300} max={10000} step={100} value={t.laserHold} onChange={(e) => t.set({ laserHold: +e.target.value })} />
+            <output>{(t.laserHold / 1000).toFixed(1)} s</output>
+          </label>
+          <p className="hint">O <b>ponteiro</b> é uma bolinha que acompanha o mouse (ou o dedo/caneta) sem riscar nada; com rastro 0 fica só a bolinha. A <b>caneta laser</b> escreve por cima de tudo — para grifar, circular ou fazer uma conta rápida — e o que foi escrito some sozinho depois do tempo escolhido sem escrever. Nada disso entra no caderno.</p>
+        </div>
+      )}
+
       {panel === "color" && (
         <ColorPicker
           onEyedropper={() => {
@@ -609,7 +641,7 @@ export function Toolbar() {
         <button className="btn" onClick={() => useUI.getState().setSettingsOpen(true)} aria-label="Configurações" title="Configurações">
           <Icon><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></Icon>
         </button>
-        <input ref={attachRef} type="file" multiple hidden onChange={(e) => { Array.from(e.target.files ?? []).forEach((f, i) => { const c = worldPoint(); void addAttachmentFile(f, { x: c.x + i * 24, y: c.y + i * 24 }); }); e.target.value = ""; }} />
+        <input ref={attachRef} id="hm-attach-input" type="file" multiple hidden onChange={(e) => { Array.from(e.target.files ?? []).forEach((f, i) => { const c = worldPoint(); void addAttachmentFile(f, { x: c.x + i * 24, y: c.y + i * 24 }); }); e.target.value = ""; }} />
         <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { BLOCK_KINDS, blockHitAt, blockPrims, blockTap, cleanBlock, defaultBlock, defaultBlockSize, fitBlock, wrap, approxTextMeasure } from "./blocks";
-import { blockAt } from "./blockElement";
-import { normalizeDoc } from "./model";
-import { TEMPLATES } from "./templates";
-import { isBindable, makeBinding, solveArrow } from "./binding";
-import { HirakuElement, LinearElement } from "./model";
+import { BLOCK_KINDS, blockHitAt, blockPrims, blockTap, cleanBlock, defaultBlock, defaultBlockSize, fitBlock, wrap, approxTextMeasure } from "./index";
+import { blockAt } from "../blockElement";
+import { normalizeDoc } from "../model";
+import { TEMPLATES } from "../templates";
+import { isBindable, makeBinding, solveArrow } from "../binding";
+import { HirakuElement, LinearElement } from "../model";
 
 describe("blocos", () => {
   it("todo tipo tem padrão válido, sobrevive ao saneamento e gera primitivas dentro da caixa", () => {

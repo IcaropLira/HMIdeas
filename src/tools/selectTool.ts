@@ -2,14 +2,15 @@
 // e edição de pontos de linhas/setas.
 // Durante o gesto NADA é gravado no documento: só pré-visualização no renderer.
 // No fim, um único updateElements → um único passo de desfazer.
-import { bindableAt, detachForeign, makeBinding, solveAffected, solveArrow } from "../core/binding";
+import { Bindable, bindableAt, detachForeign, isBindable, makeBinding, solveAffected, solveArrow } from "../core/binding";
+import { connectArrow, siblingFor } from "../core/quickConnect";
 import { screenToWorld } from "../core/camera";
 import { elementHit } from "../core/geometry";
 import { snapAngle } from "../core/linear";
 import { HirakuElement, LinearElement, isLinear } from "../core/model";
 import {
-  Frame, HandleId, SelectionUI, Xform, applyXform, boundsPolygon, boxSelect, elementBounds,
-  hitHandle, lassoSelect, moveXform, pointInFrame, resizeXform, rotateXform, selectionFrame,
+  ConnSide, Connector, Frame, HandleId, SIDE_DIR, SelectionUI, Xform, applyXform, boundsPolygon, boxSelect, connectorPoints, elementBounds,
+  hitConnector, hitHandle, lassoSelect, moveXform, pointInFrame, resizeXform, rotateXform, selectionFrame,
 } from "../core/selection";
 import { Pt, outlinePath } from "../core/shapes";
 import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
@@ -18,10 +19,11 @@ import { beginLabel, settleMoved } from "../core/mapActions";
 import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
 import { settleFrames } from "../core/frames";
 import { interactiveElements } from "../core/layers";
-import { blockHitAt, blockTap } from "../core/blocks";
-import { useBlockEdit } from "../core/blockView";
+import { blockFields, blockHitAt, blockTap, fieldAt } from "../core/blocks";
+import { useBlockEdit, useBlockInline } from "../core/blockView";
+import { usePageEdit } from "../core/pageEdit";
 import { useEdgeLabel } from "../core/graphEdit";
-import { primsFor } from "../render/blockDraw";
+import { canvasMeasure, primsFor } from "../render/blockDraw";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
@@ -31,7 +33,8 @@ type Gesture =
   | { kind: "rotate"; frame: Frame; startP: Pt; orig: HirakuElement[]; next: HirakuElement[]; extra: string[]; moved: boolean }
   | { kind: "vertex"; el: LinearElement; index: number; inserted: boolean; startS: Pt; next: LinearElement | null }
   | { kind: "box"; startP: Pt; startS: Pt; base: string[]; moved: boolean }
-  | { kind: "lasso"; pts: Pt[]; base: string[] };
+  | { kind: "lasso"; pts: Pt[]; base: string[] }
+  | { kind: "connect"; from: Bindable; side: ConnSide; startS: Pt; P: Pt; target: Bindable | null; moved: boolean };
 
 const touchy = (s: Sample) => s.pointerType !== "mouse";
 
@@ -40,6 +43,8 @@ let lastTap: { t: number; x: number; y: number } | null = null;
 
 export function createSelectController(renderer: Renderer) {
   let g: Gesture | null = null;
+  /** Item sob o mouse (sem estar selecionado): mostra os pontos de conexão dele. */
+  let hoverId: string | null = null;
 
   const page = () => selectActivePage(useDoc.getState());
   const cam = () => useView.getState().camera;
@@ -48,12 +53,28 @@ export function createSelectController(renderer: Renderer) {
     return page().elements.filter((e) => ids.has(e.id));
   };
 
+  /** Pontos de conexão: do item selecionado (lados e/s/w — em cima fica a alça de girar) ou do item sob o mouse (4 lados). */
+  const connectors = (els: HirakuElement[]): Connector[] => {
+    if (g) return [];
+    const c = cam();
+    if (els.length === 1 && isBindable(els[0]) && !(els[0].type === "node" && els[0].hidden)) {
+      const e = els[0];
+      return connectorPoints(elementBounds(e), c, 26, e.type === "attachment" ? ["n", "e", "s", "w"] : ["e", "s", "w"]).map((k) => (k.side === "n" ? { ...k, y: k.y - 26 } : k));
+    }
+    const h = hoverId ? page().elements.find((x) => x.id === hoverId) : undefined;
+    if (h && isBindable(h) && !els.some((x) => x.id === h.id)) return connectorPoints(elementBounds(h), c, 14);
+    return [];
+  };
+  const connectorOwner = (els: HirakuElement[]): HirakuElement | null =>
+    els.length === 1 && isBindable(els[0]) ? els[0] : (hoverId ? page().elements.find((x) => x.id === hoverId) ?? null : null);
+
   const buildUI = (
     marquee: SelectionUI["marquee"] = null,
     els: HirakuElement[] = selectedEls(),
     hint: Pt[] | null = null,
   ): SelectionUI => ({
     bindHint: hint,
+    connectors: marquee ? [] : connectors(els),
     frame: selectionFrame(els),
     outlines: els.length > 1 || (els.length === 1 && els[0].type === "node") ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
     marquee,
@@ -115,6 +136,23 @@ export function createSelectController(renderer: Renderer) {
       if (!g) refresh(); // durante um gesto o próprio gesto desenha a UI
     },
 
+    /** Mouse parado sobre um item: mostra os pontos de conexão dele (fica enquanto o mouse estiver perto). */
+    hover(s: Sample) {
+      if (g) return;
+      const c = cam(), P = screenToWorld(c, s.x, s.y);
+      const cur = hoverId ? page().elements.find((x) => x.id === hoverId) : undefined;
+      if (cur) {
+        const b = elementBounds(cur), m = 34 / c.zoom;
+        if (P.x >= b.minX - m && P.x <= b.maxX + m && P.y >= b.minY - m && P.y <= b.maxY + m) return;
+      }
+      const hit = topHit(P, 4 / c.zoom);
+      const next = hit && isBindable(hit) && !(hit.type === "node" && hit.hidden) ? hit.id : null;
+      if (next !== hoverId) { hoverId = next; refresh(); }
+    },
+    hoverEnd() {
+      if (hoverId) { hoverId = null; if (!g) refresh(); }
+    },
+
     start(s: Sample, lasso: boolean) {
       const c = cam();
       const P = screenToWorld(c, s.x, s.y);
@@ -173,6 +211,17 @@ export function createSelectController(renderer: Renderer) {
         }
       }
 
+      // 0.5) pontos de conexão rápida: arrastar puxa uma seta ligada
+      if (!lasso && !s.shift) {
+        const k = hitConnector(connectors(sel), s.x, s.y, touchy ? 22 : 11);
+        const owner = k && connectorOwner(sel);
+        if (k && owner && isBindable(owner)) {
+          lastTap = null;
+          g = { kind: "connect", from: owner, side: k.side, startS: { x: s.x, y: s.y }, P, target: null, moved: false };
+          return;
+        }
+      }
+
       // 1) alças da seleção atual
       if (frame) {
         const h = hitHandle(frame, c, s.x, s.y, touchy ? 24 : 11);
@@ -197,21 +246,27 @@ export function createSelectController(renderer: Renderer) {
       if (!lasso) {
         const hit = topHit(P, hitTol);
         if (hit) {
-          // blocos: caixinha da lista de tarefas marca/desmarca com um toque; duplo toque abre o editor do bloco
+          // blocos: áreas com comportamento próprio (caixinha da tarefa, virar flashcard, alternativa, estrelas…) respondem a
+          // um toque; duplo toque num texto edita ali mesmo; duplo toque fora de texto abre o editor do bloco
           if (hit.type === "attachment" && hit.kind === "block" && hit.block && !s.shift) {
+            const lx = P.x - hit.x, ly = P.y - hit.y;
+            if (dbl) {
+              lastTap = null;
+              useSel.getState().set([hit.id]);
+              if (hit.block.kind === "page") { usePageEdit.getState().open(hit.id); return; }
+              const fld = fieldAt(blockFields(hit.block, hit.w, hit.h, canvasMeasure), lx, ly);
+              if (fld) useBlockInline.getState().open(hit.id, fld.key);
+              else useBlockEdit.getState().open(hit.id);
+              return;
+            }
             const prims = primsFor(hit);
-            const tap = prims && blockHitAt(prims, P.x - hit.x, P.y - hit.y);
+            const tap = prims && blockHitAt(prims, lx, ly);
+            if (tap && tap.action === "open") { lastTap = null; useSel.getState().set([hit.id]); usePageEdit.getState().open(hit.id); return; }
             if (tap) {
               lastTap = null;
               useDoc.getState().updateElements([{ ...hit, block: blockTap(hit.block, tap) }]);
               useSel.getState().set([hit.id]);
               refresh();
-              return;
-            }
-            if (dbl) {
-              lastTap = null;
-              useSel.getState().set([hit.id]);
-              useBlockEdit.getState().open(hit.id);
               return;
             }
           }
@@ -323,6 +378,18 @@ export function createSelectController(renderer: Renderer) {
           renderer.setSelectionUI(buildUI({ kind: "box", a: g.startP, b: P }));
           break;
         }
+        case "connect": {
+          if (!g.moved && Math.hypot(s.x - g.startS.x, s.y - g.startS.y) < 4) return;
+          g.moved = true;
+          const all = page().elements, fromId = g.from.id;
+          const target = bindableAt(interactiveElements(page()).filter((e) => e.id !== fromId && !(e.type === "node" && e.hidden)), P, (touchy(s) ? 14 : 8) / c.zoom);
+          g.P = P;
+          g.target = target;
+          const t = useTool.getState();
+          renderer.previewElement(connectArrow(g.from, g.side, P, target, { color: t.color, width: 2 }, all, "__connect"));
+          renderer.setSelectionUI({ ...buildUI(null, [], target ? outlinePath(target) : null), connectors: [] });
+          break;
+        }
         case "lasso": {
           const last = g.pts[g.pts.length - 1];
           for (const sm of samples) {
@@ -356,6 +423,35 @@ export function createSelectController(renderer: Renderer) {
         else if (done.kind === "move" && done.candidate) useSel.getState().set([done.candidate]);
       } else if (done.kind === "vertex") {
         if (done.next) useDoc.getState().updateElements([done.next]);
+      } else if (done.kind === "connect") {
+        renderer.previewElement(null);
+        const all = page().elements;
+        const t = useTool.getState();
+        if (!done.moved) {
+          // toque num ponto sem arrastar: cria o irmão já ligado do lado escolhido
+          const fromC = elementBounds(done.from), d = SIDE_DIR[done.side];
+          done.P = { x: (fromC.minX + fromC.maxX) / 2 + d.x * ((fromC.maxX - fromC.minX) + 80), y: (fromC.minY + fromC.maxY) / 2 + d.y * ((fromC.maxY - fromC.minY) + 80) };
+        }
+        let target: Bindable | null = done.target;
+        const added: HirakuElement[] = [];
+        if (!target) {
+          const sib = siblingFor(done.from, done.side, done.P, all);
+          if (sib && isBindable(sib)) { added.push(sib); target = sib; }
+        }
+        if (target) {
+          const end = target === done.target ? done.P : { x: (elementBounds(target).minX + elementBounds(target).maxX) / 2, y: (elementBounds(target).minY + elementBounds(target).maxY) / 2 };
+          const arrow = connectArrow(done.from, done.side, end, target, { color: t.color, width: 2 }, [...all, ...added]);
+          useDoc.getState().addElements([...added, arrow]);
+          if (added.length) {
+            const n = added[0];
+            useSel.getState().set([n.id]);
+            if (n.type === "attachment" && n.block) {
+              const f = blockFields(n.block, n.w, n.h, canvasMeasure)[0];
+              if (f) useBlockInline.getState().open(n.id, f.key);
+            } else if (n.type === "node") beginLabel(n.id, true);
+            else if (n.type === "text") beginEditText(n);
+          }
+        }
       } else if (done.kind === "lasso") {
         const ids = lassoSelect(interactiveElements(page()), done.pts, useTool.getState().lassoMode, cam().zoom);
         useSel.getState().set([...done.base, ...ids]);
@@ -367,6 +463,7 @@ export function createSelectController(renderer: Renderer) {
       const done = g;
       g = null;
       if (done?.kind === "vertex") renderer.redrawNode(done.el.id, null);
+      else if (done?.kind === "connect") renderer.previewElement(null);
       else if (done && "orig" in done) restore(done.orig, done.extra);
       refresh();
     },

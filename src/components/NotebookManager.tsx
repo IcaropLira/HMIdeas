@@ -1,6 +1,8 @@
 // Tela inicial (Home) de cadernos: capas com a primeira página de verdade, busca, ordenação, favoritos, cores de capa,
 // criar com o papel escolhido, importar/exportar, renomear, duplicar e excluir. Os cadernos ficam no IndexedDB deste
 // dispositivo; o caderno aberto é salvo sozinho a cada mudança.
+import { PAGE_SIZES } from "../core/pageSize";
+import { FormatIcon } from "./PaperPanel";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { PaperSwatch } from "./PaperPanel";
@@ -116,6 +118,8 @@ export function NotebookManager() {
   const opened = useUI((u) => u.notebooksOpen), setOpened = useUI.getState().setNotebooksOpen;
   const [items, setItems] = useState<Notebook[]>([]), [active, setActive] = useState("");
   const [query, setQuery] = useState(""), [renameId, setRenameId] = useState(""), [renameValue, setRenameValue] = useState("");
+  const [fmt, setFmt] = useState(() => { try { return localStorage.getItem("hm-ideas:new-format") || "infinite"; } catch { return "infinite"; } });
+  useEffect(() => { try { localStorage.setItem("hm-ideas:new-format", fmt); } catch { /* sem armazenamento */ } }, [fmt]);
   const [sort, setSort] = useState<"recent" | "name" | "created">(() => (localStorage.getItem("hm-ideas:home-sort") as "recent") || "recent");
   const [menu, setMenu] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null), [ready, setReady] = useState(false);
@@ -203,7 +207,9 @@ export function NotebookManager() {
     try {
       await saveCurrent();
       const doc = createDoc();
+      const size = PAGE_SIZES.find((f) => f.id === fmt)?.size ?? undefined;
       if (paper) doc.pages = doc.pages.map((p) => ({ ...p, paper: paper.kind, background: paper.bg }));
+      if (size) doc.pages = doc.pages.map((p) => ({ ...p, size }));
       const used = new Set(itemsRef.current.map((x) => x.name));
       let k = itemsRef.current.length + 1;
       while (used.has(`Caderno ${k}`)) k++;
@@ -306,7 +312,16 @@ export function NotebookManager() {
         <div className="home-body">
           {!query && (
             <section>
-              <h2>Novo caderno</h2>
+              <div className="nb-new-head">
+                <h2>Novo caderno</h2>
+                <div className="seg fmt-seg" role="radiogroup" aria-label="Formato do caderno">
+                  {PAGE_SIZES.map((f) => (
+                    <button key={f.id} role="radio" aria-checked={fmt === f.id} className={fmt === f.id ? "on" : ""} onClick={() => setFmt(f.id)} title={f.size ? "Caderno com páginas de tamanho fixo" : "Quadro sem bordas (padrão)"}>
+                      <FormatIcon size={f.size} />{f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="nb-new">
                 {NEW_PAPERS.map((p) => (
                   <button key={p.label} className="nb-newcard" onClick={() => void create(p)} title={`Criar caderno ${p.label.toLowerCase()}`}>

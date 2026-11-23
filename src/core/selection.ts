@@ -292,4 +292,24 @@ export interface SelectionUI {
   lineEdit: null | { points: Pt[] };
   /** Forma que receberá a ponta da seta (realce durante o arrasto). */
   bindHint?: Pt[] | null;
+  /** Pontos de conexão rápida (tela): arrastar um deles puxa uma seta ligada. */
+  connectors?: Connector[];
 }
+
+// ---------- conexão rápida ----------
+export type ConnSide = "n" | "e" | "s" | "w";
+export interface Connector { side: ConnSide; x: number; y: number }
+/** Pontos de conexão (em px de TELA) no meio de cada lado, `off` px para fora da caixa. */
+export function connectorPoints(b: { minX: number; minY: number; maxX: number; maxY: number }, cam: Camera, off: number, sides: ConnSide[] = ["n", "e", "s", "w"]): Connector[] {
+  const cx = ((b.minX + b.maxX) / 2) * cam.zoom + cam.x, cy = ((b.minY + b.maxY) / 2) * cam.zoom + cam.y;
+  const l = b.minX * cam.zoom + cam.x, r = b.maxX * cam.zoom + cam.x, t = b.minY * cam.zoom + cam.y, bt = b.maxY * cam.zoom + cam.y;
+  const at: Record<ConnSide, Pt> = { n: { x: cx, y: t - off }, e: { x: r + off, y: cy }, s: { x: cx, y: bt + off }, w: { x: l - off, y: cy } };
+  return sides.map((side) => ({ side, ...at[side] }));
+}
+export function hitConnector(cs: Connector[] | undefined, sx: number, sy: number, tol: number): Connector | null {
+  let best: Connector | null = null, bd = tol;
+  for (const c of cs ?? []) { const d = Math.hypot(c.x - sx, c.y - sy); if (d <= bd) { bd = d; best = c; } }
+  return best;
+}
+/** Para onde vai o novo bloco quando a seta puxada é solta no vazio perto demais: ao menos `gap` além da borda. */
+export const SIDE_DIR: Record<ConnSide, Pt> = { n: { x: 0, y: -1 }, e: { x: 1, y: 0 }, s: { x: 0, y: 1 }, w: { x: -1, y: 0 } };

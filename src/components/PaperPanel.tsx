@@ -1,5 +1,6 @@
 // Painel "Papel": padrão da folha com miniaturas reais (mesmo gerador do quadro), qualquer cor de fundo,
 // cor das linhas e espaçamento. Pode aplicar só à página atual ou a todas.
+import { PAGE_SIZES } from "../core/pageSize";
 import { useRef, useState } from "react";
 import { HsvField } from "./ColorPicker";
 import { HirakuDoc, PAPER_COLORS, PAPER_KINDS, Page, PaperKind } from "../core/model";
@@ -26,6 +27,12 @@ type Patch = Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineCol
 
 const LINE_PRESETS = ["#1B2233", "#2F4B8F", "#2F7D5B", "#C8372D", "#7B4FB5", "#F2F4FA"];
 
+export function FormatIcon({ size }: { size: { w: number; h: number } | null }) {
+  if (!size) return <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8c2-4 4-4 6 0s4 4 6 0" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>;
+  const k = 12 / Math.max(size.w, size.h), w = size.w * k, h = size.h * k;
+  return <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x={8 - w / 2} y={8 - h / 2} width={w} height={h} rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg>;
+}
+
 export function PaperPanel() {
   const page = useDoc((s) => selectActivePage(s));
   const [all, setAll] = useState(false);
@@ -48,6 +55,17 @@ export function PaperPanel() {
 
   return (
     <div className="panel paperpanel" role="dialog" aria-label="Papel">
+      <div className="sec-title">Formato do caderno</div>
+      <div className="row tight wrap" role="radiogroup" aria-label="Formato das páginas">
+        {PAGE_SIZES.map((f) => {
+          const on = f.size ? page.size?.w === f.size.w && page.size?.h === f.size.h : !page.size;
+          return (
+            <button key={f.id} role="radio" aria-checked={on} className={on ? "chip sm on fmt" : "chip sm fmt"} title={f.size ? `${f.label}: páginas de tamanho fixo (todas as páginas)` : "Quadro infinito (todas as páginas)"} onClick={() => useDoc.getState().setPaperAll({ size: f.size ?? undefined })}>
+              <FormatIcon size={f.size} /> {f.label}
+            </button>
+          );
+        })}
+      </div>
       <div className="sec-title">Padrão da folha</div>
       <div className="tiles three" role="radiogroup" aria-label="Estilo da folha">
         {PAPER_KINDS.map((k) => (

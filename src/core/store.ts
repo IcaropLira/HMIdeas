@@ -7,7 +7,7 @@ import { Camera, defaultCamera } from "./camera";
 import { activeLayerId } from "./layers";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
-export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "vertex" | "edge" | ShapeType | LinearType;
+export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "laserpen" | "vertex" | "edge" | ShapeType | LinearType;
 
 const HISTORY_LIMIT = 200;
 
@@ -33,10 +33,10 @@ interface DocState {
   previewElements: (els: HirakuElement[]) => void;
   endPreview: (base: HirakuDoc) => void;
   cancelPreview: (base: HirakuDoc) => void;
-  setPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  setPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor" | "size">>) => void;
   /** Muda o papel SEM histórico (arrastar no seletor de cor); `endPreview(base)` grava como um passo só. */
   /** Aplica o papel a TODAS as páginas (um passo de desfazer). */
-  setPaperAll: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  setPaperAll: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor" | "size">>) => void;
   previewPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
 
   // páginas (alterações do documento → entram no desfazer), exceto setActivePage
@@ -160,7 +160,7 @@ export const useDoc = create<DocState>((set, get) => {
       const { doc } = get();
       const cur = selectActivePage(get());
       // A nova página herda o papel da atual (como um caderno com o mesmo modelo).
-      const page: Page = { ...createPage(`Página ${doc.pages.length + 1}`), paper: cur.paper, background: cur.background };
+      const page: Page = { ...createPage(`Página ${doc.pages.length + 1}`), paper: cur.paper, background: cur.background, ...(cur.size ? { size: cur.size } : {}), ...(cur.paperScale ? { paperScale: cur.paperScale } : {}), ...(cur.lineColor ? { lineColor: cur.lineColor } : {}) };
       const pages = [...doc.pages];
       pages.splice(doc.pages.findIndex((p) => p.id === cur.id) + 1, 0, page);
       commit({ ...doc, pages }, page.id);
@@ -293,6 +293,10 @@ interface ToolState {
   fingerDraws: boolean;
   /** Caneta transforma traços em formas perfeitas (linha, retângulo, elipse, losango, triângulo, polígono). */
   recognize: boolean;
+  /** Laser: cor, quanto o ponteiro deixa de rastro (ms; 0 = só a bolinha) e em quanto tempo a caneta laser some (ms). */
+  laserColor: string;
+  laserTrail: number;
+  laserHold: number;
   setTool: (t: ToolId) => void;
   /** Troca o brush (e a cor, se o brush tiver cor própria ou já tiver sido usado com outra). */
   setBrush: (id: string) => void;
@@ -329,6 +333,9 @@ export const useTool = create<ToolState>()(
       lassoMode: "inside",
       fingerDraws: false,
       recognize: false,
+      laserColor: "#FF3B30",
+      laserTrail: 450,
+      laserHold: 1500,
       setTool: (tool) => set({ tool, picking: false }),
       setBrush: (id) => {
         const s = get();
@@ -342,6 +349,9 @@ export const useTool = create<ToolState>()(
     {
       name: "hmideas-tool",
       partialize: (s) => ({
+        laserColor: s.laserColor,
+        laserTrail: s.laserTrail,
+        laserHold: s.laserHold,
         color: s.color,
         width: s.width,
         eraserSize: s.eraserSize,

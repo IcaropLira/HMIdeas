@@ -1,6 +1,7 @@
 // Colagem e inserção de anexos (imagem, arquivo, link, texto). Um único caminho para Ctrl+V, botão "Colar",
 // menu "Inserir" e arrastar-e-soltar. O Ctrl+V NÃO é interceptado no teclado: o navegador dispara o evento
 // `paste` com a área de transferência real (prints, imagens copiadas, links, texto).
+export const LIB_MIME = "application/x-hm-block";
 import { screenToWorld } from "../core/camera";
 import { parseYouTube } from "../core/embed";
 import { newId } from "../core/model";
@@ -131,9 +132,27 @@ const firstUrl = (text: string) => text.trim().split(/\r?\n/).map((l) => l.trim(
 
 /** Decide o que fazer com um pacote de dados colado: imagem > link > cópia interna > texto. */
 export async function importData(dt: DataTransfer, at: Point = worldPoint()): Promise<boolean> {
+  // item arrastado da biblioteca de blocos
+  const lib = dt.getData(LIB_MIME);
+  if (lib) { const { insertLibItemById } = await import("./BlockGallery"); return insertLibItemById(lib, at); }
   const files = Array.from(dt.files ?? []);
   const img = files.find((f) => f.type.startsWith("image/")) ?? Array.from(dt.items ?? []).find((i) => i.kind === "file" && i.type.startsWith("image/"))?.getAsFile();
   if (img) return addAttachmentFile(img, at, img.name && img.name !== "image.png" ? img.name : "Imagem colada");
+  // .md (Hiraku Comic Manager, Obsidian…) vira um bloco Página com o mesmo conteúdo
+  const mds = files.filter((f) => /\.(md|markdown)$/i.test(f.name) || f.type === "text/markdown");
+  if (mds.length) {
+    const { makeBlockElement } = await import("../core/blockElement");
+    const { defaultBlock } = await import("../core/blocks");
+    for (let i = 0; i < mds.length; i++) {
+      const text = (await mds[i].text()).replace(/^---\n[\s\S]*?\n---\n/, "");
+      const spec = { ...defaultBlock("page"), title: mds[i].name.replace(/\.(md|markdown)$/i, ""), md: text } as ReturnType<typeof defaultBlock>;
+      const el = makeBlockElement(spec, { x: at.x + i * 40, y: at.y + i * 40 });
+      useDoc.getState().addElement(el);
+      useSel.getState().set([el.id]);
+    }
+    useUI.getState().showToast(mds.length > 1 ? `${mds.length} páginas importadas.` : "Página importada: duplo toque para abrir.");
+    return true;
+  }
   if (files.length) {
     let ok = false;
     for (let i = 0; i < files.length; i++) ok = (await addAttachmentFile(files[i], { x: at.x + i * 24, y: at.y + i * 24 })) || ok;

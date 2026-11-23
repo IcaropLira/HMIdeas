@@ -2,6 +2,7 @@
 // Tudo aqui é serializável em JSON e tratado como IMUTÁVEL.
 
 import { parseYouTube } from "./embed";
+import { FigureSpec, cleanFigure } from "./figures";
 
 export type ID = string;
 
@@ -37,6 +38,8 @@ export interface StrokeDyn {
 
 export interface StrokeElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: "stroke";
@@ -65,6 +68,8 @@ export type LineStyle = "solid" | "dashed" | "dotted";
 
 export interface ShapeElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: ShapeType;
@@ -106,6 +111,8 @@ export interface ArrowBinding {
 /** Linha ou seta com 2+ pontos (retos ou suavizados). */
 export interface LinearElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: LinearType;
@@ -117,6 +124,8 @@ export interface LinearElement {
   endHead: ArrowHead;
   /** true = curva suave passando pelos pontos. */
   curved: boolean;
+  /** Rótulo no meio da linha (peso de aresta de grafo, condição de fluxograma…). */
+  label?: string;
   /** Só setas: ligações das pontas a formas (a posição das pontas é recalculada a partir delas). */
   startBinding?: ArrowBinding | null;
   endBinding?: ArrowBinding | null;
@@ -130,6 +139,8 @@ export type TextAlign = "left" | "center" | "right";
 /** Texto de bloco único (sem quebra automática): w/h são medidos ao confirmar a edição. */
 export interface TextElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   /** Quadro (FrameElement) a que pertence; null/ausente = solto na página. */
   frameId?: ID | null;
   type: "text";
@@ -182,6 +193,8 @@ export const BRANCH_STYLES: { id: BranchStyle; label: string }[] = [
  */
 export interface NodeElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   type: "node";
   frameId?: ID | null;
   x: number;
@@ -223,6 +236,8 @@ export interface NodeElement {
 /** Quadro (como o do Figma/Miro): contém outros elementos — inclusive outros quadros. */
 export interface FrameElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   type: "frame";
   /** Quadro pai (quadros aninhados). */
   frameId?: ID | null;
@@ -241,12 +256,14 @@ export interface FrameElement {
   opacity: number;
 }
 
-export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf"] as const;
+export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figure"] as const;
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
 export interface AttachmentElement {
   id: ID;
+  /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
+  layerId?: ID | null;
   frameId?: ID | null;
   type: "attachment";
   x: number; y: number; w: number; h: number;
@@ -261,6 +278,8 @@ export interface AttachmentElement {
   pages?: number;
   ratio?: number;
   mode?: "carousel" | "scroll";
+  /** "figure": sólido, gráfico de função, espaço 3D… (core/figures.ts). */
+  figure?: FigureSpec;
   opacity: number;
 }
 
@@ -275,13 +294,20 @@ export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES a
 export const isNode = (el: HirakuElement): el is NodeElement => el.type === "node";
 export const isFrame = (el: HirakuElement): el is FrameElement => el.type === "frame";
 
-export type PaperKind = "blank" | "ruled" | "grid" | "dots";
+export type PaperKind = "blank" | "ruled" | "margin" | "grid" | "mm" | "dots" | "iso" | "isodots" | "hex" | "music" | "cartesian";
 
-export const PAPER_KINDS: { id: PaperKind; label: string }[] = [
-  { id: "blank", label: "Liso" },
-  { id: "ruled", label: "Pautado" },
-  { id: "grid", label: "Quadriculado" },
-  { id: "dots", label: "Pontilhado" },
+export const PAPER_KINDS: { id: PaperKind; label: string; hint: string }[] = [
+  { id: "blank", label: "Liso", hint: "Folha sem linhas" },
+  { id: "ruled", label: "Pautado", hint: "Linhas horizontais" },
+  { id: "margin", label: "Caderno", hint: "Pautado com margem vermelha" },
+  { id: "grid", label: "Quadriculado", hint: "Quadrados com linha forte a cada 5" },
+  { id: "mm", label: "Milimetrado", hint: "Grade fina para gráficos e desenho técnico" },
+  { id: "dots", label: "Pontilhado", hint: "Pontos (bullet journal)" },
+  { id: "iso", label: "Isométrico", hint: "Grade triangular para perspectiva e sólidos" },
+  { id: "isodots", label: "Pontos isométricos", hint: "Pontos em triângulos" },
+  { id: "hex", label: "Hexagonal", hint: "Colmeia (química, jogos, mapas)" },
+  { id: "music", label: "Pauta musical", hint: "Pentagramas de 5 linhas" },
+  { id: "cartesian", label: "Plano cartesiano", hint: "Quadriculado com eixos x e y na origem" },
 ];
 
 export const DEFAULT_BACKGROUND = "#EDF0F4";
@@ -290,14 +316,42 @@ export const PAPER_COLORS: { value: string; label: string }[] = [
   { value: "#EDF0F4", label: "Cinza-azulado" },
   { value: "#FFFFFF", label: "Branco" },
   { value: "#FAF1C7", label: "Amarelo" },
+  { value: "#F6EEDF", label: "Marfim" },
+  { value: "#E9DCC3", label: "Kraft" },
+  { value: "#E4F1E8", label: "Menta" },
+  { value: "#E3ECFA", label: "Azul-claro" },
+  { value: "#F4E4EE", label: "Rosa" },
+  { value: "#ECE6F8", label: "Lavanda" },
+  { value: "#2B2F3A", label: "Grafite" },
+  { value: "#14213D", label: "Azul-marinho" },
+  { value: "#1F3B2D", label: "Lousa verde" },
+  { value: "#121212", label: "Preto" },
 ];
+
+/** Camada da página (como no Photoshop/Procreate): ordem = ordem do array (último = por cima). */
+export interface Layer {
+  id: ID;
+  name: string;
+  visible: boolean;
+  /** Travada: aparece, mas não seleciona nem apaga. */
+  locked: boolean;
+  opacity: number;
+}
+
+export const makeLayer = (name = "Camada 1", id: ID = newId()): Layer => ({ id, name, visible: true, locked: false, opacity: 1 });
 
 export interface Page {
   id: ID;
   name: string;
   paper: PaperKind;
   background: string;
-  /** Ordem de empilhamento (último = por cima). */
+  /** Espaçamento do padrão do papel (1 = padrão; 0.5..2). Ausente = 1. */
+  paperScale?: number;
+  /** Cor das linhas do papel; ausente/null = automática (escura no papel claro, clara no escuro). */
+  lineColor?: string | null;
+  /** Camadas (de baixo para cima). Sempre ≥ 1 depois de normalizeDoc/createPage. */
+  layers: Layer[];
+  /** Ordem de empilhamento (último = por cima). Entre camadas, vale a ordem das camadas. */
   elements: HirakuElement[];
 }
 
@@ -309,7 +363,7 @@ export interface HirakuDoc {
 export const newId = (): ID => crypto.randomUUID();
 
 export function createPage(name = "Página 1"): Page {
-  return { id: newId(), name, paper: "blank", background: DEFAULT_BACKGROUND, elements: [] };
+  return { id: newId(), name, paper: "blank", background: DEFAULT_BACKGROUND, layers: [makeLayer()], elements: [] };
 }
 
 export function createDoc(): HirakuDoc {
@@ -353,6 +407,8 @@ const cleanAttachment = (e: any): AttachmentElement => {
   let kind: AttachmentKind = (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) ? e.kind : "file";
   if (kind === "video" && !parseYouTube(str(e.url, ""))) kind = "link"; // sem link reconhecível, vira cartão de link
   if (kind === "pdf" && typeof e.data !== "string") kind = "file"; // sem o conteúdo embutido, vira arquivo comum
+  const figure = kind === "figure" ? cleanFigure(e.figure) : null;
+  if (kind === "figure" && !figure) kind = "file";
   return {
     ...e,
     frameId: typeof e.frameId === "string" ? e.frameId : null,
@@ -362,6 +418,7 @@ const cleanAttachment = (e: any): AttachmentElement => {
     pages: kind === "pdf" ? Math.max(1, Math.floor(num(e.pages, 1))) : undefined,
     ratio: kind === "pdf" ? Math.min(4, Math.max(0.25, num(e.ratio, 1.414))) : undefined,
     mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
+    figure: figure ?? undefined,
   };
 };
 
@@ -410,6 +467,26 @@ const cleanFrame = (e: any): FrameElement => ({
   opacity: num(e.opacity, 1),
 });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function cleanLayers(raw: any): Layer[] {
+  const out: Layer[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(raw)) {
+    for (const l of raw) {
+      if (!l || typeof l.id !== "string" || seen.has(l.id)) continue;
+      seen.add(l.id);
+      out.push({
+        id: l.id,
+        name: str(l.name, `Camada ${out.length + 1}`).slice(0, 60),
+        visible: l.visible !== false,
+        locked: l.locked === true,
+        opacity: Math.max(0.05, Math.min(1, num(l.opacity, 1))),
+      });
+    }
+  }
+  return out.length ? out : [makeLayer()];
+}
+
 /** Valida e completa campos novos de arquivos antigos (migração leve, ainda versão 1). */
 export function normalizeDoc(raw: unknown): HirakuDoc {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -425,7 +502,10 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       id: typeof p.id === "string" ? p.id : newId(),
       name: typeof p.name === "string" ? p.name : `Página ${i + 1}`,
       paper: kinds.includes(p.paper) ? p.paper : "blank",
-      background: typeof p.background === "string" ? p.background : DEFAULT_BACKGROUND,
+      background: hex(p.background, DEFAULT_BACKGROUND),
+      paperScale: Number.isFinite(p.paperScale) ? Math.max(0.5, Math.min(2, p.paperScale)) : undefined,
+      lineColor: typeof p.lineColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lineColor) ? p.lineColor : undefined,
+      layers: cleanLayers(p.layers),
       elements: Array.isArray(p.elements)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ? p.elements.filter(validElement).map((e: any) =>
@@ -437,7 +517,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                   brush: typeof e.brush === "string" && e.brush ? e.brush : "pen",
                 }
               : e.type === "arrow"
-                ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
+                ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding), label: typeof e.label === "string" && e.label ? e.label.slice(0, 80) : undefined }
                 : e.type === "text"
                   ? cleanText(e)
                   : e.type === "node"

@@ -46,7 +46,7 @@ describe("Toolbar em blocos", () => {
   });
 
   it("bloco oculto some da tela; lado vazio não gera barra", () => {
-    mock.layout = placeBlock(placeBlock(placeBlock(DEFAULT_LAYOUT, "brush", "hidden"), "colors", "hidden"), "size", "hidden");
+    mock.layout = placeBlock(placeBlock(placeBlock(placeBlock(DEFAULT_LAYOUT, "brush", "hidden"), "colors", "hidden"), "size", "hidden"), "layers", "hidden");
     const html = renderToString(<Toolbar />);
     expect(html).not.toContain("rail-right");
     expect(html).not.toContain('aria-label="Pincéis"');

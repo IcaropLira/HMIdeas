@@ -9,6 +9,9 @@ import { initUpdates } from "./core/updater";
 import { PageNav, Sidebar, Toast } from "./components/Pages";
 import { Toolbar } from "./components/Toolbar";
 import { NotebookManager } from "./components/NotebookManager";
+import { zSelection } from "./components/LayersPanel";
+import { TemplateGallery } from "./components/TemplateGallery";
+import { useTheme } from "./core/theme";
 import { copyWithMark, initPaste } from "./components/clipboard";
 import {
   deleteSelection, duplicateSelection, editSelectedText,
@@ -27,6 +30,12 @@ const TOOL_KEYS: Record<string, ToolId> = {
   // numeração igual à do Excalidraw
   "1": "select", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "0": "eraser",
 };
+
+function FocusExit() {
+  const focus = useTheme((s) => s.focus);
+  if (!focus) return null;
+  return <button className="focus-exit" onClick={() => useTheme.getState().setFocus(false)} title="Sair do modo foco (Ctrl+.)">Sair do foco</button>;
+}
 
 export default function App() {
   useEffect(() => initPageViewSync(), []);
@@ -51,6 +60,9 @@ export default function App() {
         // Ctrl+V: sem preventDefault aqui, para o navegador disparar o evento `paste` (ver components/clipboard.ts)
         else if (k === "g") run(() => (e.shiftKey ? ungroupSelection() : wrapSelectionInFrame()));
         else if (k === "enter") run(() => addChildToSelection());
+        else if (k === ".") run(() => useTheme.getState().setFocus(!useTheme.getState().focus));
+        else if (e.code === "BracketRight") run(() => zSelection(e.shiftKey ? "front" : "forward"));
+        else if (e.code === "BracketLeft") run(() => zSelection(e.shiftKey ? "back" : "backward"));
         return;
       }
 
@@ -110,6 +122,8 @@ export default function App() {
       <NotebookManager />
       <Sidebar />
       <Toolbar />
+      <TemplateGallery />
+      <FocusExit />
       <TextEditor />
       <LabelEditor />
       <Toast />

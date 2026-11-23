@@ -4,7 +4,7 @@
 // interface, não é o documento — ver AGENTS.md, regra 9).
 import { create } from "zustand";
 
-export type BlockId = "tools" | "shapes" | "history" | "insert" | "brush" | "colors" | "size" | "map" | "page";
+export type BlockId = "tools" | "shapes" | "history" | "insert" | "brush" | "colors" | "size" | "map" | "science" | "layers" | "page";
 export type DockSide = "bottom" | "left" | "right" | "float" | "hidden";
 
 export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
@@ -16,6 +16,8 @@ export const BLOCKS: { id: BlockId; label: string; hint: string }[] = [
   { id: "colors", label: "Cores", hint: "Cores rápidas e seletor completo" },
   { id: "size", label: "Espessura", hint: "Controle de espessura do traço ou da borracha" },
   { id: "map", label: "Mapa mental e modelos", hint: "Mapa mental, quadros e modelos prontos" },
+  { id: "science", label: "Grafos e matemática", hint: "Grafos, sólidos geométricos, planos, gráficos de funções e calculadora" },
+  { id: "layers", label: "Camadas", hint: "Painel de camadas e ordem dos elementos" },
   { id: "page", label: "Papel e ajustes", hint: "Papel, ajustes da caneta, estilo do texto e dedo" },
 ];
 
@@ -39,15 +41,21 @@ export interface Layout {
   floats: Partial<Record<BlockId, FloatPos>>;
   /** Trava as posições: esconde as alças de arrastar (evita arrastar sem querer com a caneta). */
   locked: boolean;
+  /**
+   * Grupos de blocos flutuantes ("lego"): bloco → LÍDER do grupo. O líder é quem tem a posição em `floats`;
+   * os membros vão juntos na mesma barra, na ordem de `order`. Bloco flutuante sem entrada aqui é líder de si mesmo.
+   */
+  group: Partial<Record<BlockId, BlockId>>;
 }
 
 /** Padrão: embaixo só o essencial; cor, espessura e pincéis na direita; o resto na esquerda. */
 export const DEFAULT_LAYOUT: Layout = {
   version: 2,
-  order: ["tools", "shapes", "history", "insert", "brush", "colors", "size", "map", "page"],
-  side: { tools: "bottom", shapes: "bottom", history: "bottom", insert: "left", brush: "right", colors: "right", size: "right", map: "left", page: "left" },
+  order: ["tools", "shapes", "history", "insert", "brush", "colors", "size", "map", "science", "layers", "page"],
+  side: { tools: "bottom", shapes: "bottom", history: "bottom", insert: "left", brush: "right", colors: "right", size: "right", map: "left", science: "left", layers: "right", page: "left" },
   floats: {},
   locked: false,
+  group: {},
 };
 
 const IDS = BLOCKS.map((b) => b.id);
@@ -69,7 +77,7 @@ export function blocksOn(layout: Layout, side: DockSide): BlockId[] {
  * "flutuante" sem posição válida volta para o lado padrão dele.
  */
 export function normalizeLayout(raw: unknown): Layout {
-  const r = (raw && typeof raw === "object" ? raw : {}) as { order?: unknown; side?: unknown; floats?: unknown; locked?: unknown };
+  const r = (raw && typeof raw === "object" ? raw : {}) as { order?: unknown; side?: unknown; floats?: unknown; locked?: unknown; group?: unknown };
   const sideIn = (r.side && typeof r.side === "object" ? r.side : {}) as Record<string, unknown>;
   const floatsIn = (r.floats && typeof r.floats === "object" ? r.floats : {}) as Record<string, unknown>;
   const side = {} as Record<BlockId, DockSide>;
@@ -78,15 +86,28 @@ export function normalizeLayout(raw: unknown): Layout {
     let s = isSide(sideIn[id]) ? (sideIn[id] as DockSide) : DEFAULT_LAYOUT.side[id];
     if (s === "float") {
       const p = floatsIn[id];
+      const member = r.group && typeof r.group === "object" && isBlockId((r.group as Record<string, unknown>)[id]);
       if (isFloatPos(p)) floats[id] = { x: p.x, y: p.y, vertical: p.vertical };
-      else s = DEFAULT_LAYOUT.side[id];
+      else if (!member) s = DEFAULT_LAYOUT.side[id];
     }
     side[id] = s;
   }
   const order: BlockId[] = [];
   for (const id of Array.isArray(r.order) ? r.order : []) if (isBlockId(id) && !order.includes(id)) order.push(id);
   for (const id of DEFAULT_LAYOUT.order) if (!order.includes(id)) order.push(id);
-  return { version: 2, order, side, floats, locked: r.locked === true };
+  // grupos: só valem entre blocos flutuantes, apontando para um líder de verdade (sem correntes nem ciclos)
+  const groupIn = (r.group && typeof r.group === "object" ? r.group : {}) as Record<string, unknown>;
+  const group: Partial<Record<BlockId, BlockId>> = {};
+  for (const id of IDS) {
+    const g = groupIn[id];
+    if (side[id] !== "float" || !isBlockId(g) || g === id) continue;
+    if (side[g] === "float" && floats[g] && !isBlockId(groupIn[g] === g ? undefined : groupIn[g])) {
+      group[id] = g;
+      delete floats[id]; // membro não tem posição própria
+    }
+  }
+  for (const id of IDS) if (side[id] === "float" && !floats[id] && !group[id]) side[id] = DEFAULT_LAYOUT.side[id];
+  return { version: 2, order, side, floats, locked: r.locked === true, group };
 }
 
 /** Posição inicial de um bloco que passa a flutuar sem posição definida (escalonada para não empilhar). */
@@ -100,6 +121,11 @@ export function defaultFloat(layout: Layout): FloatPos {
  * Para "float", `pos` define onde; sem `pos` usa a posição que ele já tinha ou uma padrão.
  */
 export function placeBlock(layout: Layout, id: BlockId, side: DockSide, pos?: FloatPos): Layout {
+  if (layout.side[id] === side && !(side === "float" && pos)) return layout;
+  if (layout.side[id] === "float" && side === "float" && leaderOf(layout, id) === id) {
+    return { ...layout, floats: { ...layout.floats, [id]: pos ?? layout.floats[id] ?? defaultFloat(layout) } }; // move o grupo
+  }
+  layout = detachBlock(layout, id);
   if (layout.side[id] === side && !(side === "float" && pos)) return layout;
   const floats = { ...layout.floats };
   if (side === "float") floats[id] = pos ?? floats[id] ?? defaultFloat(layout);
@@ -119,6 +145,7 @@ export function placeBlock(layout: Layout, id: BlockId, side: DockSide, pos?: Fl
  * É o que permite juntar de novo uma barra solta: soltar sobre outra barra ou numa zona de encaixe.
  */
 export function placeBlockAt(layout: Layout, id: BlockId, side: Exclude<DockSide, "float">, beforeId: BlockId | null): Layout {
+  layout = detachBlock(layout, id);
   const rest = layout.order.filter((x) => x !== id);
   let at = rest.length;
   if (beforeId && beforeId !== id && layout.side[beforeId] === side) at = rest.indexOf(beforeId);
@@ -146,6 +173,138 @@ export function moveBlock(layout: Layout, id: BlockId, dir: -1 | 1): Layout {
   const b = order.indexOf(other);
   [order[a], order[b]] = [order[b], order[a]];
   return { ...layout, order };
+}
+
+// ---------------- grupos ("lego") ----------------
+
+/** Líder do grupo de um bloco flutuante (ele mesmo, se estiver sozinho); null se não flutua. */
+export function leaderOf(layout: Layout, id: BlockId): BlockId | null {
+  if (layout.side[id] !== "float") return null;
+  return layout.group[id] ?? id;
+}
+
+/** Blocos de um grupo flutuante, na ordem. */
+export function groupMembers(layout: Layout, leader: BlockId): BlockId[] {
+  return layout.order.filter((b) => layout.side[b] === "float" && (layout.group[b] ?? b) === leader);
+}
+
+/** Líderes de todos os grupos flutuantes. */
+export const floatLeaders = (layout: Layout): BlockId[] =>
+  layout.order.filter((b) => layout.side[b] === "float" && !layout.group[b]);
+
+/**
+ * Tira o bloco do grupo flutuante (fica sozinho, na mesma posição do grupo). Se ele era o líder,
+ * o próximo membro herda a posição e a liderança. Bloco que não está em grupo: nada muda.
+ */
+export function detachBlock(layout: Layout, id: BlockId): Layout {
+  const leader = leaderOf(layout, id);
+  if (!leader) return layout;
+  const members = groupMembers(layout, leader);
+  if (members.length < 2) return layout;
+  const group = { ...layout.group };
+  const floats = { ...layout.floats };
+  const pos = floats[leader] ?? defaultFloat(layout);
+  if (leader === id) {
+    const heir = members.find((m) => m !== id)!;
+    delete group[heir];
+    floats[heir] = pos;
+    for (const m of members) if (m !== id && m !== heir) group[m] = heir;
+  } else {
+    delete group[id];
+  }
+  floats[id] = { ...pos };
+  return { ...layout, group, floats };
+}
+
+/** Junta o bloco ao grupo do bloco `target` (flutuante), antes ou depois dele. */
+export function joinGroup(layout: Layout, id: BlockId, target: BlockId, before: boolean): Layout {
+  const leader = leaderOf(layout, target);
+  if (!leader || id === target) return layout;
+  if (leaderOf(layout, id) === leader) {
+    // mesmo grupo: só reordena
+  } else {
+    layout = detachBlock(layout, id);
+  }
+  // se `id` era líder de si mesmo e de ninguém mais, deixa de ter posição
+  const floats = { ...layout.floats };
+  if (id !== leader) delete floats[id];
+  const group = { ...layout.group };
+  if (id !== leader) group[id] = leader;
+  const rest = layout.order.filter((x) => x !== id);
+  const at = rest.indexOf(target) + (before ? 0 : 1);
+  const order = [...rest.slice(0, at), id, ...rest.slice(at)];
+  return { ...layout, order, side: { ...layout.side, [id]: "float" }, floats, group };
+}
+
+/** Move o grupo inteiro (posição do líder). */
+export function moveGroup(layout: Layout, leader: BlockId, pos: FloatPos): Layout {
+  if (leaderOf(layout, leader) !== leader) return layout;
+  return { ...layout, floats: { ...layout.floats, [leader]: pos } };
+}
+
+/** Encaixa o grupo inteiro numa barra (antes de `beforeId`, ou no fim), mantendo a ordem dos blocos. */
+export function dockGroup(layout: Layout, leader: BlockId, side: Exclude<DockSide, "float">, beforeId: BlockId | null = null): Layout {
+  const members = leaderOf(layout, leader) === leader ? groupMembers(layout, leader) : [leader];
+  let l = layout;
+  for (const m of members) l = placeBlockAt(l, m, side, beforeId);
+  return l;
+}
+
+/** Junta o grupo inteiro a OUTRO grupo flutuante, ao lado do bloco `target`. */
+export function mergeGroups(layout: Layout, leader: BlockId, target: BlockId, before: boolean): Layout {
+  const members = groupMembers(layout, leader);
+  let l = layout;
+  let anchor = target;
+  let first = true;
+  for (const m of members) {
+    l = joinGroup(l, m, anchor, first ? before : false);
+    anchor = m;
+    first = false;
+  }
+  return l;
+}
+
+/** Tira a barra inteira de um lado (esquerda/direita/embaixo) e a transforma num grupo flutuante em `pos`. */
+export function floatSide(layout: Layout, side: "bottom" | "left" | "right", pos: FloatPos): { layout: Layout; leader: BlockId | null } {
+  const ids = blocksOn(layout, side);
+  if (!ids.length) return { layout, leader: null };
+  const [leader, ...rest] = ids;
+  const sideMap = { ...layout.side };
+  const group = { ...layout.group };
+  for (const id of ids) sideMap[id] = "float";
+  for (const id of rest) group[id] = leader;
+  return { layout: { ...layout, side: sideMap, group, floats: { ...layout.floats, [leader]: pos } }, leader };
+}
+
+/** "Encaixar": devolve cada bloco do grupo ao lado de fábrica dele. */
+export function homeGroup(layout: Layout, leader: BlockId): Layout {
+  const members = leaderOf(layout, leader) === leader ? groupMembers(layout, leader) : [leader];
+  let l = layout;
+  for (const m of members) l = homeBlock(l, m);
+  return l;
+}
+
+/** Retângulos de outras barras (tela) para o ímã entre barras. */
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/**
+ * Ímã entre barras: encosta a borda do bloco arrastado na borda de outra barra (lado a lado, com `gap`) e alinha
+ * topo/esquerda quando estão próximos. Devolve a posição ajustada (ou a mesma, se nada estiver perto).
+ */
+export function snapToRects(pos: { x: number; y: number }, size: Size, rects: Rect[], threshold = SNAP_THRESHOLD / 2, gap = 6): { x: number; y: number } {
+  let bestX: { d: number; v: number } | null = null;
+  let bestY: { d: number; v: number } | null = null;
+  const tryX = (v: number) => { const d = Math.abs(pos.x - v); if (d <= threshold && (!bestX || d < bestX.d)) bestX = { d, v }; };
+  const tryY = (v: number) => { const d = Math.abs(pos.y - v); if (d <= threshold && (!bestY || d < bestY.d)) bestY = { d, v }; };
+  for (const r of rects) {
+    const overlapY = pos.y < r.y + r.h + threshold && pos.y + size.h > r.y - threshold;
+    const overlapX = pos.x < r.x + r.w + threshold && pos.x + size.w > r.x - threshold;
+    if (overlapY) { tryX(r.x + r.w + gap); tryX(r.x - size.w - gap); tryX(r.x); }
+    if (overlapX) { tryY(r.y + r.h + gap); tryY(r.y - size.h - gap); tryY(r.y); }
+  }
+  const bx = bestX as { d: number; v: number } | null;
+  const by = bestY as { d: number; v: number } | null;
+  return { x: bx ? bx.v : pos.x, y: by ? by.v : pos.y };
 }
 
 // ---------------- posição na tela: limite e ímã ----------------
@@ -189,7 +348,7 @@ export function snapPosition(
   size: Size,
   vp: Viewport,
   vertical: boolean,
-  opts: { margin?: number; threshold?: number; insetLeft?: number } = {},
+  opts: { margin?: number; threshold?: number; insetLeft?: number; pointer?: { x: number; y: number } } = {},
 ): SnapResult {
   const margin = opts.margin ?? FLOAT_MARGIN;
   const threshold = opts.threshold ?? SNAP_THRESHOLD;
@@ -202,8 +361,14 @@ export function snapPosition(
   const sy = nearest(c.y, [{ at: margin, edge: "start" }, { at: maxY, edge: "end" }, { at: Math.round((margin + maxY) / 2), edge: "center" }], threshold);
   const x = sx ? sx.at : c.x;
   const y = sy ? sy.at : c.y;
-  const onSideEdge = sx?.edge === "start" || sx?.edge === "end";
-  const onVerticalEdge = sy?.edge === "start" || sy?.edge === "end";
+  // Com o ponteiro informado, a orientação só troca se ELE estiver perto daquela borda: uma barra alta empurrada contra
+  // o fundo da tela (só por não caber) não deve virar horizontal.
+  const P = opts.pointer;
+  const near = 96;
+  const pSide = !P || P.x <= near + insetLeft || P.x >= vp.w - near;
+  const pTopBottom = !P || P.y <= near || P.y >= vp.h - near;
+  const onSideEdge = (sx?.edge === "start" || sx?.edge === "end") && pSide;
+  const onVerticalEdge = (sy?.edge === "start" || sy?.edge === "end") && pTopBottom;
   const nextVertical = onSideEdge && !onVerticalEdge ? true : onVerticalEdge && !onSideEdge ? false : vertical;
   return { x, y, vertical: nextVertical, edgeX: sx?.edge ?? null, edgeY: sy?.edge ?? null };
 }
@@ -239,6 +404,9 @@ interface LayoutState {
   /** Posiciona um bloco flutuante. `persist: false` durante o arrastar (grava só ao soltar, com `commit`). */
   setFloat: (id: BlockId, pos: FloatPos, persist?: boolean) => void;
   setLocked: (locked: boolean) => void;
+  /** Troca o layout inteiro (gestos de grupo). `persist: false` durante o arraste. */
+  setLayout: (layout: Layout, persist?: boolean) => void;
+  homeGroup: (leader: BlockId) => void;
   move: (id: BlockId, dir: -1 | 1) => void;
   commit: () => void;
   reset: () => void;
@@ -253,6 +421,8 @@ export const useLayout = create<LayoutState>((set, get) => {
     home: (id) => apply(homeBlock(get().layout, id)),
     setFloat: (id, pos, persist = true) => apply(placeBlock(get().layout, id, "float", pos), persist),
     setLocked: (locked) => apply({ ...get().layout, locked }),
+    setLayout: (layout, persist = true) => apply(layout, persist),
+    homeGroup: (leader) => apply(homeGroup(get().layout, leader)),
     move: (id, dir) => apply(moveBlock(get().layout, id, dir)),
     commit: () => saveLayout(get().layout),
     reset: () => apply(normalizeLayout(DEFAULT_LAYOUT)),

@@ -209,3 +209,58 @@ export function ColorPicker({ onEyedropper }: { onEyedropper: () => void }) {
     </div>
   );
 }
+
+/**
+ * Seletor HSV genérico (quadrado + matiz + hex) para cores que NÃO são a da ferramenta (fundo da folha, linhas…).
+ * `onLive` durante o arraste; `onCommit` ao soltar / confirmar o hex.
+ */
+export function HsvField({ value, onLive, onCommit }: { value: string; onLive: (c: string) => void; onCommit: (c: string) => void }) {
+  const [hsv, setHsv] = useState<HSV>(() => hexToHsv(value));
+  const ref = useRef(hsv);
+  const [hex, setHex] = useState(value);
+  const own = useRef<string | null>(null);
+  useEffect(() => {
+    setHex(value);
+    if (own.current === value) return;
+    const n = hexToHsv(value);
+    const next = n.s === 0 || n.v === 0 ? { h: ref.current.h, s: n.s, v: n.v } : n;
+    ref.current = next;
+    setHsv(next);
+  }, [value]);
+  const live = (n: HSV) => { ref.current = n; setHsv(n); const c = hsvToHex(n); own.current = c; onLive(c); };
+  const done = () => { const c = hsvToHex(ref.current); own.current = c; onCommit(c); };
+  const { h, s, v } = hsv;
+  const pure = `hsl(${h.toFixed(0)} 100% 50%)`;
+  const cur = hsvToHex(hsv);
+  return (
+    <div className="hsv-field">
+      <DragArea
+        className="cp-sv sm"
+        label="Saturação e brilho"
+        valueText={`saturação ${Math.round(s * 100)}%, brilho ${Math.round(v * 100)}%`}
+        style={{ backgroundImage: `linear-gradient(to top, #000, rgba(0,0,0,0)), linear-gradient(to right, #fff, ${pure})` }}
+        onDrag={(fx, fy) => live({ h: ref.current.h, s: fx, v: 1 - fy })}
+        onEnd={done}
+        onKey={() => undefined}
+      >
+        <span className="cp-knob" style={{ left: `${s * 100}%`, top: `${(1 - v) * 100}%`, background: cur, borderColor: contrastOn(cur) }} />
+      </DragArea>
+      <DragArea className="cp-hue" label="Matiz" valueText={`${Math.round(h)} graus`} onDrag={(fx) => live({ ...ref.current, h: fx * 359.99 })} onEnd={done} onKey={() => undefined}>
+        <span className="cp-knob" style={{ left: `${(h / 360) * 100}%`, top: "50%", background: pure }} />
+      </DragArea>
+      <div className="row cp-hexrow">
+        <span className="cp-now" style={{ background: cur }} aria-hidden="true" />
+        <input
+          className="cp-hex"
+          aria-label="Código da cor (hex)"
+          spellCheck={false}
+          maxLength={7}
+          value={hex}
+          onChange={(e) => { setHex(e.target.value); const c = parseHex(e.target.value); if (c) { own.current = null; onLive(c); } }}
+          onBlur={() => { const c = parseHex(hex); if (c) onCommit(c); else setHex(value); }}
+          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        />
+      </div>
+    </div>
+  );
+}

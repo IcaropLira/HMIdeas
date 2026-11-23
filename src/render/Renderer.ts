@@ -2,17 +2,21 @@
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
 import { Application, Container, Graphics, Matrix, Text, Sprite, Texture } from "pixi.js";
 import { Camera, defaultCamera } from "../core/camera";
-import { DEFAULT_BACKGROUND, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
+import { DEFAULT_BACKGROUND, Layer, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+import { linearPath } from "../core/linear";
 import { decimateForPreview } from "../core/ink";
+import { MARGIN_COLOR, PaperLayer, autoLineColor, drawPaperPattern, layerAlpha } from "../core/paper";
 import { paintFrame, paintNode } from "./mindDraw";
 import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
 import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visiblePages, youtubeThumb } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
+import { figurePrims } from "../core/figures";
+import { arrowHead } from "./figureSvg";
 
 const LINE = "#1B2233";
 const INDIGO = "#2F4B8F";
@@ -27,6 +31,22 @@ interface Node {
   dep?: unknown[];
 }
 
+/** Ponto no meio do caminho (pelo comprimento). */
+function pathMidpoint(pts: { x: number; y: number }[]) {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (acc + d >= total / 2 && d > 0) {
+      const t = (total / 2 - acc) / d;
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+    }
+    acc += d;
+  }
+  return pts[0] ?? { x: 0, y: 0 };
+}
+
 const sameDep = (a?: unknown[], b?: unknown[]) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
 
 const drawEl = (g: Graphics, el: HirakuElement) => {
@@ -38,8 +58,9 @@ export class Renderer {
   private app = new Application();
   private paperLayer = new Graphics();
   private world = new Container();
-  private frames = new Container(); // quadros ficam SEMPRE abaixo do resto
-  private committed = new Container();
+  /** Uma pilha por camada da página: [quadros (sempre abaixo), resto]. Ordem dos filhos = ordem das camadas. */
+  private layerRoot = new Container();
+  private layerBox = new Map<string, { root: Container; frames: Container; committed: Container }>();
   private live = new Graphics();
   private liveInk = new InkNode();
   private selLayer = new Graphics();
@@ -55,7 +76,7 @@ export class Renderer {
   private resTimer: ReturnType<typeof setTimeout> | undefined;
 
   private cam: Camera = defaultCamera();
-  private paper: { kind: PaperKind; bg: string } = { kind: "blank", bg: DEFAULT_BACKGROUND };
+  private paper: { kind: PaperKind; bg: string; scale: number; line: string | null } = { kind: "blank", bg: DEFAULT_BACKGROUND, scale: 1, line: null };
   private paperSize = { w: 0, h: 0 };
   ready = false;
 
@@ -70,7 +91,7 @@ export class Renderer {
       autoDensity: true,
       powerPreference: "high-performance",
     });
-    this.world.addChild(this.frames, this.committed, this.live, this.liveInk);
+    this.world.addChild(this.layerRoot, this.live, this.liveInk);
     this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
@@ -98,69 +119,59 @@ export class Renderer {
     this.scheduleTextRes();
   }
 
-  setPaper(kind: PaperKind, bg: string) {
-    if (kind === this.paper.kind && bg === this.paper.bg) return;
-    this.paper = { kind, bg };
+  setPaper(kind: PaperKind, bg: string, scale = 1, line: string | null = null) {
+    const p = this.paper;
+    if (kind === p.kind && bg === p.bg && scale === p.scale && line === p.line) return;
+    this.paper = { kind, bg, scale, line };
     this.app.renderer.background.color = bg;
     this.drawPaper();
   }
 
-  /** O papel é desenhado em espaço de TELA (só o que está visível) com nível de detalhe por zoom. */
+  /** O papel é desenhado em espaço de TELA (só o que está visível) com nível de detalhe por zoom (core/paper.ts). */
   private drawPaper() {
     const g = this.paperLayer;
-    const { x, y, zoom } = this.cam;
     const W = this.app.screen.width;
     const H = this.app.screen.height;
     this.paperSize = { w: W, h: H };
     g.clear();
-    const kind = this.paper.kind;
+    const { kind, bg, scale, line } = this.paper;
     if (kind === "blank") return;
-
-    const base = kind === "ruled" ? 36 : 32;
-    const minPx = kind === "dots" ? 14 : 9;
-    let step = base;
-    while (step * zoom < minPx) step *= 2; // zoom afastado → linhas mais espaçadas
-    const sp = step * zoom;
-
-    const firstX = x + Math.floor(-x / sp) * sp;
-    const firstY = y + Math.floor(-y / sp) * sp;
+    const color = line ?? autoLineColor(bg);
+    const dark = autoLineColor(bg) !== "#1B2233";
     const snap = (v: number) => Math.round(v) + 0.5;
-
-    if (kind === "dots") {
-      for (let sx = firstX; sx < W + sp; sx += sp) {
-        for (let sy = firstY; sy < H + sp; sy += sp) g.circle(sx, sy, 1.3);
-      }
-      g.fill({ color: LINE, alpha: 0.3 });
-      return;
+    const layers: number[][] = [[], [], []];
+    const dots: number[] = [];
+    drawPaperPattern(kind, this.cam, W, H, {
+      line: (x1, y1, x2, y2, layer: PaperLayer) => {
+        // retas horizontais/verticais caem no meio do pixel (nítidas); diagonais ficam como estão
+        if (x1 === x2) { x1 = x2 = snap(x1); } else if (y1 === y2) { y1 = y2 = snap(y1); }
+        layers[layer].push(x1, y1, x2, y2);
+      },
+      dot: (x, y, r) => dots.push(x, y, r),
+    }, { scale });
+    layers.forEach((arr, layer) => {
+      if (!arr.length) return;
+      for (let i = 0; i < arr.length; i += 4) g.moveTo(arr[i], arr[i + 1]).lineTo(arr[i + 2], arr[i + 3]);
+      const accent = layer === 2;
+      g.stroke({
+        width: accent ? 1.5 : 1,
+        color: accent && kind === "margin" ? MARGIN_COLOR : color,
+        alpha: layerAlpha(layer as PaperLayer, dark),
+      });
+    });
+    if (dots.length) {
+      for (let i = 0; i < dots.length; i += 3) g.circle(dots[i], dots[i + 1], dots[i + 2]);
+      g.fill({ color, alpha: layerAlpha("dot", dark) });
     }
-
-    if (kind === "ruled") {
-      for (let sy = firstY; sy < H + sp; sy += sp) g.moveTo(0, snap(sy)).lineTo(W, snap(sy));
-      g.stroke({ width: 1, color: LINE, alpha: 0.14 });
-      return;
-    }
-
-    // quadriculado: linha forte a cada 5 células
-    for (let sx = firstX; sx < W + sp; sx += sp) {
-      if (Math.round((sx - x) / sp) % 5 !== 0) g.moveTo(snap(sx), 0).lineTo(snap(sx), H);
-    }
-    for (let sy = firstY; sy < H + sp; sy += sp) {
-      if (Math.round((sy - y) / sp) % 5 !== 0) g.moveTo(0, snap(sy)).lineTo(W, snap(sy));
-    }
-    g.stroke({ width: 1, color: LINE, alpha: 0.09 });
-    for (let sx = firstX; sx < W + sp; sx += sp) {
-      if (Math.round((sx - x) / sp) % 5 === 0) g.moveTo(snap(sx), 0).lineTo(snap(sx), H);
-    }
-    for (let sy = firstY; sy < H + sp; sy += sp) {
-      if (Math.round((sy - y) / sp) % 5 === 0) g.moveTo(0, snap(sy)).lineTo(W, snap(sy));
-    }
-    g.stroke({ width: 1, color: LINE, alpha: 0.2 });
   }
 
   // ---------------- elementos gravados ----------------
 
   /** Reconcilia os nós do Pixi com a lista de elementos. Elementos são imutáveis: referência nova = redesenhar. */
-  syncPage(elements: HirakuElement[]) {
+  syncPage(elements: HirakuElement[], layers: Layer[] = []) {
+    const boxes = this.syncLayers(layers);
+    const firstLayer = layers[0]?.id ?? "";
+    const boxOf = (el: HirakuElement) => boxes.get(el.layerId && boxes.has(el.layerId) ? el.layerId : firstLayer)!;
     const alive = new Set<string>();
     // contexto de mapa: pai, raiz e nº de filhos (só calculado se houver nós)
     const byId = new Map<string, HirakuElement>();
@@ -173,15 +184,15 @@ export class Renderer {
         if (el.parentId) kids.set(el.parentId, (kids.get(el.parentId) ?? 0) + 1);
       }
     }
-    for (const el of elements) {
+    for (let i = 0; i < elements.length; i++) {
+      const el = elements[i];
       alive.add(el.id);
       let n = this.nodes.get(el.id);
       const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
       if (!n) {
-        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" || isLinear(el) ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
         n = { g, el, dep };
         this.nodes.set(el.id, n);
-        (el.type === "frame" ? this.frames : this.committed).addChild(g);
         this.paint(g, el, n);
       } else if (n.el !== el || !sameDep(n.dep, dep)) {
         n.g.setFromMatrix(new Matrix()); // descarta qualquer pré-visualização por matriz
@@ -191,6 +202,11 @@ export class Renderer {
         n.dep = dep;
         this.paint(n.g, el, n);
       }
+      // camada certa (o elemento pode ter mudado de camada) e ordem dentro dela (trazer para frente/enviar para trás)
+      const box = boxOf(el);
+      const parent = el.type === "frame" ? box.frames : box.committed;
+      if (n.g.parent !== parent) parent.addChild(n.g);
+      if (n.g.zIndex !== i) n.g.zIndex = i;
     }
     for (const [id, n] of this.nodes) {
       if (!alive.has(id)) {
@@ -199,6 +215,37 @@ export class Renderer {
         this.ghosts.delete(id);
       }
     }
+  }
+
+  /** Cria/remove/ordena os contêineres das camadas e aplica visibilidade e opacidade. */
+  private syncLayers(layers: Layer[]) {
+    const list = layers.length ? layers : [{ id: "", name: "", visible: true, locked: false, opacity: 1 }];
+    const keep = new Set(list.map((l) => l.id));
+    for (const [id, b] of this.layerBox) {
+      if (keep.has(id)) continue;
+      // os nós que estavam aqui são reaproveitados (mudam de camada) ou destruídos pelo syncPage: só solta os filhos
+      for (const c of [...b.frames.children, ...b.committed.children]) c.removeFromParent();
+      b.root.destroy({ children: true });
+      this.layerBox.delete(id);
+    }
+    list.forEach((l, i) => {
+      let b = this.layerBox.get(l.id);
+      if (!b) {
+        const root = new Container();
+        const frames = new Container();
+        const committed = new Container();
+        frames.sortableChildren = true;
+        committed.sortableChildren = true;
+        root.addChild(frames, committed);
+        b = { root, frames, committed };
+        this.layerBox.set(l.id, b);
+        this.layerRoot.addChild(root);
+      }
+      if (this.layerRoot.getChildIndex(b.root) !== i) this.layerRoot.setChildIndex(b.root, i);
+      b.root.visible = l.visible;
+      b.root.alpha = l.opacity;
+    });
+    return this.layerBox;
   }
 
   private nodeDep(el: NodeElement, byId: Map<string, HirakuElement>, kids: Map<string, number>): unknown[] {
@@ -272,6 +319,9 @@ export class Renderer {
       } else if (el.kind === "video" && parseYouTube(el.url)) {
         this.paintVideo(node, el);
         node.eventMode = "none";
+      } else if (el.kind === "figure" && el.figure) {
+        this.paintFigure(node, el);
+        node.eventMode = "none";
       } else if (el.kind === "pdf" && el.data) {
         this.paintPdf(node, el);
         node.eventMode = "none";
@@ -311,6 +361,23 @@ export class Renderer {
       }
       node.addChild(t);
       node.alpha = el.opacity;
+    } else if (isLinear(el)) {
+      // linha/seta + rótulo opcional no meio (peso de aresta, condição de fluxograma)
+      for (const ch of node.removeChildren()) ch.destroy({ children: true });
+      const g = new Graphics();
+      drawLinearElement(g, el);
+      node.addChild(g);
+      if (el.label) {
+        const mid = pathMidpoint(linearPath(el));
+        const t = new Text({ text: el.label, style: { fontFamily: "Inter, system-ui, sans-serif", fontSize: 15, fontWeight: "600", fill: el.stroke } });
+        t.resolution = this.textRes();
+        t.anchor.set(0.5);
+        t.position.set(mid.x, mid.y);
+        const pad = 4;
+        const bg = new Graphics().roundRect(mid.x - t.width / 2 - pad, mid.y - t.height / 2 - pad / 2, t.width + pad * 2, t.height + pad, 6).fill({ color: 0xffffff, alpha: 0.92 }).stroke({ color: el.stroke, width: 1, alpha: 0.35 });
+        node.addChild(bg, t);
+      }
+      node.alpha = 1;
     } else if (el.type === "stroke") {
       drawStrokeElement(node as InkNode, el);
     } else {
@@ -424,6 +491,44 @@ export class Renderer {
     }
   }
 
+  /** Figura matemática: as mesmas primitivas das prévias SVG (core/figures.ts), desenhadas com Graphics + Text. */
+  private paintFigure(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
+    const p = figurePrims(el.figure!, el.w, el.h);
+    const g = new Graphics();
+    g.position.set(el.x, el.y);
+    node.addChild(g);
+    for (const q of p.polys) g.poly(q.pts.flatMap((v) => [v.x, v.y]), true).fill({ color: q.fill, alpha: q.alpha });
+    for (const l of p.lines) {
+      const pts = l.closed ? [...l.pts, l.pts[0]] : l.pts;
+      if (l.dash) {
+        // tracejado manual (o Pixi não tem dash): segmentos de 3w com intervalo 2.5w
+        const on = l.width * 3, off = l.width * 2.5;
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i];
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          for (let t = 0; t < len; t += on + off) {
+            const t2 = Math.min(len, t + on);
+            g.moveTo(a.x + ((b.x - a.x) * t) / len, a.y + ((b.y - a.y) * t) / len).lineTo(a.x + ((b.x - a.x) * t2) / len, a.y + ((b.y - a.y) * t2) / len);
+          }
+        }
+      } else {
+        g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      }
+      g.stroke({ width: l.width, color: l.color, alpha: l.alpha ?? 1, cap: "round", join: "round" });
+    }
+    for (const a of p.arrows) g.poly(arrowHead(a.from, a.to, a.size).flatMap((v) => [v.x, v.y]), true).fill({ color: a.color });
+    for (const d of p.dots) g.circle(d.x, d.y, d.r).fill({ color: d.color });
+    const res = this.textRes();
+    for (const t of p.texts) {
+      const tx = new Text({ text: t.text, style: { fontFamily: "Inter, system-ui, sans-serif", fontSize: t.size, fill: t.color, fontWeight: t.bold ? "600" : "400" } });
+      tx.resolution = res;
+      tx.anchor.set(t.anchor === "start" ? 0 : t.anchor === "middle" ? 0.5 : 1, t.base === "top" ? 0 : t.base === "middle" ? 0.5 : 1);
+      tx.position.set(el.x + t.x, el.y + t.y);
+      node.addChild(tx);
+    }
+  }
+
   private note(node: Container, el: Extract<HirakuElement, { type: "attachment" }>, msg: string) {
     const t = new Text({ text: msg, style: { fontFamily: "Arial", fontSize: 14, fill: 0x52627A } });
     t.position.set(el.x + (el.w - t.width) / 2, el.y + el.h / 2 - t.height / 2);
@@ -475,7 +580,7 @@ export class Renderer {
     this.resTimer = setTimeout(() => {
       const r = this.textRes();
       for (const n of this.nodes.values()) {
-        if (n.el.type === "node" || n.el.type === "frame") {
+        if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && n.el.kind === "figure") || (isLinear(n.el) && n.el.label)) {
           for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
           continue;
         }

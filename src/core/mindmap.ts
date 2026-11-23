@@ -612,3 +612,116 @@ export function branchPath(parent: NodeElement, child: NodeElement, style: Branc
   }
   return pts;
 }
+
+// ---------- temas de mapa ----------
+export interface MapTheme {
+  id: string;
+  name: string;
+  /** Cores dos ramos do 1º nível (em ciclo). */
+  palette: string[];
+  root: Pick<NodeElement, "shape" | "fill" | "stroke" | "color">;
+  /** Estilo por profundidade (1 = ramos principais, 2+ = detalhes), dada a cor do ramo. */
+  level: (depth: number, c: string) => Pick<NodeElement, "shape" | "fill" | "stroke" | "color">;
+  branchStyle: BranchStyle;
+  font?: FontFamily;
+}
+
+export const MAP_THEMES: MapTheme[] = [
+  {
+    id: "classic", name: "Clássico", palette: BRANCH_PALETTE, branchStyle: "curve",
+    root: { shape: "rounded", fill: "#2F4B8F", stroke: null, color: "#FFFFFF" },
+    level: (d, c) => (d === 1 ? { shape: "pill", fill: tint(c, 0.85), stroke: c, color: "#1B2233" } : { shape: "underline", fill: null, stroke: c, color: "#1B2233" }),
+  },
+  {
+    id: "rainbow", name: "Arco-íris", palette: ["#E5484D", "#F76B15", "#FFB224", "#30A46C", "#0090FF", "#8E4EC6", "#D6409F"], branchStyle: "curve",
+    root: { shape: "pill", fill: "#1B2233", stroke: null, color: "#FFFFFF" },
+    level: (d, c) => (d === 1 ? { shape: "pill", fill: c, stroke: c, color: readableOn(c) } : { shape: "underline", fill: null, stroke: c, color: "#1B2233" }),
+  },
+  {
+    id: "pastel", name: "Pastel", palette: ["#F4A6B7", "#F9C784", "#A8D8B9", "#9CC5E8", "#C3B1E1", "#F6E27F"], branchStyle: "curve",
+    root: { shape: "ellipse", fill: "#FFF6E9", stroke: "#E2C9A6", color: "#5B4636" },
+    level: (d, c) => (d === 1 ? { shape: "rounded", fill: tint(c, 0.55), stroke: c, color: "#3A3340" } : { shape: "rounded", fill: tint(c, 0.82), stroke: null, color: "#3A3340" }),
+  },
+  {
+    id: "ocean", name: "Oceano", palette: ["#0E6BA8", "#0A9396", "#2A6F97", "#3E92CC", "#005F73", "#64B6AC"], branchStyle: "curve",
+    root: { shape: "ellipse", fill: "#013A63", stroke: null, color: "#FFFFFF" },
+    level: (d, c) => (d === 1 ? { shape: "rounded", fill: c, stroke: c, color: "#FFFFFF" } : { shape: "pill", fill: tint(c, 0.85), stroke: c, color: "#0B2A3C" }),
+  },
+  {
+    id: "forest", name: "Floresta", palette: ["#2D6A4F", "#40916C", "#6A994E", "#A7C957", "#386641", "#588157"], branchStyle: "elbow",
+    root: { shape: "rounded", fill: "#1B4332", stroke: null, color: "#F1FAEE" },
+    level: (d, c) => (d === 1 ? { shape: "rounded", fill: tint(c, 0.78), stroke: c, color: "#1B4332" } : { shape: "underline", fill: null, stroke: c, color: "#1B4332" }),
+  },
+  {
+    id: "night", name: "Noite", palette: ["#7C5CFF", "#00C2A8", "#FF6B9A", "#FFB547", "#4CC9F0", "#B388FF"], branchStyle: "curve",
+    root: { shape: "pill", fill: "#16132B", stroke: "#7C5CFF", color: "#FFFFFF" },
+    level: (d, c) => (d === 1 ? { shape: "pill", fill: "#221D42", stroke: c, color: "#FFFFFF" } : { shape: "rounded", fill: "#2A2450", stroke: null, color: "#E8E4FF" }),
+  },
+  {
+    id: "minimal", name: "Minimalista", palette: ["#1B2233", "#52627A", "#1B2233", "#52627A"], branchStyle: "straight",
+    root: { shape: "underline", fill: null, stroke: "#1B2233", color: "#1B2233" },
+    level: (d) => ({ shape: d === 1 ? "underline" : "none", fill: null, stroke: "#1B2233", color: d === 1 ? "#1B2233" : "#52627A" }),
+  },
+  {
+    id: "sticky", name: "Post-its", palette: ["#F7D154", "#F39C6B", "#7FD1AE", "#8EC5FC", "#F49AC2"], branchStyle: "elbow", font: "hand",
+    root: { shape: "rect", fill: "#FFE066", stroke: null, color: "#3D3300" },
+    level: (d, c) => ({ shape: "rect", fill: d === 1 ? c : tint(c, 0.55), stroke: null, color: "#2B2B2B" }),
+  },
+];
+
+/** Aplica um tema ao mapa inteiro da raiz `rootId` (cores por ramo principal e estilo por nível). */
+export function applyMapTheme(els: HirakuElement[], rootId: ID, theme: MapTheme, measure: Measure): HirakuElement[] {
+  const ch = childrenMap(els);
+  const style = new Map<ID, Partial<NodeElement>>();
+  const root = nodesOf(els).find((n) => n.id === rootId);
+  if (!root) return els;
+  style.set(rootId, { ...theme.root, branchStyle: theme.branchStyle, branchColor: theme.palette[0], ...(theme.font ? { fontFamily: theme.font } : {}) });
+  (ch.get(rootId) ?? []).forEach((k, i) => {
+    const c = theme.palette[i % theme.palette.length];
+    const walk = (n: NodeElement, depth: number) => {
+      style.set(n.id, { ...theme.level(depth, c), branchColor: c, ...(theme.font ? { fontFamily: theme.font } : {}) });
+      for (const g of ch.get(n.id) ?? []) walk(g, depth + 1);
+    };
+    walk(k, 1);
+  });
+  const out = els.map((e) => (e.type === "node" && style.has(e.id) ? refit({ ...e, ...style.get(e.id)! } as NodeElement, measure) : e));
+  return relayout(out);
+}
+
+/** Numera os ramos principais (1, 2, 3…) no marcador, ou tira a numeração. */
+export function numberBranches(els: HirakuElement[], rootId: ID, on: boolean, measure: Measure): HirakuElement[] {
+  const kids = childrenMap(els).get(rootId) ?? [];
+  const idx = new Map(kids.map((k, i) => [k.id, String(i + 1)]));
+  return relayout(els.map((e) => (e.type === "node" && idx.has(e.id) ? refit({ ...e, icon: on ? idx.get(e.id)! : null }, measure) : e)));
+}
+
+/** Ordena os filhos de um nó em ordem alfabética (a ordem dos irmãos é a da lista). */
+export function sortChildren(els: HirakuElement[], parentId: ID): HirakuElement[] {
+  const kids = (childrenMap(els).get(parentId) ?? []).slice().sort((a, b) => a.text.localeCompare(b.text, "pt", { numeric: true }));
+  if (kids.length < 2) return els;
+  const set = new Set(kids.map((k) => k.id));
+  let i = 0;
+  return relayout(els.map((e) => (set.has(e.id) ? kids[i++] : e)));
+}
+
+/** Devolve os ramos principais ao lado automático (equilibra mapas "dos dois lados"). */
+export function balanceSides(els: HirakuElement[], rootId: ID): HirakuElement[] {
+  const kids = new Set((childrenMap(els).get(rootId) ?? []).map((k) => k.id));
+  return relayout(els.map((e) => (e.type === "node" && kids.has(e.id) && e.side !== "auto" ? { ...e, side: "auto" as const } : e)));
+}
+
+/** Lista em Markdown (para colar em notas/documentos). */
+export function toMarkdown(els: HirakuElement[], rootId: ID): string {
+  const ch = childrenMap(els);
+  const root = nodesOf(els).find((n) => n.id === rootId);
+  if (!root) return "";
+  const lines = [`# ${root.text}`];
+  const walk = (n: NodeElement, depth: number) => {
+    for (const k of ch.get(n.id) ?? []) {
+      lines.push(`${"  ".repeat(depth)}- ${k.done ? "~~" : ""}${k.icon ? k.icon + " " : ""}${k.text}${k.done ? "~~" : ""}`);
+      walk(k, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return lines.join("\n");
+}

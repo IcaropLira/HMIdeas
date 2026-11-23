@@ -4,6 +4,7 @@ import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
 import { relayout } from "./mindmap";
 import { getBrush } from "./brushes";
 import { Camera, defaultCamera } from "./camera";
+import { activeLayerId } from "./layers";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
 export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | ShapeType | LinearType;
@@ -17,6 +18,8 @@ interface DocState {
   future: HirakuDoc[];
 
   addElement: (el: HirakuElement) => void;
+  /** Edita a página ativa inteira (camadas, ordem…) num passo de histórico. */
+  editPage: (fn: (p: Page) => Page) => void;
   addElements: (els: HirakuElement[]) => void;
   /** Substitui elementos existentes (mesmo id) por novas versões, num único passo de histórico. */
   updateElements: (els: HirakuElement[]) => void;
@@ -30,7 +33,11 @@ interface DocState {
   previewElements: (els: HirakuElement[]) => void;
   endPreview: (base: HirakuDoc) => void;
   cancelPreview: (base: HirakuDoc) => void;
-  setPaper: (patch: Partial<Pick<Page, "paper" | "background">>) => void;
+  setPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  /** Muda o papel SEM histórico (arrastar no seletor de cor); `endPreview(base)` grava como um passo só. */
+  /** Aplica o papel a TODAS as páginas (um passo de desfazer). */
+  setPaperAll: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  previewPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
 
   // páginas (alterações do documento → entram no desfazer), exceto setActivePage
   setActivePage: (id: ID) => void;
@@ -45,6 +52,10 @@ interface DocState {
 }
 
 const initial = createDoc();
+
+/** Elemento novo entra na camada ativa (ou mantém a sua, se ela existir nesta página). */
+const stamp = (p: Page, el: HirakuElement): HirakuElement =>
+  el.layerId && p.layers.some((l) => l.id === el.layerId) ? el : ({ ...el, layerId: activeLayerId(p) } as HirakuElement);
 
 /** Documento + histórico. Só mudanças do documento entram no undo/redo. */
 export const useDoc = create<DocState>((set, get) => {
@@ -71,10 +82,16 @@ export const useDoc = create<DocState>((set, get) => {
     past: [],
     future: [],
 
-    addElement: (el) => commit(mapActivePage((p) => ({ ...p, elements: [...p.elements, el] }))),
+    addElement: (el) => commit(mapActivePage((p) => ({ ...p, elements: [...p.elements, stamp(p, el)] }))),
 
     addElements: (els) => {
-      if (els.length) commit(mapActivePage((p) => ({ ...p, elements: [...p.elements, ...els] })));
+      if (els.length) commit(mapActivePage((p) => ({ ...p, elements: [...p.elements, ...els.map((e) => stamp(p, e))] })));
+    },
+
+    editPage: (fn) => {
+      const page = selectActivePage(get());
+      const next = fn(page);
+      if (next !== page) commit(mapActivePage(() => next));
     },
 
     updateElements: (els) => {
@@ -105,7 +122,12 @@ export const useDoc = create<DocState>((set, get) => {
       }));
     },
 
-    replaceElements: (els) => commit(mapActivePage((p) => ({ ...p, elements: rebindAfterChange(els, new Set(els.map((e) => e.id))) }))),
+    replaceElements: (els) => commit(mapActivePage((p) => {
+      // elementos novos (nós de mapa, quadros…) entram na camada ativa
+      const had = new Set(p.elements.map((e) => e.id));
+      const stamped = els.map((e) => (had.has(e.id) ? e : stamp(p, e)));
+      return { ...p, elements: rebindAfterChange(stamped, new Set(stamped.map((e) => e.id))) };
+    })),
 
     previewElements: (els) => set({ doc: mapActivePage((p) => ({ ...p, elements: els })) }),
 
@@ -118,9 +140,17 @@ export const useDoc = create<DocState>((set, get) => {
 
     setPaper: (patch) => {
       const page = selectActivePage(get());
-      if ((patch.paper ?? page.paper) === page.paper && (patch.background ?? page.background) === page.background) return;
+      const keys = Object.keys(patch) as (keyof typeof patch)[];
+      if (keys.every((k) => patch[k] === page[k])) return;
       commit(mapActivePage((p) => ({ ...p, ...patch })));
     },
+
+    setPaperAll: (patch) => {
+      const { doc } = get();
+      commit({ ...doc, pages: doc.pages.map((p) => ({ ...p, ...patch })) });
+    },
+
+    previewPaper: (patch) => set({ doc: mapActivePage((p) => ({ ...p, ...patch })) }),
 
     setActivePage: (id) => {
       if (get().doc.pages.some((p) => p.id === id)) set({ activePageId: id });

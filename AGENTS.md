@@ -78,6 +78,9 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [x] Brushes (parte A): **registro de brushes** (`core/brushes.ts`) + 6 de contorno (caneta, esferográfica, nanquim, marcador, marca-texto, pincel), painel de pincéis com pré-visualização, opacidade, **seletor de cor** (HSV + hex, 4 paletas, recentes, cor lembrada por brush) e **conta-gotas** (pega a cor do desenho sob o toque)
 - [ ] M1d: Estilo rascunho (rough.js), export PNG/SVG, import/export `.excalidraw` + **marca-texto e borracha por traço**
 - [ ] M2: Molduras, bibliotecas, mermaid, laser pointer + **anotação de PDF**
+- [x] 0.6: camadas, barras lego (grupos), papel com qualquer cor e 11 padrões, galeria de modelos, grafos + algoritmos, sólidos/planos/
+  gráficos/calculadora, temas de mapa mental, tela inicial, temas da interface e modo foco
+- [ ] 0.6: validar no tablet o arraste de grupos de barras e o modo "Controlar player" do vídeo (WebView2/WebKitGTK)
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -224,3 +227,60 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   do mundo + `scale(zoom)`; (b) esconde o iframe (`visibility`, o vídeo segue tocando) enquanto a câmera se move e enquanto o vídeo é arrastado/redimensionado: a miniatura do Pixi fica no lugar com o aviso "Reproduzindo" (sem isso o WebView2 deixa rastros do quadro anterior; testado, mover o iframe sempre visível piora); o player que toca NUNCA é desmontado ao sair da tela (só fica invisível);
   (c) liga `html.embed-live`, que zera `--shadow` (sombras grandes das barras viravam blocos pretos sobre o player); (d) só deixa o iframe receber o mouse com o vídeo
   selecionado (clicar num vídeo solto seleciona e permite arrastar; pan/zoom por cima dele funcionam).
+- **(0.6)** O iframe agora tem o tamanho da TELA (sem `scale`; redimensiona só quando o zoom assenta) e só recebe o mouse no modo
+  **"Controlar player"** (`useEmbedView.interact`), que sai sozinho ao tirar o mouse do vídeo, clicar fora ou Esc. Antes, com o vídeo
+  selecionado, a roda/pinça ficavam presas no YouTube. Pausar/continuar usam a API do player (`enablejsapi=1`, `youtubeCommand`).
+  Trocar de página ou apagar o vídeo encerra o player.
+
+### Papel (0.6)
+- `core/paper.ts` gera o padrão em espaço de tela (`drawPaperPattern` → linhas/pontos por camada: fina, forte, destaque). O Renderer e as
+  miniaturas SVG (`PaperSwatch`) usam o mesmo gerador. 11 padrões (`PAPER_KINDS`), cor de fundo livre (`HsvField`), cor das linhas
+  automática pelo brilho do fundo (`autoLineColor`) ou escolhida, espaçamento. `Page.paperScale` e `Page.lineColor` são opcionais.
+  Arrastar a cor usa `previewPaper` + um único passo de desfazer.
+
+### Barras "lego" (0.6)
+- `Layout.group` (bloco → líder) forma **grupos flutuantes**: o líder guarda a posição em `floats`, os membros vão juntos na ordem de `order`.
+  Funções puras em `core/layout.ts`: `leaderOf`, `groupMembers`, `floatLeaders`, `detachBlock` (o próximo herda a liderança), `joinGroup`,
+  `mergeGroups`, `moveGroup`, `dockGroup`, `floatSide` (arranca a barra inteira de um lado), `homeGroup`, `snapToRects` (ímã entre barras).
+- `components/BlockHandle.tsx`: um único gesto (`startDrag`) para bloco (6 pontos), grupo e barra lateral/de baixo (`BarHandle`, a pílula).
+  Ao soltar: zona → encaixa o grupo; sobre bloco de outra barra (encaixada ou flutuante) → junta ali; senão flutua. A orientação só
+  troca se o PONTEIRO estiver perto da borda (`snapPosition(..., { pointer })`). Layout segue `version: 2`.
+
+### Camadas (0.6)
+- `Page.layers` (de baixo para cima) e `layerId` nos elementos; `normalizeDoc` garante ≥ 1 camada; elemento sem camada (ou com camada
+  inexistente) pertence à primeira (`layerIdOf`). Elementos novos recebem a camada ativa (`stamp` no store; `useLayerUI` guarda a ativa
+  por página, fora do desfazer).
+- Interação SEMPRE passa por `interactiveElements(page)` (camadas visíveis e destravadas; cacheado por página). Desenho usa todas;
+  miniaturas e o player usam `visibleElements` (também cacheado — seletores do React exigem a mesma referência).
+- Renderer: um contêiner por camada (`syncLayers`) com [quadros, resto]; `zIndex` = índice na página (trazer para frente/enviar para trás).
+- `reorder` (frente/trás/um passo) e Ctrl+] / Ctrl+[ (Shift = extremos).
+
+### Modelos prontos (0.6)
+- `core/templates.ts`: cada modelo é um `build(measure?)` que devolve elementos nativos dentro de um quadro (`Builder`: box, text, label,
+  line, connect com setas ligadas, open = quadro). `placeAt` centraliza. Mapas mentais entram na mesma lista (categoria `mapas`,
+  `core/mapTemplates.ts`). Galeria: `components/TemplateGallery.tsx` (`GalleryShell`/`GalleryCard` reaproveitáveis).
+- `components/ElementsPreview.tsx`: prévia SVG de qualquer lista de elementos com texto de verdade (galerias, exemplos, temas).
+
+### Grafos e matemática (0.6)
+- `core/expr.ts`: análise de expressões própria (sem `eval`): precedência, `^` à direita, `!`, multiplicação implícita, vírgula decimal,
+  funções em pt/en. `compile` (função de x) e `calc` (calculadora) devolvem erros em português.
+- `core/graph.ts`: `parseGraph` (A - B : 4, A -> B, CSV, lista de adjacência; nomes com hífen funcionam), `layoutGraph` (círculo, força
+  determinística, camadas, árvore, grade), `buildGraphElements` (vértices = nós `ellipse` sem pai; arestas = setas ligadas com `label`),
+  `graphFromElements` (lê do quadro) e algoritmos (BFS, DFS, Dijkstra, componentes, Kahn, Welsh–Powell, Kruskal, bipartição, graus).
+- `core/figures.ts`: figura = `AttachmentElement` com `kind: "figure"` e `figure: FigureSpec` (sólido, gráfico, espaço 3D, reta numérica,
+  círculo trigonométrico, transferidor), saneada em `cleanFigure`. Gera PRIMITIVAS em coordenadas locais; `Renderer.paintFigure` (Pixi,
+  tracejado manual) e `render/figureSvg.ts` (SVG) desenham as mesmas. Sólidos: malha + faces de frente pela normal; arestas "suaves"
+  (laterais de cilindro/cone) só aparecem no contorno; ocultas tracejadas.
+- `LinearElement.label` (opcional): rótulo no meio da linha (o renderer passou a usar Container para linhas/setas).
+- UI: `components/SciencePanel.tsx` (abas Grafos, Geometria, Funções, Calculadora). Controles deslizantes usam `previewElements` +
+  `endPreview` (um passo de desfazer por gesto).
+
+### Mapas mentais (0.6)
+- Temas (`MAP_THEMES`, `applyMapTheme`), `numberBranches`, `sortChildren`, `balanceSides`, `toMarkdown` em `core/mindmap.ts`.
+  Painel com prévias (temas, layout, ligações, formas) e modelos.
+
+### Tela inicial e aparência (0.6)
+- `components/NotebookManager.tsx` virou a **Home** (`useUI.notebooksOpen`): capas com a primeira página, criar com papel, favoritos,
+  ordenação, cores de capa, importar. Abre ao iniciar (`hm-ideas:start-home`, desligável).
+- `core/theme.ts`: temas (`THEMES`, CSS em `:root[data-theme]`), cor de destaque (`ACCENTS` → `--accent`, `--accent-2`, `--accent-strong`,
+  `--accent-soft` em estilo inline do `<html>`), densidade, alças discretas (`data-grips`) e modo foco (`html.focus-mode`, Ctrl+.).

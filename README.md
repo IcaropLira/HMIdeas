@@ -132,4 +132,9 @@ Requer Android Studio, SDK/NDK e as variáveis `ANDROID_HOME`, `NDK_HOME` e `JAV
 | Conectar setas | Solte a ponta de uma seta sobre uma forma: ela liga e acompanha a forma quando você a move, redimensiona ou gira. Arrastar a ponta para o vazio desliga |
 | Texto | T / 8: clique no canvas e escreva (Enter = nova linha; Esc, Ctrl+Enter ou clicar fora confirma). Duplo clique/toque num texto edita; no vazio cria. Botão *Aa* muda fonte, tamanho e alinhamento |
 | Atalhos de ferramenta | V = selecionar, L = laço, P = caneta, E = borracha, H = mão |
+| Camadas | Botão de camadas (barra da direita): nova, ocultar, travar, opacidade, renomear, mesclar. Ctrl+] / Ctrl+[ mudam a ordem |
+| Barras | Seis pontinhos arrastam um bloco; a pílula no começo da barra arrasta a barra inteira. Solte sobre outra barra para juntar |
+| Grafos e matemática | Escreva arestas (A - B : 4, A -> B) e crie o grafo; rode menor caminho, BFS, DFS, coloração…; insira sólidos, gráficos de funções e use a calculadora |
+| Modelos | Botão de modelos (ou Inserir → Modelo): kanban, SWOT, Cornell, fluxograma, slides, mapas mentais prontos… |
+| Modo foco | Ctrl+. esconde todas as barras |
 # HMIdeas

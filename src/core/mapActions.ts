@@ -15,7 +15,7 @@ import { selectActivePage, useDoc, useSel, useTool, useView } from "./store";
 import { measureBlock } from "./text";
 import { useUI } from "./ui";
 
-const measure: Measure = (t, f, s) => measureBlock(t, f, s);
+export const measure: Measure = (t, f, s) => measureBlock(t, f, s);
 
 const els = () => selectActivePage(useDoc.getState()).elements;
 const commit = (next: HirakuElement[]) => {

@@ -23,7 +23,7 @@ let ctx: CanvasRenderingContext2D | null = null;
 
 /** Largura e altura do bloco de texto (linhas separadas por \n). */
 export function measureBlock(text: string, family: FontFamily, size: number): { w: number; h: number } {
-  ctx ??= document.createElement("canvas").getContext("2d");
+  ctx ??= typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
   const lines = text.split("\n");
   let w = 0;
   if (ctx) {

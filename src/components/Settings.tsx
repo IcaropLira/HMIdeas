@@ -1,4 +1,5 @@
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { START_HOME_KEY } from "./NotebookManager";
 import { Icon } from "./Icon";
 import { BarsPane } from "./LayoutSettings";
 import { rotateBlock } from "./BlockHandle";
@@ -8,7 +9,7 @@ import { downloadDoc, parseDoc } from "../core/serialize";
 import { defaultCamera } from "../core/camera";
 import { resetPageCameras } from "../core/pageView";
 import { useDoc, useTool, useView } from "../core/store";
-import { Density, ThemeMode, useTheme } from "../core/theme";
+import { ACCENTS, Density, THEMES, useTheme } from "../core/theme";
 import { useUI } from "../core/ui";
 import { checkForUpdates, isTauri } from "../core/updater";
 
@@ -33,6 +34,8 @@ const SHORTCUTS: [string, string][] = [
   ["Ctrl+G", "Agrupar em quadro (Shift desfaz)"],
   ["Shift+1 / Shift+2", "Ver tudo / ver seleção"],
   ["Espaço + arrastar", "Mover a tela"],
+  ["Ctrl+] / Ctrl+[", "Avançar / recuar a seleção (Shift: frente / trás)"],
+  ["Ctrl+.", "Modo foco (esconde as barras)"],
   ["PageUp / PageDown", "Página anterior / próxima"],
 ];
 
@@ -70,6 +73,7 @@ export function Settings() {
   const theme = useTheme();
   const t = useTool();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [startHome, setStartHome] = useState(() => { try { return localStorage.getItem(START_HOME_KEY) !== "0"; } catch { return true; } });
   const close = () => useUI.getState().setSettingsOpen(false);
 
   useEffect(() => {
@@ -127,8 +131,9 @@ export function Settings() {
       <section className="pane">
         <h3>Cadernos e arquivos</h3>
         <p className="hint">Os cadernos ficam salvos neste dispositivo. Exporte um arquivo .hiraku para guardar uma cópia externa.</p>
+        <Toggle on={startHome} onChange={(v) => { setStartHome(v); try { localStorage.setItem(START_HOME_KEY, v ? "1" : "0"); } catch { /* sem armazenamento */ } }} label="Abrir na tela inicial" hint="Ao abrir o app, mostra os cadernos (desligado: volta direto ao último caderno)." />
         <div className="row">
-          <button className="chip" onClick={() => { close(); useUI.getState().setNotebooksOpen(true); }}>Abrir cadernos</button>
+          <button className="chip" onClick={() => { close(); useUI.getState().setNotebooksOpen(true); }}>Tela inicial (cadernos)</button>
           <button className="chip" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar .hiraku</button>
           <button className="chip" onClick={() => fileRef.current?.click()}>Abrir .hiraku</button>
           <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void openFile(e.target.files?.[0]); e.target.value = ""; }} />
@@ -154,9 +159,35 @@ export function Settings() {
     body = (
       <section className="pane">
         <h3>Tema</h3>
-        <Chips<ThemeMode> label="Tema" value={theme.mode} options={[["auto", "Automático"], ["light", "Claro"], ["dark", "Escuro"]]} onChange={theme.setMode} />
+        <div className="tiles four" role="radiogroup" aria-label="Tema">
+          {THEMES.map((th) => (
+            <button key={th.id} role="radio" aria-checked={theme.mode === th.id} className={theme.mode === th.id ? "tile theme-tile on" : "tile theme-tile"} onClick={() => theme.setMode(th.id)}>
+              <span className="theme-art" style={{ background: th.id === "auto" ? `linear-gradient(135deg, ${th.paper} 50%, #0f0d1f 50%)` : th.paper }}>
+                <i className="t-top" style={{ background: th.chrome, boxShadow: `0 0 0 1px ${th.line}` }} />
+                <i className="t-side" style={{ background: th.chrome, boxShadow: `0 0 0 1px ${th.line}` }} />
+                <i style={{ background: "transparent" }} />
+                <i className="t-bar" style={{ background: th.chrome, boxShadow: `0 0 0 1px ${th.line}` }} />
+              </span>
+              <span>{th.label}</span>
+            </button>
+          ))}
+        </div>
+        <h3>Cor de destaque</h3>
+        <div className="accent-row" role="radiogroup" aria-label="Cor de destaque">
+          {ACCENTS.map((a) => (
+            <button key={a.id} role="radio" aria-checked={theme.accent === a.id} aria-label={a.label} title={a.label} className={theme.accent === a.id ? "accent-dot on" : "accent-dot"}
+              style={{ background: `linear-gradient(135deg, ${a.second}, ${a.light})` }} onClick={() => theme.setAccent(a.id)} />
+          ))}
+        </div>
         <h3>Tamanho dos botões</h3>
         <Chips<Density> label="Densidade" value={theme.density} options={[["compact", "Compacto"], ["normal", "Normal"], ["large", "Grande (toque)"]]} onChange={theme.setDensity} />
+        <h3>Espaço na tela</h3>
+        <Toggle on={theme.grips === "subtle"} onChange={(v) => theme.setGrips(v ? "subtle" : "normal")} label="Alças discretas" hint="Os pontinhos de arrastar as barras ficam finos e aparecem ao passar o mouse (sobra mais espaço)." />
+        <Toggle on={layout.locked} onChange={(v) => useLayout.getState().setLocked(v)} label="Travar as barras" hint="Esconde as alças: nada sai do lugar por acidente com a caneta." />
+        <button className="toggle" onClick={() => { close(); useTheme.getState().setFocus(true); }}>
+          <span className="toggle-text"><b>Entrar no modo foco</b><small>Esconde todas as barras e deixa só o desenho. Saia com o botão no canto ou Ctrl+.</small></span>
+          <kbd>Ctrl+.</kbd>
+        </button>
         <p className="hint">O tema muda barras e janelas; a cor da folha continua sendo a do papel do caderno.</p>
       </section>
     );

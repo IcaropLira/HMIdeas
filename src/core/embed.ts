@@ -34,7 +34,10 @@ export const youtubeThumb = (id: string) => `https://i.ytimg.com/vi/${id}/hqdefa
 
 /** Player embutido (domínio sem cookies de rastreio). */
 export const youtubeEmbed = (r: YouTubeRef) =>
-  `https://www.youtube-nocookie.com/embed/${r.id}?autoplay=1&rel=0&playsinline=1${r.start ? `&start=${r.start}` : ""}`;
+  `https://www.youtube-nocookie.com/embed/${r.id}?autoplay=1&rel=0&playsinline=1&enablejsapi=1${r.start ? `&start=${r.start}` : ""}`;
+
+/** Mensagem da API do player (enablejsapi=1) para pausar/retomar sem o usuário precisar clicar dentro do iframe. */
+export const youtubeCommand = (func: "pauseVideo" | "playVideo" | "mute" | "unMute") => JSON.stringify({ event: "command", func, args: [] });
 
 export const youtubeWatch = (r: YouTubeRef) => `https://www.youtube.com/watch?v=${r.id}${r.start ? `&t=${r.start}s` : ""}`;
 

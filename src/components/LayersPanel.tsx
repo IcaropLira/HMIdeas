@@ -3,7 +3,7 @@
 // a camada ativa é só interface.
 import { useState } from "react";
 import { Icon } from "./Icon";
-import { Layer } from "../core/model";
+import { LAYER_BLENDS, Layer } from "../core/model";
 import {
   ZMove, activeLayerId, addLayer, duplicateLayer, elementsOfLayer, mergeDown, moveLayer, moveToLayer, patchLayer, removeLayer, reorder, useLayerUI,
 } from "../core/layers";
@@ -115,6 +115,14 @@ export function LayersPanel() {
         <input type="range" min={0.05} max={1} step={0.05} value={cur.opacity} onChange={(e) => edit((p) => patchLayer(p, active, { opacity: +e.target.value }))} />
         <output>{Math.round(cur.opacity * 100)}%</output>
       </label>
+
+      <div className="row tight" role="radiogroup" aria-label="Mistura da camada">
+        <span className="rowlabel">Mistura</span>
+        {LAYER_BLENDS.map((b) => (
+          <button key={b.id} role="radio" aria-checked={(cur.blend ?? "normal") === b.id} className={(cur.blend ?? "normal") === b.id ? "chip sm on" : "chip sm"}
+            onClick={() => edit((p) => ({ ...p, layers: p.layers.map((l) => (l.id === active ? { ...l, blend: b.id === "normal" ? undefined : b.id } : l)) }))}>{b.label}</button>
+        ))}
+      </div>
 
       <div className="sec-title">Seleção ({sel.length})</div>
       <div className="row tight">

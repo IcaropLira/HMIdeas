@@ -1,4 +1,5 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useMemo, useRef, useState } from "react";
+import { openExternal } from "../core/openExternal";
 import { ElementsPreview } from "./ElementsPreview";
 import { insertTemplate } from "./TemplateGallery";
 import { TEMPLATES } from "../core/templates";
@@ -43,6 +44,76 @@ const Pic = ({ children }: { children: ReactNode }) => (
 const Chip = ({ on, onClick, children, title }: { on?: boolean; onClick: () => void; children: React.ReactNode; title?: string }) => (
   <button className={on ? "chip sm on" : "chip sm"} onClick={onClick} title={title}>{children}</button>
 );
+
+const STICKERS: [string, string[]][] = [
+  ["Status", ["✅", "☑️", "⏳", "🚧", "❌", "⚠️", "❓", "❗", "🔁", "🆕"]],
+  ["Ideias", ["💡", "⭐", "🔥", "🎯", "🚀", "🧠", "✨", "📌", "🏆", "💎"]],
+  ["Coisas", ["📚", "📝", "📅", "💰", "🔧", "💻", "📊", "🧪", "🎨", "🎵"]],
+  ["Pessoas", ["😀", "🤔", "😍", "😴", "👍", "👎", "👥", "🙋", "❤️", "🙌"]],
+];
+
+/** Conteúdo do nó (como nos cartões do Miro/Milanote): nota com lista de tarefas, link, etiquetas, data, progresso e imagem. */
+function NodeContentEditor({ node }: { node: NodeElement }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const patch = (p: Parameters<typeof styleSelection>[0]) => styleSelection(p, false);
+  const pickImage = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const bmp = await createImageBitmap(file);
+      const k = Math.min(1, 360 / Math.max(bmp.width, bmp.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+      patch({ image: c.toDataURL("image/jpeg", 0.85), imageRatio: c.height / c.width });
+    } catch { useUI.getState().showToast("Não consegui abrir essa imagem."); }
+  };
+  const tagsText = (node.tags ?? []).join(", ");
+  return (
+    <div className="node-content">
+      <div className="sec-title">Conteúdo do nó</div>
+      <textarea className="outline-in" rows={3} defaultValue={node.note ?? ""} key={node.id + "note"} placeholder={"Nota… (dica: linhas “- [ ] tarefa” viram lista de tarefas com progresso)"}
+        onBlur={(e) => { const v = e.target.value.trim(); if (v !== (node.note ?? "")) patch({ note: v || undefined }); }} />
+      <div className="row tight">
+        <button className="chip sm" onClick={() => patch({ note: `${node.note ? node.note + "\n" : ""}- [ ] ` })}>+ Tarefa</button>
+        <button className={node.shape === "card" ? "chip sm on" : "chip sm"} onClick={() => patch({ shape: node.shape === "card" ? "rounded" : "card" })} title="Mostra a nota dentro do nó, como um cartão">Mostrar como cartão</button>
+      </div>
+      <div className="row tight">
+        <label className="mini-field">Etiquetas <input className="wide" defaultValue={tagsText} key={node.id + "tags" + tagsText} placeholder="urgente, aula" onBlur={(e) => {
+          const tags = e.target.value.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 8);
+          if (tags.join(",") !== (node.tags ?? []).join(",")) patch({ tags: tags.length ? tags : undefined });
+        }} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} /></label>
+        <label className="mini-field">Data <input type="date" defaultValue={node.due ?? ""} key={node.id + "due" + node.due} onChange={(e) => patch({ due: e.target.value || undefined })} /></label>
+      </div>
+      <label className="slider">
+        <span>Progresso {node.progress === undefined ? "(automático pela lista)" : ""}</span>
+        <input type="range" min={0} max={100} step={5} value={node.progress ?? 0} onChange={(e) => patch({ progress: +e.target.value })} />
+        <output>{node.progress === undefined ? "—" : `${node.progress}%`}</output>
+      </label>
+      <div className="row tight">
+        {node.progress !== undefined && <button className="chip sm" onClick={() => patch({ progress: undefined })}>Sem progresso</button>}
+        <label className="mini-field">Link <input className="wide" defaultValue={node.link ?? ""} key={node.id + "link" + node.link} placeholder="https://…" onBlur={(e) => {
+          const v = e.target.value.trim();
+          if (v && !/^(https?:|mailto:)/i.test(v)) { useUI.getState().showToast("O link precisa começar com https://"); return; }
+          if (v !== (node.link ?? "")) patch({ link: v || undefined });
+        }} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} /></label>
+        {node.link && <button className="chip sm" onClick={() => void openExternal(node.link!)}>Abrir ↗</button>}
+      </div>
+      <div className="row tight">
+        <button className="chip sm" onClick={() => fileRef.current?.click()}>{node.image ? "Trocar imagem" : "🖼 Imagem no nó"}</button>
+        {node.image && <button className="chip sm danger" onClick={() => patch({ image: undefined, imageRatio: undefined })}>Tirar imagem</button>}
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { void pickImage(e.target.files?.[0]); e.target.value = ""; }} />
+      </div>
+      <div className="sec-title">Adesivos</div>
+      <div className="stickers">
+        {STICKERS.map(([group, list]) => (
+          <div key={group} className="sticker-row" aria-label={group}>
+            {list.map((i) => <button key={i} className={node.icon === i ? "stk on" : "stk"} onClick={() => patch({ icon: node.icon === i ? null : i })} title={group}>{i}</button>)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** Painel "Mapa & quadros": modelos, temas, layout, formas, códigos visuais, recolher, quadros, lista de texto. */
 export function MapPanel() {
@@ -144,11 +215,14 @@ export function MapPanel() {
             ))}
           </div>
           <div className="row tight" aria-label="Marcador">
-            <Chip on={same("icon") === null} onClick={() => styleSelection({ icon: null })}>Sem marcador</Chip>
-            {NODE_ICONS.map((i) => <Chip key={i} on={same("icon") === i} onClick={() => styleSelection({ icon: i })}>{i}</Chip>)}
             <Chip on={!!same("done")} onClick={toggleDone} title="Riscar o texto">✓ Concluído</Chip>
+            {nodes.length > 1 && <>
+              <Chip on={same("icon") === null} onClick={() => styleSelection({ icon: null })}>Sem marcador</Chip>
+              {NODE_ICONS.slice(0, 8).map((i) => <Chip key={i} on={same("icon") === i} onClick={() => styleSelection({ icon: i })}>{i}</Chip>)}
+            </>}
           </div>
           <label className="check"><input type="checkbox" checked={sub} onChange={(e) => setSub(e.target.checked)} /> Aplicar ao ramo todo</label>
+          {nodes.length === 1 && <NodeContentEditor node={n0} />}
 
           <div className="sec-title">Ramos</div>
           <div className="row tight">

@@ -49,6 +49,7 @@ function nodeBase(el: NodeElement): Pt[] {
     case "pill": return roundedRect(x, y, w, h, h / 2);
     case "rounded": return roundedRect(x, y, w, h, Math.min(h * 0.3, 14));
     case "ellipse": return ellipsePts(x, y, w, h);
+    case "card": return roundedRect(x, y, w, h, 10);
     default: return roundedRect(x, y, w, h, 0);
   }
 }

@@ -44,3 +44,31 @@ describe("figuras", () => {
     expect(doc.pages[0].elements.map((e) => (e.type === "attachment" ? e.kind : ""))).toEqual(["file", "figure"]);
   });
 });
+
+import { revolutionVolume } from "./figures";
+import { closestPair, convexHull, delaunay, integrate, minEnclosingCircle } from "./compgeo";
+
+describe("GeoGebra: revolução, áreas, superfícies, vetores e pontos", () => {
+  it("volume de revolução por discos e por cascas", () => {
+    const s = defaultFigure("revolution");
+    if (s.kind !== "revolution") throw new Error();
+    expect(revolutionVolume(s)).toBeCloseTo(8 * Math.PI, 3);
+    expect(revolutionVolume({ ...s, expr: "x", a: 0, b: 1, axis: "y" })).toBeCloseTo((2 * Math.PI) / 3, 3);
+  });
+  it("área entre curvas aparece no gráfico", () => {
+    const p = plotPrims({ kind: "plot", fns: [{ expr: "x", color: "#000000" }, { expr: "x^2", color: "#111111" }], points: [], xmin: -1, xmax: 2, ymin: -1, ymax: 2, grid: false, areas: [{ f: 0, g: 1, a: 0, b: 1, color: "#2F5BD3" }] }, 300, 300);
+    expect(p.texts.some((t) => t.text.startsWith("A ≈ 0,1666"))).toBe(true);
+    expect(integrate((x) => x * x, 0, 3)).toBeCloseTo(9, 6);
+  });
+  it("geometria computacional", () => {
+    const sq = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }, { x: 1, y: 1 }];
+    expect(convexHull(sq)).toHaveLength(4);
+    expect(delaunay(sq)).toHaveLength(4);
+    expect(closestPair(sq)!.d).toBeCloseTo(Math.SQRT2);
+    expect(minEnclosingCircle(sq)!.r).toBeCloseTo(Math.SQRT2);
+  });
+  it("superfície com função inválida mostra erro", () => {
+    const s = defaultFigure("surface");
+    expect(figurePrims({ ...s, expr: "x +" } as typeof s, 100, 100).polys.length).toBe(0);
+  });
+});

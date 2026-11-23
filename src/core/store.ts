@@ -7,7 +7,7 @@ import { Camera, defaultCamera } from "./camera";
 import { activeLayerId } from "./layers";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
-export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | ShapeType | LinearType;
+export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | ShapeType | LinearType;
 
 const HISTORY_LIMIT = 200;
 
@@ -291,6 +291,8 @@ interface ToolState {
   lassoMode: "inside" | "touch";
   /** Se false, toque com o dedo só move a tela (estilo GoodNotes). */
   fingerDraws: boolean;
+  /** Caneta transforma traços em formas perfeitas (linha, retângulo, elipse, losango, triângulo, polígono). */
+  recognize: boolean;
   setTool: (t: ToolId) => void;
   /** Troca o brush (e a cor, se o brush tiver cor própria ou já tiver sido usado com outra). */
   setBrush: (id: string) => void;
@@ -326,6 +328,7 @@ export const useTool = create<ToolState>()(
       textAlign: "left",
       lassoMode: "inside",
       fingerDraws: false,
+      recognize: false,
       setTool: (tool) => set({ tool, picking: false }),
       setBrush: (id) => {
         const s = get();
@@ -362,6 +365,7 @@ export const useTool = create<ToolState>()(
         textAlign: s.textAlign,
         lassoMode: s.lassoMode,
         fingerDraws: s.fingerDraws,
+        recognize: s.recognize,
       }),
     },
   ),

@@ -161,7 +161,7 @@ export interface TextElement {
 
 // ---------- mapa mental e quadros ----------
 
-export type NodeShape = "pill" | "rounded" | "rect" | "ellipse" | "underline" | "none";
+export type NodeShape = "pill" | "rounded" | "rect" | "ellipse" | "underline" | "none" | "card";
 export const NODE_SHAPES: { id: NodeShape; label: string }[] = [
   { id: "pill", label: "Pílula" },
   { id: "rounded", label: "Arredondado" },
@@ -169,6 +169,7 @@ export const NODE_SHAPES: { id: NodeShape; label: string }[] = [
   { id: "ellipse", label: "Elipse" },
   { id: "underline", label: "Sublinhado" },
   { id: "none", label: "Só texto" },
+  { id: "card", label: "Cartão" },
 ];
 
 export type MapLayout = "both" | "right" | "left" | "down";
@@ -230,6 +231,20 @@ export interface NodeElement {
   branchStyle: BranchStyle;
   /** Derivado: dentro de um ramo recolhido. */
   hidden?: boolean;
+  // ---- conteúdo extra (Miro/Milanote): tudo opcional ----
+  /** Nota longa (aparece no cartão; linhas "- [ ]" / "- [x]" viram lista de tarefas). */
+  note?: string;
+  /** Link aberto pelo painel. */
+  link?: string;
+  /** Etiquetas (chips coloridos embaixo do texto). */
+  tags?: string[];
+  /** Progresso 0..100 (barrinha). */
+  progress?: number;
+  /** Data (AAAA-MM-DD). */
+  due?: string;
+  /** Imagem pequena no topo do nó (data URL) e a proporção altura/largura dela. */
+  image?: string;
+  imageRatio?: number;
   opacity: number;
 }
 
@@ -336,7 +351,17 @@ export interface Layer {
   /** Travada: aparece, mas não seleciona nem apaga. */
   locked: boolean;
   opacity: number;
+  /** Mistura com o que está embaixo (como no Photoshop). Ausente = normal. */
+  blend?: LayerBlend;
 }
+
+export type LayerBlend = "normal" | "multiply" | "screen" | "add";
+export const LAYER_BLENDS: { id: LayerBlend; label: string }[] = [
+  { id: "normal", label: "Normal" },
+  { id: "multiply", label: "Multiplicar" },
+  { id: "screen", label: "Tela" },
+  { id: "add", label: "Clarear (somar)" },
+];
 
 export const makeLayer = (name = "Camada 1", id: ID = newId()): Layer => ({ id, name, visible: true, locked: false, opacity: 1 });
 
@@ -450,6 +475,13 @@ const cleanNode = (e: any): NodeElement => ({
   branchStyle: BRANCH_STYLES.some((x) => x.id === e.branchStyle) ? e.branchStyle : "curve",
   hidden: e.hidden === true,
   opacity: num(e.opacity, 1),
+  note: typeof e.note === "string" && e.note ? e.note.slice(0, 4000) : undefined,
+  link: typeof e.link === "string" && /^(https?:|mailto:)/i.test(e.link) ? e.link.slice(0, 1000) : undefined,
+  tags: Array.isArray(e.tags) ? e.tags.filter((t: unknown) => typeof t === "string" && t).slice(0, 8).map((t: string) => t.slice(0, 24)) : undefined,
+  progress: Number.isFinite(e.progress) ? Math.max(0, Math.min(100, e.progress)) : undefined,
+  due: typeof e.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.due) ? e.due : undefined,
+  image: typeof e.image === "string" && e.image.startsWith("data:image/") ? e.image : undefined,
+  imageRatio: Number.isFinite(e.imageRatio) ? Math.max(0.1, Math.min(4, e.imageRatio)) : undefined,
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -481,6 +513,7 @@ function cleanLayers(raw: any): Layer[] {
         visible: l.visible !== false,
         locked: l.locked === true,
         opacity: Math.max(0.05, Math.min(1, num(l.opacity, 1))),
+        ...(["multiply", "screen", "add"].includes(l.blend) ? { blend: l.blend } : {}),
       });
     }
   }

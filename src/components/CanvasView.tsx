@@ -6,6 +6,7 @@ import { panBy, screenToWorld, zoomAt } from "../core/camera";
 import { elementHit } from "../core/geometry";
 import { bindableAt, clearBindingsTo, makeBinding, solveArrow } from "../core/binding";
 import { eraseStep } from "../core/erase";
+import { recognize } from "../core/recognize";
 import { makeLinear, snapAngle } from "../core/linear";
 import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
 import { Box, Pt, boxFromDrag, makeShape, outlinePath } from "../core/shapes";
@@ -22,13 +23,26 @@ import { detectWebGL, useGfx } from "../core/webgl";
 import { EmbedLayer } from "./EmbedLayer";
 import { clampScroll, scrollLayout } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
+import { useAlgo } from "../core/algoView";
 import { interactiveElements, layerIdOf } from "../core/layers";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
-type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame";
+type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "laser";
 
 const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
 const isLinearTool = (t: string): t is LinearType => t === "line" || t === "arrow";
+
+/** Traço reconhecido como forma perfeita (linha, retângulo, elipse, losango, polígono) com a cor/espessura da caneta. */
+function recognizedElements(points: InkPoint[], style: { color: string; width: number }): HirakuElement[] | null {
+  const r = recognize(points);
+  if (!r) return null;
+  const sw = Math.max(1.5, style.width);
+  if (r.kind === "line" || r.kind === "polygon") {
+    const pts = r.kind === "line" ? [r.a, r.b] : [...r.points, r.points[0]];
+    return [{ id: newId(), type: "line", points: pts.map((p) => ({ x: p.x, y: p.y })), stroke: style.color, strokeWidth: sw, strokeStyle: "solid", startHead: "none", endHead: "none", curved: false, opacity: 1 }];
+  }
+  return [makeShape(newId(), r.kind, { x: r.x, y: r.y, w: r.w, h: r.h }, { stroke: style.color, strokeWidth: sw, strokeStyle: "solid", fill: null, rounded: false })];
+}
 
 export function CanvasView() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -274,6 +288,7 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
+        useAlgo.subscribe((s, prev) => { if (s.overlay !== prev.overlay) renderer.setAlgoOverlay(s.overlay); }),
         // O texto em edição some do canvas (a <textarea> o substitui).
         useEdit.subscribe((s) => renderer.setHidden(s.session?.id ?? null)),
         useTool.subscribe((s, prev) => {
@@ -334,6 +349,9 @@ export function CanvasView() {
               }
               if (hit) addChildTo(hit);
               else createRootAt(P);
+            } else if (t.tool === "laser") {
+              mode = "laser";
+              renderer.laserPoint(s.x, s.y);
             } else if (t.tool === "frame") {
               mode = "frame";
               shapeStart = screenToWorld(useView.getState().camera, s.x, s.y);
@@ -369,6 +387,7 @@ export function CanvasView() {
 
           drawMove(samples, predicted) {
             if (mode === "text") return;
+            if (mode === "laser") { samples.forEach((p) => renderer.laserPoint(p.x, p.y)); return; }
             if (mode === "select") {
               selectCtl.move(samples);
               return;
@@ -429,6 +448,7 @@ export function CanvasView() {
 
           drawEnd(endSample) {
             if (mode === "text") return;
+            if (mode === "laser") { renderer.laserEnd(); return; }
             if (mode === "select") {
               selectCtl.end();
               return;
@@ -482,7 +502,10 @@ export function CanvasView() {
               const exactEnd = worldPoint(raw.x, raw.y, smP);
               if (accept(exactEnd)) points.push(exactEnd);
             }
-            if (points.length) {
+            const shaped = points.length > 3 && useTool.getState().recognize ? recognizedElements(points, style) : null;
+            if (shaped) {
+              useDoc.getState().addElements(shaped);
+            } else if (points.length) {
               const ink = inkStyle();
               useDoc.getState().addElement({
                 id: newId(),
@@ -504,6 +527,7 @@ export function CanvasView() {
 
           drawCancel() {
             if (mode === "text") return;
+            if (mode === "laser") { renderer.laserEnd(); return; }
             if (mode === "select") {
               selectCtl.cancel();
               return;
@@ -564,7 +588,7 @@ export function CanvasView() {
         {
           getTool: () => useTool.getState().tool,
           // Com Selecionar, o dedo seleciona/arrasta; pan e zoom ficam com 2 dedos.
-          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame"].includes(useTool.getState().tool),
+          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame", "laser"].includes(useTool.getState().tool),
         },
       );
     })();

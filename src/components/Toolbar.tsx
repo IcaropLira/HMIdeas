@@ -176,8 +176,17 @@ export function Toolbar() {
               <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
             </button>
           )}
+          {toolBtn("laser", "Laser", <><circle cx="17" cy="7" r="2.6" /><path d="M15 9.5C11 13 7 15 4 20" strokeDasharray="2 2.5" /></>, "Ponteiro laser (apresentar sem riscar)")}
           {toolBtn("hand", "Mover tela", <path d="M8 12V5a1.5 1.5 0 013 0v6m0-1V4a1.5 1.5 0 013 0v7m0-4a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.4-1.7L8 14" />, "Mover tela (H ou Espaço)")}
         </div>
+        {t.tool === "pen" && (
+          <div className="group">
+            <button className={t.recognize ? "btn text on" : "btn text"} onClick={() => t.set({ recognize: !t.recognize })} aria-pressed={t.recognize}
+              title="Reconhecer formas: o traço vira linha, retângulo, círculo, losango ou triângulo perfeitos">
+              <Icon><path d="M4 17c3-9 6-11 9-6s5 5 7-3" strokeDasharray="2 2" /><rect x="13" y="13" width="8" height="7" rx="1" /></Icon>
+            </button>
+          </div>
+        )}
         {t.tool === "lasso" && (
           <div className="group">
             <button

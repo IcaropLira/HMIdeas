@@ -40,7 +40,7 @@ describe("Toolbar em blocos", () => {
     expect(at(html, 'aria-label="Mais cores"')).toBeLessThan(dock);
     expect(at(html, "Espessura do traço")).toBeLessThan(dock);
     // embaixo: ferramentas, formas e histórico
-    for (const nome of ["Selecionar", "Caneta", "Borracha", "Texto", "Mover tela", "Retângulo", "Seta", "Desfazer", "Refazer"]) {
+    for (const nome of ["Selecionar", "Caneta", "Borracha de traço inteiro", "Texto", "Mover tela", "Retângulo", "Seta", "Desfazer", "Refazer"]) {
       expect(at(html, `aria-label="${nome}"`), nome).toBeGreaterThan(dock);
     }
   });

@@ -54,7 +54,7 @@ async function drop(id: string): Promise<void> {
 
 async function readLegacyAutosave(): Promise<HirakuDoc | null> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("hm-ideas", 1);
+    const request = indexedDB.open("hm-ideas"); // sem versão: não briga com a cópia automática (core/autosave.ts)
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

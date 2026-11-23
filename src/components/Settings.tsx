@@ -2,6 +2,8 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { START_HOME_KEY } from "./NotebookManager";
 import { Icon } from "./Icon";
 import { BarsPane } from "./LayoutSettings";
+import { ShortcutEditor } from "./ShortcutEditor";
+import { WorkspacePane } from "./WorkspacePane";
 import { rotateBlock } from "./BlockHandle";
 import { useLayout } from "../core/layout";
 import { APP_VERSION } from "../core/repo";
@@ -11,32 +13,17 @@ import { resetPageCameras } from "../core/pageView";
 import { useDoc, useTool, useView } from "../core/store";
 import { ACCENTS, Density, THEMES, useTheme } from "../core/theme";
 import { useUI } from "../core/ui";
+import { useCapture } from "./commands";
 import { checkForUpdates, isTauri } from "../core/updater";
 
 const TABS: { id: string; label: string; icon: ReactNode }[] = [
   { id: "aparencia", label: "Aparência", icon: <><circle cx="12" cy="12" r="8" /><path d="M12 4v16" /></> },
+  { id: "areas", label: "Áreas de trabalho", icon: <><rect x="3.5" y="4" width="17" height="16" rx="2" /><path d="M3.5 8h17M15 8v12" /></> },
   { id: "barras", label: "Barras", icon: <><rect x="3.5" y="14" width="17" height="6" rx="2" /><rect x="3.5" y="4" width="6" height="8" rx="2" /></> },
   { id: "caneta", label: "Caneta e toque", icon: <><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /></> },
   { id: "atalhos", label: "Atalhos", icon: <><rect x="3" y="7" width="18" height="11" rx="2" /><path d="M7 11h.01M11 11h.01M15 11h.01M8 15h8" /></> },
   { id: "dados", label: "Cadernos e dados", icon: <><path d="M6 4h11a2 2 0 012 2v13a1 1 0 01-1 1H7a2 2 0 01-2-2V5a1 1 0 011-1z" /><path d="M9 4v16" /></> },
   { id: "sobre", label: "Sobre", icon: <><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></> },
-];
-
-const SHORTCUTS: [string, string][] = [
-  ["Ctrl+V", "Colar print, imagem, link ou texto"],
-  ["Ctrl+C / X / D", "Copiar, recortar, duplicar"],
-  ["Ctrl+Z / Ctrl+Shift+Z", "Desfazer / refazer"],
-  ["Ctrl+A", "Selecionar tudo"],
-  ["V · L · P · E · H", "Selecionar, laço, caneta, borracha, mão"],
-  ["R · O · D · A · T", "Retângulo, elipse, losango, seta, texto"],
-  ["M · F", "Mapa mental, quadro"],
-  ["Tab · Enter · F2", "Mapa: filho, irmão, editar rótulo"],
-  ["Ctrl+G", "Agrupar em quadro (Shift desfaz)"],
-  ["Shift+1 / Shift+2", "Ver tudo / ver seleção"],
-  ["Espaço + arrastar", "Mover a tela"],
-  ["Ctrl+] / Ctrl+[", "Avançar / recuar a seleção (Shift: frente / trás)"],
-  ["Ctrl+.", "Modo foco (esconde as barras)"],
-  ["PageUp / PageDown", "Página anterior / próxima"],
 ];
 
 const Chips = <T extends string>({ value, options, onChange, label }: { value: T; options: [T, string][]; onChange: (v: T) => void; label: string }) => (
@@ -78,7 +65,7 @@ export function Settings() {
 
   useEffect(() => {
     if (!open) return;
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && !useCapture.getState().id && close();
     document.addEventListener("keydown", esc);
     return () => document.removeEventListener("keydown", esc);
   }, [open]);
@@ -122,11 +109,11 @@ export function Settings() {
     body = (
       <section className="pane">
         <h3>Atalhos de teclado</h3>
-        <dl className="keys">
-          {SHORTCUTS.map(([k, d]) => (<div key={k}><dt><kbd>{k}</kbd></dt><dd>{d}</dd></div>))}
-        </dl>
+        <ShortcutEditor />
       </section>
     );
+  } else if (tab === "areas") {
+    body = <WorkspacePane />;
   } else if (tab === "dados") {
     body = (
       <section className="pane">

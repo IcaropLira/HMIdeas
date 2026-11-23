@@ -4,6 +4,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initCustomBrushes } from "./core/brushPresets";
 import { initTheme } from "./core/theme";
 import "./styles.css";
+import "./fonts";
 
 // StrictMode desligado de propósito: o Pixi inicializa de forma assíncrona num <canvas>,
 // e o duplo mount do modo de desenvolvimento quebraria o contexto WebGL.

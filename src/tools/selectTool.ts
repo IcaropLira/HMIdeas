@@ -2,7 +2,12 @@
 // e edição de pontos de linhas/setas.
 // Durante o gesto NADA é gravado no documento: só pré-visualização no renderer.
 // No fim, um único updateElements → um único passo de desfazer.
-import { Bindable, bindableAt, detachForeign, isBindable, makeBinding, solveAffected, solveArrow } from "../core/binding";
+import { Bindable, bindableAt, detachForeign, isBindable, makeBinding, reidentify, solveAffected, solveArrow } from "../core/binding";
+import { exactGroup, expandToUnits, idsForHit, insideCtx, unitOf } from "../core/groups";
+import { contextOutline, currentCtx, enterGroup, useGroupCtx } from "../core/groupActions";
+import { addCopies } from "../core/actions";
+import { Box, snapMove, unionBox } from "../core/align";
+import { useUI } from "../core/ui";
 import { connectArrow, siblingFor } from "../core/quickConnect";
 import { screenToWorld } from "../core/camera";
 import { elementHit } from "../core/geometry";
@@ -28,7 +33,7 @@ import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
 type Gesture =
-  | { kind: "move"; startP: Pt; startS: Pt; orig: HirakuElement[]; next: HirakuElement[]; extra: string[]; moved: boolean; candidate: string | null }
+  | { kind: "move"; startP: Pt; startS: Pt; orig: HirakuElement[]; next: HirakuElement[]; extra: string[]; moved: boolean; candidate: string[] | null; dup: boolean; box: Box | null; others: Box[] | null }
   | { kind: "resize"; handle: Exclude<HandleId, "rot">; frame: Frame; startP: Pt; orig: HirakuElement[]; next: HirakuElement[]; extra: string[]; moved: boolean }
   | { kind: "rotate"; frame: Frame; startP: Pt; orig: HirakuElement[]; next: HirakuElement[]; extra: string[]; moved: boolean }
   | { kind: "vertex"; el: LinearElement; index: number; inserted: boolean; startS: Pt; next: LinearElement | null }
@@ -72,14 +77,22 @@ export function createSelectController(renderer: Renderer) {
     marquee: SelectionUI["marquee"] = null,
     els: HirakuElement[] = selectedEls(),
     hint: Pt[] | null = null,
-  ): SelectionUI => ({
-    bindHint: hint,
-    connectors: marquee ? [] : connectors(els),
-    frame: selectionFrame(els),
-    outlines: els.length > 1 || (els.length === 1 && els[0].type === "node") ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
-    marquee,
-    lineEdit: els.length === 1 && isLinear(els[0]) ? { points: els[0].points } : null,
-  });
+    guides: SelectionUI["guides"] = [],
+  ): SelectionUI => {
+    const p = page();
+    // um grupo selecionado inteiro aparece como UM objeto (só a caixa dele, sem o contorno de cada membro)
+    const asGroup = els.length > 1 && !!exactGroup(p, els.map((e) => e.id));
+    return {
+      bindHint: hint,
+      connectors: marquee || asGroup ? [] : connectors(els),
+      frame: selectionFrame(els),
+      outlines: !asGroup && (els.length > 1 || (els.length === 1 && els[0].type === "node")) ? els.map((e) => boundsPolygon(elementBounds(e))) : [],
+      marquee,
+      lineEdit: els.length === 1 && isLinear(els[0]) ? { points: els[0].points } : null,
+      context: contextOutline(p),
+      guides,
+    };
+  };
 
   const refresh = (marquee: SelectionUI["marquee"] = null) => renderer.setSelectionUI(buildUI(marquee));
 
@@ -89,8 +102,9 @@ export function createSelectController(renderer: Renderer) {
     return null;
   };
 
-  const preview = (gg: Extract<Gesture, { orig: HirakuElement[] }>, xf: Xform) => {
+  const preview = (gg: Extract<Gesture, { orig: HirakuElement[] }>, xf: Xform, guides: SelectionUI["guides"] = []) => {
     gg.next = gg.orig.map((el) => applyXform(el, xf));
+    if (!gg.moved) useUI.getState().setBusy(true);
     gg.moved = true;
     gg.orig.forEach((el, i) => {
       if (el.type === "stroke") renderer.setNodeMatrix(el.id, xf.m); // traços: só matriz (barato)
@@ -100,7 +114,7 @@ export function createSelectController(renderer: Renderer) {
     const solved = solveAffected(page().elements, gg.next);
     for (const a of solved) renderer.redrawNode(a.id, a);
     gg.extra = solved.map((a) => a.id);
-    renderer.setSelectionUI(buildUI(null, gg.next));
+    renderer.setSelectionUI(buildUI(null, gg.next, null, guides));
   };
 
   const restore = (orig: HirakuElement[], extra: string[] = []) => {
@@ -235,22 +249,36 @@ export function createSelectController(renderer: Renderer) {
         }
       }
 
-      const beginMove = (candidate: string | null) => {
-        // nós levam o ramo; quadros levam o conteúdo
+      const beginMove = (candidate: string[] | null) => {
+        // nós levam o ramo; quadros levam o conteúdo. Alt (ou Option) ao começar = arrasta uma CÓPIA.
         const all = page().elements;
         const set = withDependents(all, useSel.getState().ids);
-        g = { kind: "move", startP: P, startS: { x: s.x, y: s.y }, orig: all.filter((e) => set.has(e.id)), next: [], extra: [], moved: false, candidate };
+        g = { kind: "move", startP: P, startS: { x: s.x, y: s.y }, orig: all.filter((e) => set.has(e.id)), next: [], extra: [], moved: false, candidate, dup: s.alt, box: null, others: null };
       };
 
       // 2) Selecionar: clique num elemento
       if (!lasso) {
         const hit = topHit(P, hitTol);
         if (hit) {
+          // grupos: no contexto atual o clique pega o grupo de fora; fora do grupo aberto, volta para a página
+          const pg = page();
+          let ctx = currentCtx(pg);
+          let unit = unitOf(pg, hit, ctx);
+          if (!unit) { useGroupCtx.getState().set(null, pg.id); ctx = null; unit = unitOf(pg, hit, null)!; }
+          if (dbl && unit.kind === "group" && !s.shift) {
+            // duplo clique num grupo: entra nele SEM desagrupar e pega o filho sob o ponteiro (Esc sai)
+            lastTap = null;
+            enterGroup(unit.id, idsForHit(pg, hit, unit.id));
+            refresh();
+            return;
+          }
+          const unitIds = idsForHit(pg, hit, ctx);
+          const inGroup = unit.kind === "group";
           // blocos: áreas com comportamento próprio (caixinha da tarefa, virar flashcard, alternativa, estrelas…) respondem a
           // um toque; duplo toque num texto edita ali mesmo; duplo toque fora de texto abre o editor do bloco
           if (hit.type === "attachment" && hit.kind === "block" && hit.block && !s.shift) {
             const lx = P.x - hit.x, ly = P.y - hit.y;
-            if (dbl) {
+            if (dbl && !inGroup) {
               lastTap = null;
               useSel.getState().set([hit.id]);
               if (hit.block.kind === "page") { usePageEdit.getState().open(hit.id); return; }
@@ -270,30 +298,31 @@ export function createSelectController(renderer: Renderer) {
               return;
             }
           }
-          if (dbl && isLinear(hit)) {
+          if (dbl && !inGroup && isLinear(hit)) {
             // duplo toque numa seta/linha: editar o rótulo (peso da aresta)
             lastTap = null;
             useSel.getState().set([hit.id]);
             useEdgeLabel.getState().open(hit.id);
             return;
           }
-          if (dbl && (hit.type === "text" || hit.type === "node" || hit.type === "frame")) {
+          if (dbl && !inGroup && (hit.type === "text" || hit.type === "node" || hit.type === "frame")) {
             lastTap = null;
             if (hit.type === "text") beginEditText(hit);
             else { useSel.getState().set([hit.id]); beginLabel(hit.id); }
             return;
           }
           const ids = useSel.getState().ids;
-          const isSel = ids.includes(hit.id);
+          const isSel = unitIds.every((i) => ids.includes(i));
           if (s.shift) {
-            useSel.getState().set(isSel ? ids.filter((i) => i !== hit.id) : [...ids, hit.id]);
+            const drop = new Set(unitIds);
+            useSel.getState().set(isSel ? ids.filter((i) => !drop.has(i)) : [...ids, ...unitIds]);
             refresh();
             if (isSel) return; // Shift+clique em selecionado = tirar da seleção
             beginMove(null);
             return;
           }
-          if (!isSel) useSel.getState().set([hit.id]);
-          beginMove(isSel && ids.length > 1 ? hit.id : null);
+          if (!isSel) useSel.getState().set(unitIds);
+          beginMove(isSel && ids.length > unitIds.length ? unitIds : null);
           return;
         }
       }
@@ -313,7 +342,15 @@ export function createSelectController(renderer: Renderer) {
         return;
       }
 
-      // 4) área vazia: caixa (Selecionar) ou laço (Laço)
+      // 4) área vazia: caixa (Selecionar) ou laço (Laço). Clicar fora do grupo aberto sai um nível.
+      {
+        const pg = page();
+        const ctxBox = contextOutline(pg);
+        if (ctxBox && !s.shift && (P.x < ctxBox[0].x || P.x > ctxBox[2].x || P.y < ctxBox[0].y || P.y > ctxBox[2].y)) {
+          const parent = pg.groups?.find((x) => x.id === currentCtx(pg))?.parentId ?? null;
+          useGroupCtx.getState().set(parent, pg.id);
+        }
+      }
       const base = s.shift ? useSel.getState().ids : [];
       useSel.getState().set(base);
       g = lasso
@@ -333,7 +370,31 @@ export function createSelectController(renderer: Renderer) {
           let dx = P.x - g.startP.x;
           let dy = P.y - g.startP.y;
           if (s.shift) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-          preview(g, moveXform(dx, dy));
+          // encaixe: guias inteligentes (bordas/centros/espaço igual) e grade; Ctrl segurado desliga
+          const t = useTool.getState();
+          let guides: SelectionUI["guides"] = [];
+          if (!s.ctrl && (t.smartGuides || t.snapGrid) && g.orig.length) {
+            if (!g.box) {
+              const moving = new Set(g.orig.map((e) => e.id));
+              g.box = unionBox(g.orig.filter((e) => !(e.type === "node" && e.hidden)).map(elementBounds));
+              // só objetos perto da área visível contam (página enorme continua leve)
+              const vw = window.innerWidth / c.zoom, vh = window.innerHeight / c.zoom, vx = -c.x / c.zoom, vy = -c.y / c.zoom;
+              g.others = t.smartGuides
+                ? interactiveElements(page())
+                    .filter((e) => !moving.has(e.id) && !(e.type === "node" && e.hidden) && !isLinear(e) && e.type !== "stroke")
+                    .map(elementBounds)
+                    .filter((b) => b.maxX > vx - vw * 0.25 && b.minX < vx + vw * 1.25 && b.maxY > vy - vh * 0.25 && b.minY < vy + vh * 1.25)
+                    .slice(0, 400)
+                : [];
+            }
+            if (g.box) {
+              const sn = snapMove({ minX: g.box.minX + dx, maxX: g.box.maxX + dx, minY: g.box.minY + dy, maxY: g.box.maxY + dy }, g.others ?? [], 6 / c.zoom, t.snapGrid ? t.gridSize : 0);
+              if (!(s.shift && Math.abs(P.x - g.startP.x) <= Math.abs(P.y - g.startP.y))) dx += sn.dx;
+              if (!(s.shift && Math.abs(P.x - g.startP.x) > Math.abs(P.y - g.startP.y))) dy += sn.dy;
+              guides = sn.guides;
+            }
+          }
+          preview(g, moveXform(dx, dy), guides);
           break;
         }
         case "resize":
@@ -373,9 +434,18 @@ export function createSelectController(renderer: Renderer) {
         case "box": {
           if (!g.moved && Math.hypot(s.x - g.startS.x, s.y - g.startS.y) < 3) return;
           g.moved = true;
-          const inside = boxSelect(interactiveElements(page()), g.startP, P);
-          useSel.getState().set([...g.base, ...inside]);
-          renderer.setSelectionUI(buildUI({ kind: "box", a: g.startP, b: P }));
+          // da esquerda para a direita: só o que está TOTALMENTE dentro; da direita para a esquerda: tudo que a caixa toca
+          const mode = useTool.getState().boxMode;
+          const cross = mode === "touch" || (mode === "auto" && P.x < g.startP.x);
+          const pg = page();
+          const ctx = currentCtx(pg);
+          const pool = interactiveElements(pg).filter((e) => insideCtx(pg, e, ctx));
+          const a = g.startP;
+          const raw = cross
+            ? lassoSelect(pool, [{ x: a.x, y: a.y }, { x: P.x, y: a.y }, { x: P.x, y: P.y }, { x: a.x, y: P.y }], "touch", c.zoom)
+            : boxSelect(pool, a, P);
+          useSel.getState().set([...g.base, ...expandToUnits(pg, raw, ctx, !cross)]);
+          renderer.setSelectionUI(buildUI({ kind: "box", a: g.startP, b: P, cross }));
           break;
         }
         case "connect": {
@@ -407,6 +477,15 @@ export function createSelectController(renderer: Renderer) {
       g = null;
       if (!done) return;
 
+      useUI.getState().setBusy(false);
+      if (done.kind === "move" && done.moved && done.dup) {
+        // Alt+arrastar: o original volta para o lugar e a cópia fica onde foi solta (com os grupos recriados)
+        restore(done.orig, done.extra);
+        const ids = addCopies(done.orig, reidentify(done.next), page());
+        useSel.getState().set(ids);
+        refresh();
+        return;
+      }
       if (done.kind === "move" || done.kind === "resize" || done.kind === "rotate") {
         if (done.moved) {
           const nxt = detachForeign(done.next);
@@ -420,7 +499,7 @@ export function createSelectController(renderer: Renderer) {
             useDoc.getState().replaceElements(settleFrames(all, all.map((e) => e.id)));
           }
         }
-        else if (done.kind === "move" && done.candidate) useSel.getState().set([done.candidate]);
+        else if (done.kind === "move" && done.candidate) useSel.getState().set(done.candidate);
       } else if (done.kind === "vertex") {
         if (done.next) useDoc.getState().updateElements([done.next]);
       } else if (done.kind === "connect") {
@@ -453,8 +532,11 @@ export function createSelectController(renderer: Renderer) {
           }
         }
       } else if (done.kind === "lasso") {
-        const ids = lassoSelect(interactiveElements(page()), done.pts, useTool.getState().lassoMode, cam().zoom);
-        useSel.getState().set([...done.base, ...ids]);
+        const pg = page();
+        const ctx = currentCtx(pg);
+        const mode = useTool.getState().lassoMode;
+        const ids = lassoSelect(interactiveElements(pg).filter((e) => insideCtx(pg, e, ctx)), done.pts, mode, cam().zoom);
+        useSel.getState().set([...done.base, ...expandToUnits(pg, ids, ctx, mode === "inside")]);
       }
       refresh();
     },
@@ -462,6 +544,7 @@ export function createSelectController(renderer: Renderer) {
     cancel() {
       const done = g;
       g = null;
+      useUI.getState().setBusy(false);
       if (done?.kind === "vertex") renderer.redrawNode(done.el.id, null);
       else if (done?.kind === "connect") renderer.previewElement(null);
       else if (done && "orig" in done) restore(done.orig, done.extra);

@@ -2,7 +2,7 @@
 import { create } from "zustand";
 import { FontFamily, ID, TextAlign, TextElement, newId } from "./model";
 import { selectActivePage, useDoc, useTool } from "./store";
-import { makeText, measureBlock } from "./text";
+import { TextFx, fxOf, makeText, measureBlock } from "./text";
 
 export interface TextSession {
   /** Identifica a sessão: um blur atrasado de uma sessão antiga não mexe na nova. */
@@ -17,6 +17,8 @@ export interface TextSession {
   fontFamily: FontFamily;
   align: TextAlign;
   color: string;
+  /** Negrito, itálico, sublinhado, tachado, entrelinha, espaçamento, fundo. */
+  fx: TextFx;
 }
 
 interface EditState {
@@ -35,14 +37,14 @@ export function beginNewText(P: { x: number; y: number }) {
   commitText();
   const t = useTool.getState();
   useEdit.setState({
-    session: { token: ++counter, id: null, x: P.x, y: P.y, angle: 0, text: "", fontSize: t.fontSize, fontFamily: t.fontFamily, align: t.textAlign, color: t.color },
+    session: { token: ++counter, id: null, x: P.x, y: P.y, angle: 0, text: "", fontSize: t.fontSize, fontFamily: t.fontFamily, align: t.textAlign, color: t.color, fx: { ...t.textFx } },
   });
 }
 
 export function beginEditText(el: TextElement) {
   commitText();
   useEdit.setState({
-    session: { token: ++counter, id: el.id, x: el.x, y: el.y, angle: el.angle, text: el.text, fontSize: el.fontSize, fontFamily: el.fontFamily, align: el.align, color: el.color },
+    session: { token: ++counter, id: el.id, x: el.x, y: el.y, angle: el.angle, text: el.text, fontSize: el.fontSize, fontFamily: el.fontFamily, align: el.align, color: el.color, fx: fxOf(el) },
   });
 }
 
@@ -62,11 +64,13 @@ export function commitText(token?: number) {
       doc.removeElements([el.id]);
       return;
     }
-    const m = measureBlock(text, s.fontFamily, s.fontSize);
-    const changed = text !== el.text || s.fontFamily !== el.fontFamily || s.fontSize !== el.fontSize || s.align !== el.align || s.color !== el.color;
-    if (changed) doc.updateElements([{ ...el, text, w: m.w, h: m.h, fontSize: s.fontSize, fontFamily: s.fontFamily, align: s.align, color: s.color }]);
+    const m = measureBlock(text, s.fontFamily, s.fontSize, s.fx);
+    const fx = fxOf(s.fx);
+    const changed = text !== el.text || s.fontFamily !== el.fontFamily || s.fontSize !== el.fontSize || s.align !== el.align || s.color !== el.color
+      || (Object.keys(fx) as (keyof TextFx)[]).some((k) => (fx[k] ?? undefined) !== (el[k] ?? undefined));
+    if (changed) doc.updateElements([{ ...el, ...fx, text, w: m.w, h: m.h, fontSize: s.fontSize, fontFamily: s.fontFamily, align: s.align, color: s.color }]);
     return;
   }
   if (!text.trim()) return;
-  doc.addElement(makeText(newId(), s.x, s.y, text, { fontSize: s.fontSize, fontFamily: s.fontFamily, align: s.align, color: s.color }));
+  doc.addElement(makeText(newId(), s.x, s.y, text, { fontSize: s.fontSize, fontFamily: s.fontFamily, align: s.align, color: s.color, ...s.fx }));
 }

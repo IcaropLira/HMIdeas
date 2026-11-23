@@ -287,7 +287,11 @@ export interface SelectionUI {
   frame: Frame | null;
   /** Contornos finos por elemento (só com 2+ selecionados). */
   outlines: Pt[][];
-  marquee: null | { kind: "box"; a: Pt; b: Pt } | { kind: "lasso"; pts: Pt[] };
+  marquee: null | { kind: "box"; a: Pt; b: Pt; cross?: boolean } | { kind: "lasso"; pts: Pt[] };
+  /** Grupo em que o usuário entrou (contorno tracejado em volta dele), em coords do mundo. */
+  context?: Pt[] | null;
+  /** Guias inteligentes durante o arraste (segmentos no mundo) e marcas de espaçamento igual. */
+  guides?: { a: Pt; b: Pt; kind?: "align" | "gap" }[];
   /** Linha/seta selecionada sozinha: pontos editáveis (e ponto-médio de cada segmento para inserir). */
   lineEdit: null | { points: Pt[] };
   /** Forma que receberá a ponta da seta (realce durante o arrasto). */

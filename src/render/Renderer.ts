@@ -5,7 +5,7 @@ import { Camera, defaultCamera } from "../core/camera";
 import { DEFAULT_BACKGROUND, Layer, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
 import { Pt } from "../core/shapes";
-import { FONT_CSS, LINE_HEIGHT } from "../core/text";
+import { FONT_CSS, LINE_HEIGHT, measureLines } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
 import { linearPath, pathMidpoint } from "../core/linear";
 import { decimateForPreview } from "../core/ink";
@@ -214,7 +214,7 @@ export class Renderer {
   // ---------------- elementos gravados ----------------
 
   /** Reconcilia os nós do Pixi com a lista de elementos. Elementos são imutáveis: referência nova = redesenhar. */
-  syncPage(elements: HirakuElement[], layers: Layer[] = []) {
+  syncPage(elements: HirakuElement[], layers: Layer[] = [], hidden: Set<string> = new Set()) {
     const boxes = this.syncLayers(layers);
     const firstLayer = layers[0]?.id ?? "";
     const boxOf = (el: HirakuElement) => boxes.get(el.layerId && boxes.has(el.layerId) ? el.layerId : firstLayer)!;
@@ -253,6 +253,9 @@ export class Renderer {
       const parent = el.type === "frame" ? box.frames : box.committed;
       if (n.g.parent !== parent) parent.addChild(n.g);
       if (n.g.zIndex !== i) n.g.zIndex = i;
+      // objetos ocultos (por eles ou pelo grupo) e o texto em edição não aparecem
+      const vis = !hidden.has(el.id) && el.id !== this.hiddenId;
+      if (n.g.visible !== vis) n.g.visible = vis;
     }
     for (const [id, n] of this.nodes) {
       if (!alive.has(id)) {
@@ -396,21 +399,44 @@ export class Renderer {
         } else { node.eventMode = "none"; }
       }
     } else if (el.type === "text") {
-      for (const ch of node.removeChildren()) ch.destroy();
+      for (const ch of node.removeChildren()) ch.destroy({ children: true });
+      const lh = el.lineHeight ?? LINE_HEIGHT;
+      const L = el.fontSize * lh;
       const t = new Text({
         text: el.text,
-        style: { fontFamily: FONT_CSS[el.fontFamily], fontSize: el.fontSize, fill: el.color, align: el.align, lineHeight: el.fontSize * LINE_HEIGHT },
+        style: {
+          fontFamily: FONT_CSS[el.fontFamily] ?? FONT_CSS.sans, fontSize: el.fontSize, fill: el.color, align: el.align, lineHeight: L,
+          fontWeight: el.bold ? "700" : "400", fontStyle: el.italic ? "italic" : "normal", letterSpacing: (el.letterSpacing ?? 0) * el.fontSize,
+        },
       });
       t.resolution = this.textRes();
+      // fundo (marca-texto), sublinhado e tachado: desenhados por linha, com a largura medida de cada uma
+      const inner = new Container();
+      if (el.bg || el.underline || el.strike) {
+        const ws = measureLines(el.text, el.fontFamily, el.fontSize, el);
+        const W = Math.max(0, ...ws);
+        const deco = new Graphics();
+        const th = Math.max(1, el.fontSize * 0.065);
+        ws.forEach((w, i) => {
+          if (!w) return;
+          const x = el.align === "center" ? (W - w) / 2 : el.align === "right" ? W - w : 0;
+          const top = i * L, pad = el.fontSize * 0.12;
+          if (el.bg) deco.rect(x - pad, top, w + pad * 2, L).fill({ color: el.bg, alpha: 0.85 });
+          const base = top + (L - el.fontSize) / 2;
+          if (el.underline) deco.rect(x, base + el.fontSize * 0.98, w, th).fill({ color: el.color });
+          if (el.strike) deco.rect(x, base + el.fontSize * 0.56, w, th).fill({ color: el.color });
+        });
+        if (el.bg) { inner.addChild(deco); inner.addChild(t); } else { inner.addChild(t); inner.addChild(deco); }
+      } else inner.addChild(t);
       if (el.angle === 0) {
-        t.pivot.set(0, 0);
-        t.position.set(el.x, el.y);
+        inner.pivot.set(0, 0);
+        inner.position.set(el.x, el.y);
       } else {
-        t.pivot.set(el.w / 2, el.h / 2);
-        t.position.set(el.x + el.w / 2, el.y + el.h / 2);
-        t.rotation = el.angle;
+        inner.pivot.set(el.w / 2, el.h / 2);
+        inner.position.set(el.x + el.w / 2, el.y + el.h / 2);
+        inner.rotation = el.angle;
       }
-      node.addChild(t);
+      node.addChild(inner);
       node.alpha = el.opacity;
     } else if (isLinear(el)) {
       // linha/seta + rótulo opcional no meio (peso de aresta, condição de fluxograma)
@@ -635,10 +661,21 @@ export class Renderer {
           for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
           continue;
         }
-        const t = n.el.type === "text" ? (n.g.children[0] as Text | undefined) : undefined;
+        const t = n.el.type === "text" ? (n.g.children[0]?.children.find((c) => c instanceof Text) as Text | undefined) : undefined;
         if (t && Math.abs(t.resolution - r) / r > 0.12) t.resolution = r;
       }
     }, 180);
+  }
+
+  /** Redesenha tudo que tem texto (as fontes embutidas terminaram de carregar). */
+  repaintText() {
+    for (const n of this.nodes.values()) {
+      const t = n.el.type;
+      if (t === "text" || t === "node" || t === "frame" || t === "attachment" || ((t === "arrow" || t === "line") && n.el.label)) {
+        n.view = undefined;
+        this.paint(n.g, n.el, n);
+      }
+    }
   }
 
   /** Esconde um elemento enquanto ele é editado numa <textarea>. */
@@ -805,16 +842,51 @@ export class Renderer {
     const ui = this.selUI;
     if (!ui) return;
 
+    const dashed = (pts: Pt[], closed: boolean, width: number, color: string | number, alpha: number, on = 5, off = 4) => {
+      const list = closed ? [...pts, pts[0]] : pts;
+      for (let i = 0; i < list.length - 1; i++) {
+        const a = list[i], b = list[i + 1];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len < 0.5) continue;
+        const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+        for (let d = 0; d < len; d += on + off) {
+          const e = Math.min(len, d + on);
+          g.moveTo(a.x + ux * d, a.y + uy * d).lineTo(a.x + ux * e, a.y + uy * e);
+        }
+      }
+      g.stroke({ width, color, alpha });
+    };
+
+    if (ui.context && ui.context.length > 2) {
+      const pts = ui.context.map(this.w2s);
+      g.poly(this.flat(pts), true).fill({ color: INDIGO, alpha: 0.025 });
+      dashed(pts, true, 1.2, INDIGO, 0.75, 6, 4);
+    }
+
     const m = ui.marquee;
     if (m?.kind === "box") {
       const a = this.w2s(m.a), b = this.w2s(m.b);
-      g.rect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
-        .fill({ color: INDIGO, alpha: 0.08 })
-        .stroke({ width: 1, color: INDIGO, alpha: 0.7 });
+      const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y), x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
+      // da direita para a esquerda (pega o que a caixa toca): tracejado e verde, como no AutoCAD/Clip Studio
+      const col = m.cross ? 0x1f9d6b : INDIGO;
+      g.rect(x0, y0, x1 - x0, y1 - y0).fill({ color: col, alpha: 0.08 });
+      if (m.cross) dashed([{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }], true, 1.2, col, 0.9);
+      else g.rect(x0, y0, x1 - x0, y1 - y0).stroke({ width: 1, color: col, alpha: 0.7 });
     } else if (m?.kind === "lasso" && m.pts.length > 1) {
       const pts = m.pts.map(this.w2s);
       g.poly(this.flat(pts), true).fill({ color: INDIGO, alpha: 0.06 });
       g.poly(this.flat(pts), false).stroke({ width: 1.5, color: INDIGO, alpha: 0.85, cap: "round", join: "round" });
+    }
+
+    for (const gd of ui.guides ?? []) {
+      const a = this.w2s(gd.a), b = this.w2s(gd.b);
+      if (gd.kind === "gap") {
+        g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: 1, color: 0xE0197D, alpha: 0.9 });
+        const nx = -(b.y - a.y), ny = b.x - a.x, l = Math.hypot(nx, ny) || 1;
+        for (const p of [a, b]) g.moveTo(p.x + (nx / l) * 4, p.y + (ny / l) * 4).lineTo(p.x - (nx / l) * 4, p.y - (ny / l) * 4).stroke({ width: 1, color: 0xE0197D, alpha: 0.9 });
+      } else {
+        dashed([a, b], false, 1, 0xE0197D, 0.85, 3, 3);
+      }
     }
 
     for (const o of ui.outlines) {

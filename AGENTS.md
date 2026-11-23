@@ -87,6 +87,10 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [x] 0.8 (Blocks Update): registro de blocos (40+ tipos, 140 variações, adesivos), biblioteca, transformar bloco, edição no próprio bloco,
   bloco Página (editor do Hiraku Comic Manager), cadernos com páginas de tamanho fixo, setas puxadas das bordas, laser em dois modos
 - [ ] 0.8: validar no tablet a edição no bloco (teclado virtual), o editor de Página (contenteditable no WebKitGTK/Android) e a caneta laser
+- [x] 0.9 (Docking Update): atalhos personalizáveis para tudo, grupos hierárquicos (entrar/sair sem desagrupar), seleção inteligente,
+  barra contextual, alinhar/distribuir/grade/guias, painel de objetos, 12 fontes e edição de texto, painéis acopláveis, menus,
+  barra de opções/status e áreas de trabalho
+- [ ] 0.9: validar no tablet o arraste de abas/painéis com o dedo, o toque longo nas ferramentas agrupadas e a barra contextual
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -354,3 +358,40 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   sob o mouse (4 lados). Soltar sobre item liga; no vazio (ou toque) cria irmão do mesmo tipo ligado e abre o texto dele.
 - **Laser**: ferramentas `laser` (Z, ponteiro em tela com rastro 0–2 s; segue o mouse pelo `hover`) e `laserpen` (Shift+Z, traços no mundo que
   somem juntos após `laserHold`). Opções em `useTool` (`laserColor`, `laserTrail`, `laserHold`, persistidas). Nunca entram no documento.
+
+### Docking Update (0.9)
+- **Atalhos**: `components/commands.ts` é o registro ÚNICO de ações (id, nome, categoria, teclas padrão, `scope`, `when`, `run`).
+  Teclado (`handleKey`, o único `keydown` global do app), menus, paleta (Ctrl+K), barra contextual, dicas (`withKey`) e o editor
+  de atalhos leem dele. `core/keymap.ts` (puro) normaliza teclas pela POSIÇÃO física (`code`: Shift+1 é "Shift+1"), guarda só as
+  sobreposições do usuário (`hm-ideas:keymap-v1`) e acusa conflito apenas no MESMO contexto (`scope`: vertex > line > node > group >
+  selection > global; o mais específico responde primeiro). **Ação nova = um item no registro**, nunca um `if` no teclado.
+  Ctrl+V continua com o evento `paste` (comando `fixed`). Teclas de sistema operacional/navegador evitadas nos padrões.
+- **Grupos** (`core/groups.ts`, puro): `Page.groups` = estrutura (id, nome, `parentId`, `locked`, `hidden`); elemento aponta para o
+  grupo mais interno por `groupId`. A ordem de empilhamento continua sendo `page.elements` (agrupar junta os membros). `prune` tira
+  grupos vazios/ciclos (roda no `normalizeDoc`). O **contexto** (grupo aberto por duplo clique; Esc/clicar fora sai um nível) é UI:
+  `useGroupCtx` em `core/groupActions.ts`. No contexto, um clique pega a unidade logo abaixo dele (`unitOf`/`idsForHit`); Ctrl+A,
+  caixa e laço só pegam o que está dentro. A seleção continua sendo lista de ids de elementos: mover/girar/duplicar não mudaram.
+  Duplicar/colar recriam grupos copiados inteiros (`cloneGroups` via `addCopies`). Campos novos opcionais em TODO elemento
+  (`ElementMeta`): `groupId`, `locked`, `invisible` (≠ `NodeElement.hidden`, que é do mapa) e `name`. `.hiraku` segue `version: 1`.
+  Travados/ocultos saem de `interactiveElements`; ocultos não são desenhados (`hiddenIds` → `Renderer.syncPage`).
+- **Seleção**: caixa da esquerda p/ direita = só o que está dentro; da direita p/ esquerda = o que toca (verde, tracejada) —
+  `useTool.boxMode`. Alt ao começar a arrastar = arrasta uma cópia. Guias inteligentes e grade: `core/align.ts#snapMove`
+  (bordas, centros, espaço igual; Ctrl segurado desliga), desenhadas pelo renderer (`SelectionUI.guides`, `context`).
+- **Alinhar** (`core/align.ts` puro + `core/alignActions.ts`): grupos contam como um objeto; com um só, alinha à folha/área visível.
+- **Janelas** (`core/docking.ts`, puro): 4 áreas (pilhas de abas com peso, largura/altura, recolher em ícones) + janelas
+  flutuantes + `last` (fechar e reabrir no mesmo lugar). `dropPanels` é a única operação de mover (aba, dividir, borda, flutuar).
+  UI em `components/DockHost.tsx` (`WindowChrome`): indicadores de encaixe por `targetAt`, divisórias, `clampFloats` ao abrir/
+  redimensionar. As medidas viram variáveis CSS no `<body>` (`--insetT/B/L/R`, `--chromeT`, `--statusH`…): todo elemento fixo
+  antigo se afasta delas — **elemento fixo novo deve usar essas variáveis**. Painel novo = id em `PANELS` + caso em `PanelView`
+  + ícone em `PANEL_ICON` (os painéis antigos com `.panel` perdem a moldura dentro do encaixe pelo CSS).
+- **Áreas de trabalho** (`core/workspace.ts`): dock + barras "lego" (`useLayout`) + `Chrome` (menu, opções, status, pílulas).
+  7 prontas (Geral, Desenho, Mapas mentais, Escrita, Estudos, Organização, Minimalista = visual clássico); alterações são salvas na
+  área ativa; "Restaurar" volta ao padrão; criar/duplicar/renomear/excluir/importar/exportar. Tela estreita começa na Minimalista.
+  Trocar de área nunca toca no documento.
+- **Barras**: `MenuBar` (itens = ids de comando), `OptionsBar`/`ToolOptions` (mesma lógica no painel Propriedades, modo
+  "bar"/"panel"), `StatusBar`, `ContextBar` (um objeto / vários / grupo; some durante arraste via `useUI.busy`), `ToolGroup`
+  (ferramentas agrupadas: segurar, botão direito ou seta ↓ abre o flyout; lembra a última por grupo).
+- **Texto**: 12 fontes embutidas (`src/fonts.ts`, @fontsource, subconjunto latin) + as do sistema; `TextElement` ganhou `bold`,
+  `italic`, `underline`, `strike`, `lineHeight`, `letterSpacing`, `bg` (opcionais). `measureBlock(text, family, size, fx)`.
+  `loadFonts()` + `Renderer.repaintText()` redesenham quando as fontes chegam. `TextBar`/`TextPanelBody` (components/TextControls)
+  valem para o texto em edição, a seleção e o padrão dos próximos.

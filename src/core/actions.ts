@@ -7,10 +7,14 @@ import { subtreeIds, tint, withDependents } from "./mindmap";
 import { applyXform, moveXform } from "./selection";
 import { selectActivePage, useDoc, useSel, useTool } from "./store";
 import { beginEditText, useEdit } from "./textEdit";
-import { measureBlock } from "./text";
-import { interactiveElements } from "./layers";
+import { TextFx, measureBlock } from "./text";
+import { activeLayerId, interactiveElements } from "./layers";
+import { cloneGroups } from "./groups";
+import { Page } from "./model";
 
 let clipboard: HirakuElement[] = [];
+/** Página de onde veio a cópia (para recriar os grupos dela). */
+let clipboardSrc: Pick<Page, "groups" | "elements"> = { elements: [] };
 let pasteCount = 0;
 
 export const selectedElements = (): HirakuElement[] => {
@@ -28,9 +32,27 @@ export const selectedWithDependents = (): HirakuElement[] => {
 const cloneAt = (els: HirakuElement[], dx: number, dy: number): HirakuElement[] =>
   reidentify(els.map((e) => applyXform(e, moveXform(dx, dy))));
 
+/**
+ * Acrescenta cópias à página ativa num passo só, recriando os grupos copiados inteiros (`src` = página de origem).
+ * Devolve os ids das cópias.
+ */
+export function addCopies(originals: HirakuElement[], copies: HirakuElement[], src: Pick<Page, "groups" | "elements">): string[] {
+  const st = useDoc.getState();
+  const page = selectActivePage(st);
+  const { groups, copies: out } = cloneGroups(src as Page, originals, copies, page);
+  const layerIds = new Set(page.layers.map((l) => l.id));
+  const layer = activeLayerId(page);
+  const fixed = out.map((e) => (e.layerId && layerIds.has(e.layerId) ? e : ({ ...e, layerId: layer } as HirakuElement)));
+  st.editPage((p) => ({ ...p, groups: groups.length ? [...(p.groups ?? []), ...groups] : p.groups, elements: [...p.elements, ...fixed] }));
+  return fixed.map((e) => e.id);
+}
+
 export function selectAll() {
   useSel.getState().set(interactiveElements(selectActivePage(useDoc.getState())).map((e) => e.id));
 }
+
+/** Página ativa (atalho para as ações). */
+const activePage = () => selectActivePage(useDoc.getState());
 
 export function deleteSelection() {
   const sel = useSel.getState().ids;
@@ -49,15 +71,16 @@ export function deleteSelection() {
 export function duplicateSelection() {
   const els = selectedWithDependents();
   if (!els.length) return;
-  const copies = cloneAt(els, 16, 16);
-  useDoc.getState().addElements(copies);
-  useSel.getState().set(copies.map((c) => c.id));
+  const ids = addCopies(els, cloneAt(els, 16, 16), activePage());
+  useSel.getState().set(ids);
 }
 
 export function copySelection() {
   const els = selectedWithDependents();
   if (!els.length) return;
   clipboard = els;
+  const p = activePage();
+  clipboardSrc = { groups: p.groups, elements: p.elements };
   pasteCount = 0;
 }
 
@@ -69,9 +92,8 @@ export function cutSelection() {
 export function pasteClipboard() {
   if (!clipboard.length) return;
   pasteCount++;
-  const copies = cloneAt(clipboard, 16 * pasteCount, 16 * pasteCount);
-  useDoc.getState().addElements(copies);
-  useSel.getState().set(copies.map((c) => c.id));
+  const ids = addCopies(clipboard, cloneAt(clipboard, 16 * pasteCount, 16 * pasteCount), clipboardSrc);
+  useSel.getState().set(ids);
 }
 
 export function nudgeSelection(dx: number, dy: number) {
@@ -137,17 +159,29 @@ export function editSelectedText(): boolean {
 }
 
 /** Fonte/tamanho/alinhamento: aplica à edição em curso ou, senão, aos textos selecionados. */
-export function restyleText(patch: Partial<Pick<TextElement, "fontFamily" | "fontSize" | "align">>) {
-  if (useEdit.getState().session) {
-    useEdit.getState().patch(patch);
+export type TextPatch = Partial<Pick<TextElement, "fontFamily" | "fontSize" | "align" | "color">> & TextFx;
+const FX_KEYS: (keyof TextFx)[] = ["bold", "italic", "underline", "strike", "lineHeight", "letterSpacing", "bg"];
+
+/** Fonte/tamanho/alinhamento/estilo: aplica à edição em curso ou, senão, aos textos selecionados (e vira o padrão dos novos). */
+export function restyleText(patch: TextPatch) {
+  const fxPatch: TextFx = {};
+  const base: Partial<Pick<TextElement, "fontFamily" | "fontSize" | "align" | "color">> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if ((FX_KEYS as string[]).includes(k)) (fxPatch as Record<string, unknown>)[k] = v;
+    else (base as Record<string, unknown>)[k] = v;
+  }
+  const ses = useEdit.getState().session;
+  if (ses) {
+    useEdit.getState().patch({ ...base, fx: { ...ses.fx, ...fxPatch } });
     return;
   }
   const els = selectedElements().filter((e): e is TextElement => e.type === "text");
   if (!els.length) return;
   useDoc.getState().updateElements(
     els.map((e) => {
-      const n = { ...e, ...patch };
-      const m = measureBlock(n.text, n.fontFamily, n.fontSize);
+      const n = { ...e, ...base, ...fxPatch } as TextElement;
+      for (const k of FX_KEYS) if (n[k] === undefined || n[k] === false) delete n[k];
+      const m = measureBlock(n.text, n.fontFamily, n.fontSize, n);
       return { ...n, w: m.w, h: m.h };
     }),
   );

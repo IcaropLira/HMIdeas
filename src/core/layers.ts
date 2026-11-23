@@ -2,6 +2,7 @@
 import { create } from "zustand";
 import { HirakuElement, ID, Layer, Page, makeLayer, newId } from "./model";
 import { reidentify } from "./binding";
+import { isHiddenEl, isLockedEl } from "./groups";
 
 /** Camada efetiva de um elemento: a dele, se existir na página; senão a primeira (arquivos antigos). */
 export function layerIdOf(page: Pick<Page, "layers">, el: HirakuElement): ID {
@@ -20,7 +21,11 @@ export function interactiveElements(page: Page): HirakuElement[] {
   const hit = interactiveCache.get(page);
   if (hit) return hit;
   const off = new Set((page.layers ?? []).filter((l) => !l.visible || l.locked).map((l) => l.id));
-  const out = off.size ? page.elements.filter((e) => !off.has(layerIdOf(page, e))) : page.elements;
+  // também ficam de fora objetos travados/ocultos (por eles mesmos ou pelo grupo)
+  const flagged = page.elements.some((e) => e.locked || e.invisible) || (page.groups ?? []).some((g) => g.locked || g.hidden);
+  const out = off.size || flagged
+    ? page.elements.filter((e) => !off.has(layerIdOf(page, e)) && !(flagged && (isLockedEl(page, e) || isHiddenEl(page, e))))
+    : page.elements;
   interactiveCache.set(page, out);
   return out;
 }
@@ -31,7 +36,8 @@ export function visibleElements(page: Page): HirakuElement[] {
   const hit = visibleCache.get(page);
   if (hit) return hit;
   const hidden = new Set((page.layers ?? []).filter((l) => !l.visible).map((l) => l.id));
-  const out = hidden.size ? page.elements.filter((e) => !hidden.has(layerIdOf(page, e))) : page.elements;
+  const flagged = page.elements.some((e) => e.invisible) || (page.groups ?? []).some((g) => g.hidden);
+  const out = hidden.size || flagged ? page.elements.filter((e) => !hidden.has(layerIdOf(page, e)) && !(flagged && isHiddenEl(page, e))) : page.elements;
   visibleCache.set(page, out); // mesma página → mesma lista (seletores do React não entram em laço)
   return out;
 }

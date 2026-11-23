@@ -9,39 +9,21 @@ import { initUpdates } from "./core/updater";
 import { PageNav, Sidebar, Toast } from "./components/Pages";
 import { Toolbar } from "./components/Toolbar";
 import { NotebookManager } from "./components/NotebookManager";
-import { zSelection } from "./components/LayersPanel";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { AlgoPlayer } from "./components/AlgoPlayer";
 import { BlockEditor } from "./components/BlockEditor";
 import { BlockInlineEditor } from "./components/BlockInlineEditor";
 import { PageEditor } from "./components/PageEditor";
-import { usePageEdit } from "./core/pageEdit";
 import { BlockLibrary } from "./components/BlockGallery";
-import { useUI } from "./core/ui";
 import { EdgeLabelEditor } from "./components/EdgeLabelEditor";
-import { isLinear } from "./core/model";
-import { connectedVertex, isVertex, useEdgeLabel, useGraphTool } from "./core/graphEdit";
-import { editSelectedBlock } from "./core/blockView";
 import { useTheme } from "./core/theme";
-import { copyWithMark, initPaste } from "./components/clipboard";
-import {
-  deleteSelection, duplicateSelection, editSelectedText,
-  goPage, nudgeSelection, selectAll,
-} from "./core/actions";
-import {
-  addChildToSelection, addSiblingToSelection, collapseMap, connectSelection, editSelectedLabel, fitToSelection,
-  selectNeighbor, toggleCollapseSelection, ungroupSelection, wrapSelectionInFrame,
-} from "./core/mapActions";
-import { selectActivePage } from "./core/store";
+import { initPaste } from "./components/clipboard";
 import { initPageViewSync } from "./core/pageView";
-import { ToolId, useDoc, useSel, useTool } from "./core/store";
-
-const TOOL_KEYS: Record<string, ToolId> = {
-  n: "vertex", g: "edge",
-  v: "select", l: "lasso", p: "pen", e: "eraser", h: "hand", r: "rect", o: "ellipse", d: "diamond", a: "arrow", t: "text", m: "mindmap", f: "frame",
-  // numeração igual à do Excalidraw
-  "1": "select", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "0": "eraser",
-};
+import { initWorkspaces } from "./core/workspace";
+import { handleKey } from "./components/commands";
+import { WindowChrome } from "./components/DockHost";
+import { ContextBar } from "./components/ContextBar";
+import { CommandPalette } from "./components/CommandPalette";
 
 function FocusExit() {
   const focus = useTheme((s) => s.focus);
@@ -55,99 +37,10 @@ export default function App() {
   useEffect(() => initUpdates(), []);
   useEffect(() => initPaste(), []);
 
+  useEffect(() => initWorkspaces(), []);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement || (e.target as HTMLElement)?.isContentEditable) return;
-      if (usePageEdit.getState().id) return; // o editor de página é modal: os atalhos do quadro ficam desligados
-      const mod = e.ctrlKey || e.metaKey;
-      const k = e.key.toLowerCase();
-
-      if (mod) {
-        const run = (fn: () => void) => { e.preventDefault(); fn(); };
-        if (k === "z") run(() => (e.shiftKey ? useDoc.getState().redo() : useDoc.getState().undo()));
-        else if (k === "y") run(() => useDoc.getState().redo());
-        else if (k === "a") run(selectAll);
-        else if (k === "d") run(duplicateSelection);
-        else if (k === "c") run(copyWithMark);
-        else if (k === "x") run(() => { copyWithMark(); deleteSelection(); });
-        // Ctrl+V: sem preventDefault aqui, para o navegador disparar o evento `paste` (ver components/clipboard.ts)
-        else if (k === "g") run(() => (e.shiftKey ? ungroupSelection() : wrapSelectionInFrame()));
-        else if (k === "enter") run(() => addChildToSelection());
-        else if (k === ".") run(() => useTheme.getState().setFocus(!useTheme.getState().focus));
-        else if (e.code === "BracketRight") run(() => zSelection(e.shiftKey ? "front" : "forward"));
-        else if (e.code === "BracketLeft") run(() => zSelection(e.shiftKey ? "back" : "backward"));
-        return;
-      }
-
-      const one = (() => {
-        const ids = useSel.getState().ids;
-        if (ids.length !== 1) return undefined;
-        const all = selectActivePage(useDoc.getState()).elements;
-        const el = all.find((x) => x.id === ids[0]);
-        return el ? { el, vertex: isVertex(el, all) } : undefined;
-      })();
-      const oneVertex = !!one?.vertex;
-      const oneNode = one?.el.type === "node" && !oneVertex;
-
-      if (k === "tab" && !e.shiftKey && oneVertex) {
-        // Tab num vértice: novo vértice já ligado a ele (o novo fica selecionado → Tab de novo continua o caminho)
-        e.preventDefault();
-        const all = selectActivePage(useDoc.getState()).elements;
-        const g = useGraphTool.getState();
-        const r = connectedVertex(all, one!.el.id, { directed: g.directed, label: g.weighted ? "1" : undefined });
-        if (r) {
-          const fixed = one!.el.type === "node" && !one!.el.vertex ? [{ ...one!.el, vertex: true }] : [];
-          if (fixed.length) useDoc.getState().replaceElements([...all.map((x) => (x.id === one!.el.id ? fixed[0] : x)), r.vertex, r.edge]);
-          else useDoc.getState().addElements([r.vertex, r.edge]);
-          useSel.getState().set([r.vertex.id]);
-          if (g.weighted) useEdgeLabel.getState().open(r.edge.id);
-        }
-      } else if (k === "enter" && one && isLinear(one.el)) {
-        e.preventDefault();
-        useEdgeLabel.getState().open(one.el.id);
-      } else if (k === "tab" && !e.shiftKey) {
-        if (addChildToSelection()) e.preventDefault();
-      } else if (k === "f2") {
-        if (editSelectedLabel()) e.preventDefault();
-      } else if (k === "enter" && oneNode) {
-        e.preventDefault();
-        addSiblingToSelection(e.shiftKey);
-      } else if (oneNode && !e.shiftKey && k.startsWith("arrow")) {
-        e.preventDefault();
-        selectNeighbor(k === "arrowleft" ? "left" : k === "arrowright" ? "right" : k === "arrowup" ? "up" : "down");
-      } else if (k === "c" && useSel.getState().ids.length) {
-        if (e.shiftKey) collapseMap(true);
-        else toggleCollapseSelection();
-      } else if (k === "k") {
-        connectSelection();
-      } else if (k === "!") {
-        fitToSelection(true);
-      } else if (k === "@") {
-        fitToSelection(false);
-      } else if (k === "delete" || k === "backspace") {
-        e.preventDefault();
-        deleteSelection();
-      } else if (k === "pageup" || k === "pagedown") {
-        e.preventDefault();
-        goPage(k === "pageup" ? -1 : 1);
-      } else if (k === "escape") {
-        useSel.getState().clear();
-        if (useTool.getState().picking) useTool.getState().set({ picking: false });
-      } else if (k.startsWith("arrow") && useSel.getState().ids.length) {
-        e.preventDefault();
-        const n = e.shiftKey ? 10 : 1;
-        nudgeSelection(k === "arrowleft" ? -n : k === "arrowright" ? n : 0, k === "arrowup" ? -n : k === "arrowdown" ? n : 0);
-      } else if (k === "enter") {
-        if (editSelectedText() || editSelectedLabel() || editSelectedBlock()) e.preventDefault(); // Enter edita o texto selecionado
-      } else if (k === "z" && !mod) {
-        useTool.getState().setTool(e.shiftKey ? "laserpen" : "laser");
-      } else if (k === "b" && !e.shiftKey) {
-        e.preventDefault(); // senão a letra cai na busca da biblioteca
-        useUI.getState().setLibraryOpen(true);
-      } else if (TOOL_KEYS[k]) {
-        useTool.getState().setTool(TOOL_KEYS[k]);
-      }
-    };
+    // Todo o teclado passa pelo registro de comandos (atalhos personalizáveis: components/commands.ts + core/keymap.ts).
+    const onKey = (e: KeyboardEvent) => { handleKey(e); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -155,6 +48,7 @@ export default function App() {
   return (
     <>
       <CanvasView />
+      <WindowChrome />
       <PageNav />
       <NotebookManager />
       <Sidebar />
@@ -169,6 +63,8 @@ export default function App() {
       <EdgeLabelEditor />
       <TextEditor />
       <LabelEditor />
+      <ContextBar />
+      <CommandPalette />
       <Toast />
       <UpdateBanner />
       <WebGLNotice />

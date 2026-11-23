@@ -29,8 +29,9 @@ function El({ el }: { el: HirakuElement }) {
     const lines = el.text.split("\n");
     const x = el.align === "center" ? el.x + el.w / 2 : el.align === "right" ? el.x + el.w : el.x;
     return (
-      <text x={x} y={el.y} fontSize={el.fontSize} fontFamily={FONT_CSS[el.fontFamily]} fill={safeColor(el.color, "#1B2233")} textAnchor={el.align === "center" ? "middle" : el.align === "right" ? "end" : "start"} opacity={el.opacity}>
-        {lines.map((l, i) => <tspan key={i} x={x} dy={i === 0 ? el.fontSize * 0.95 : el.fontSize * LINE_HEIGHT}>{l || " "}</tspan>)}
+      <text x={x} y={el.y} fontSize={el.fontSize} fontFamily={FONT_CSS[el.fontFamily]} fill={safeColor(el.color, "#1B2233")} textAnchor={el.align === "center" ? "middle" : el.align === "right" ? "end" : "start"} opacity={el.opacity}
+        fontWeight={el.bold ? 700 : undefined} fontStyle={el.italic ? "italic" : undefined} textDecoration={[el.underline && "underline", el.strike && "line-through"].filter(Boolean).join(" ") || undefined}>
+        {lines.map((l, i) => <tspan key={i} x={x} dy={i === 0 ? el.fontSize * 0.95 : el.fontSize * (el.lineHeight ?? LINE_HEIGHT)}>{l || " "}</tspan>)}
       </text>
     );
   }

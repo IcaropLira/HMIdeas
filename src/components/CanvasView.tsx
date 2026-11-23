@@ -25,6 +25,9 @@ import { clampScroll, scrollLayout } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
 import { useAlgo } from "../core/algoView";
 import { interactiveElements, layerIdOf } from "../core/layers";
+import { hiddenIds } from "../core/groups";
+import { loadFonts } from "../core/text";
+import { useGroupCtx } from "../core/groupActions";
 import { wheelFlip } from "../core/pageView";
 import { makeEdge, makeVertex, nextVertexName, useEdgeLabel, useGraphTool, vertexAt } from "../core/graphEdit";
 
@@ -254,7 +257,7 @@ export function CanvasView() {
       const page = selectActivePage(useDoc.getState());
       renderer.setPaper(page.paper, page.background, page.paperScale ?? 1, page.lineColor ?? null);
       renderer.setSheet(page.size ?? null);
-      renderer.syncPage(page.elements, page.layers);
+      renderer.syncPage(page.elements, page.layers, hiddenIds(page));
       // Poda ids de elementos que não existem mais (apagados, desfeitos…).
       const alive = new Set(page.elements.map((e) => e.id));
       const ids = useSel.getState().ids;
@@ -271,6 +274,7 @@ export function CanvasView() {
       }
       try {
         await renderer.init(canvas, host);
+        void loadFonts().then(() => renderer.repaintText());
       } catch (e) {
         console.error("Falha ao iniciar o renderer", e);
         useGfx.setState({ problem: "init-failed" });
@@ -298,6 +302,7 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
+        useGroupCtx.subscribe(() => selectCtl.refresh()),
         (() => { const t = useTool.getState(); renderer.laserConfig({ color: t.laserColor, trail: t.laserTrail, hold: t.laserHold }); return () => undefined; })(),
         useAlgo.subscribe((s, prev) => { if (s.overlay !== prev.overlay) renderer.setAlgoOverlay(s.overlay); }),
         // O texto em edição some do canvas (a <textarea> o substitui).

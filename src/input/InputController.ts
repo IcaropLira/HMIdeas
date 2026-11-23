@@ -19,6 +19,8 @@ export interface Sample {
   eraserTip: boolean;
   shift: boolean;
   alt: boolean;
+  /** Ctrl/Cmd apertado (desliga o encaixe enquanto arrasta). */
+  ctrl?: boolean;
 }
 
 export interface InputHandlers {
@@ -113,6 +115,7 @@ export class InputController {
       eraserTip: e.pointerType === "pen" && ((e.buttons & 32) !== 0 || e.button === 5),
       shift: e.shiftKey,
       alt: e.altKey,
+      ctrl: e.ctrlKey || e.metaKey,
     };
   }
 

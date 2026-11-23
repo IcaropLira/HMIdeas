@@ -3,16 +3,33 @@
 import { parseDoc, serializeDoc } from "./serialize";
 import { useDoc } from "./store";
 import { useUI } from "./ui";
+import { create } from "zustand";
+
+/** Estado da cópia automática, para a barra de status. */
+export const useSaveState = create<{ state: "saved" | "pending" | "error"; at: number }>(() => ({ state: "saved", at: Date.now() }));
 
 const DB = "hm-ideas";
 const STORE = "kv";
 const KEY = "autosave";
 
+/**
+ * Abre o banco garantindo o depósito `kv`. Se outra parte do app abriu "hm-ideas" antes sem criar o depósito
+ * (leitura da cópia antiga na tela inicial), sobe a versão e cria — antes a cópia automática falhava em silêncio.
+ */
 function open(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {
-    const r = indexedDB.open(DB, 1);
-    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
-    r.onsuccess = () => res(r.result);
+    const r = indexedDB.open(DB);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); };
+    r.onsuccess = () => {
+      const db = r.result;
+      if (db.objectStoreNames.contains(STORE)) { res(db); return; }
+      const v = db.version + 1;
+      db.close();
+      const u = indexedDB.open(DB, v);
+      u.onupgradeneeded = () => { if (!u.result.objectStoreNames.contains(STORE)) u.result.createObjectStore(STORE); };
+      u.onsuccess = () => res(u.result);
+      u.onerror = () => rej(u.error);
+    };
     r.onerror = () => rej(r.error);
   });
 }
@@ -48,7 +65,9 @@ export function initAutosave(restore = true): () => void {
 
   const flush = () => {
     clearTimeout(timer);
-    void put(serializeDoc(useDoc.getState().doc)).catch(() => undefined);
+    void put(serializeDoc(useDoc.getState().doc))
+      .then(() => useSaveState.setState({ state: "saved", at: Date.now() }))
+      .catch(() => useSaveState.setState({ state: "error", at: Date.now() }));
   };
   const onHide = () => { if (document.visibilityState === "hidden") flush(); };
 
@@ -70,6 +89,7 @@ export function initAutosave(restore = true): () => void {
     if (off) return;
     unsub = useDoc.subscribe((s, prev) => {
       if (s.doc === prev.doc) return;
+      if (useSaveState.getState().state !== "pending") useSaveState.setState({ state: "pending" });
       clearTimeout(timer);
       timer = setTimeout(flush, 1200);
     });

@@ -27,7 +27,8 @@ import { interactiveElements } from "../core/layers";
 import { blockFields, blockHitAt, blockTap, fieldAt } from "../core/blocks";
 import { useBlockEdit, useBlockInline } from "../core/blockView";
 import { usePageEdit } from "../core/pageEdit";
-import { useEdgeLabel } from "../core/graphEdit";
+import { isVertex, makeEdge, makeVertex, nextVertexName, useEdgeLabel, useGraphTool, vertexAt } from "../core/graphEdit";
+import { NodeElement } from "../core/model";
 import { canvasMeasure, primsFor } from "../render/blockDraw";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
@@ -39,7 +40,9 @@ type Gesture =
   | { kind: "vertex"; el: LinearElement; index: number; inserted: boolean; startS: Pt; next: LinearElement | null }
   | { kind: "box"; startP: Pt; startS: Pt; base: string[]; moved: boolean }
   | { kind: "lasso"; pts: Pt[]; base: string[] }
-  | { kind: "connect"; from: Bindable; side: ConnSide; startS: Pt; P: Pt; target: Bindable | null; moved: boolean };
+  | { kind: "connect"; from: Bindable; side: ConnSide; startS: Pt; P: Pt; target: Bindable | null; moved: boolean }
+  /** Shift+arrastar de um vértice: aresta dirigida até outro (Ctrl+Shift: não dirigida); soltar no vazio cria um vértice. */
+  | { kind: "gedge"; from: NodeElement; startS: Pt; P: Pt; target: NodeElement | null; moved: boolean; directed: boolean; unitIds: string[] };
 
 const touchy = (s: Sample) => s.pointerType !== "mouse";
 
@@ -274,6 +277,12 @@ export function createSelectController(renderer: Renderer) {
           }
           const unitIds = idsForHit(pg, hit, ctx);
           const inGroup = unit.kind === "group";
+          if (s.shift && isVertex(hit, pg.elements)) {
+            // grafos: Shift+arrastar de um vértice puxa uma aresta (só Shift+clique, sem arrastar, continua somando à seleção)
+            lastTap = null;
+            g = { kind: "gedge", from: hit, startS: { x: s.x, y: s.y }, P, target: null, moved: false, directed: !s.ctrl, unitIds };
+            return;
+          }
           // blocos: áreas com comportamento próprio (caixinha da tarefa, virar flashcard, alternativa, estrelas…) respondem a
           // um toque; duplo toque num texto edita ali mesmo; duplo toque fora de texto abre o editor do bloco
           if (hit.type === "attachment" && hit.kind === "block" && hit.block && !s.shift) {
@@ -460,6 +469,19 @@ export function createSelectController(renderer: Renderer) {
           renderer.setSelectionUI({ ...buildUI(null, [], target ? outlinePath(target) : null), connectors: [] });
           break;
         }
+        case "gedge": {
+          if (!g.moved && Math.hypot(s.x - g.startS.x, s.y - g.startS.y) < 5) return;
+          g.moved = true;
+          g.directed = !s.ctrl;
+          const t = vertexAt(interactiveElements(page()), P, (touchy(s) ? 12 : 6) / c.zoom);
+          g.target = t && t.id !== g.from.id ? t : null;
+          g.P = P;
+          const tip = g.target ?? makeVertex("", P, "ghost");
+          const pv = makeEdge(g.from, tip, { directed: g.directed });
+          renderer.previewElement(g.target ? pv : { ...pv, endBinding: null, points: [pv.points[0], P] });
+          renderer.setSelectionUI({ ...buildUI(null, [], g.target ? outlinePath(g.target) : null), connectors: [] });
+          break;
+        }
         case "lasso": {
           const last = g.pts[g.pts.length - 1];
           for (const sm of samples) {
@@ -531,6 +553,36 @@ export function createSelectController(renderer: Renderer) {
             else if (n.type === "text") beginEditText(n);
           }
         }
+      } else if (done.kind === "gedge") {
+        renderer.previewElement(null);
+        if (!done.moved) {
+          // Shift+clique: soma/tira da seleção, como em qualquer objeto
+          const ids = useSel.getState().ids;
+          const on = done.unitIds.every((i) => ids.includes(i));
+          const drop = new Set(done.unitIds);
+          useSel.getState().set(on ? ids.filter((i) => !drop.has(i)) : [...ids, ...done.unitIds]);
+        } else {
+          const all = page().elements;
+          const gt = useGraphTool.getState();
+          const src = done.from.vertex ? done.from : { ...done.from, vertex: true };
+          const label = gt.weighted ? "1" : undefined;
+          let added: HirakuElement[];
+          let edgeId: string;
+          if (done.target) {
+            const e = makeEdge(src, done.target, { directed: done.directed, label }, all);
+            added = [e];
+            edgeId = e.id;
+          } else {
+            const v = makeVertex(nextVertexName(all), done.P);
+            const e = makeEdge(src, v, { directed: done.directed, label }, all);
+            added = [v, e];
+            edgeId = e.id;
+          }
+          if (!done.from.vertex) useDoc.getState().replaceElements([...all.map((x) => (x.id === src.id ? src : x)), ...added]);
+          else useDoc.getState().addElements(added);
+          useSel.getState().set([added[0].type === "node" ? added[0].id : done.from.id]);
+          if (gt.weighted) useEdgeLabel.getState().open(edgeId);
+        }
       } else if (done.kind === "lasso") {
         const pg = page();
         const ctx = currentCtx(pg);
@@ -546,7 +598,7 @@ export function createSelectController(renderer: Renderer) {
       g = null;
       useUI.getState().setBusy(false);
       if (done?.kind === "vertex") renderer.redrawNode(done.el.id, null);
-      else if (done?.kind === "connect") renderer.previewElement(null);
+      else if (done?.kind === "connect" || done?.kind === "gedge") renderer.previewElement(null);
       else if (done && "orig" in done) restore(done.orig, done.extra);
       refresh();
     },

@@ -28,6 +28,6 @@ describe("conexão rápida", () => {
     expect(sib.type === "attachment" && sib.x).toBeGreaterThan(200);
     const v = makeVertex("A", { x: 0, y: 0 });
     const nv = siblingFor(v, "s", { x: 0, y: 300 }, [v])!;
-    expect(nv.type === "node" && nv.vertex && nv.text).toBe("B");
+    expect(nv.type === "node" && nv.vertex && nv.text).toBe("1");
   });
 });

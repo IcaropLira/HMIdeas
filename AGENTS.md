@@ -91,6 +91,9 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   barra contextual, alinhar/distribuir/grade/guias, painel de objetos, 12 fontes e edição de texto, painéis acopláveis, menus,
   barra de opções/status e áreas de trabalho
 - [ ] 0.9: validar no tablet o arraste de abas/painéis com o dedo, o toque longo nas ferramentas agrupadas e a barra contextual
+- [x] 0.9.1: barras de bloquinhos sem alças, Inserir separado de Blocos, painéis mais limpos, vértices numerados e redondos,
+  Shift+arrastar cria aresta
+- [ ] 0.9.1: validar no tablet arrastar bloquinhos com a caneta/dedo (limiar de 12 px) sem disparar a ferramenta
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -140,6 +143,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - `core/autosave.ts` (IndexedDB) restaura a sessão: é o que torna seguro atualizar/recarregar. Não substitui o arquivo `.hiraku`.
 
 ### Barras personalizáveis (0014)
+> **0.9.1:** os "blocos" e as alças de 6 pontos foram substituídos por bloquinhos por ferramenta (ver "Barras de bloquinhos (0.9.1)").
+> O texto abaixo é histórico.
 - A barra de ferramentas é feita de **blocos** (`core/layout.ts`: ferramentas, formas, histórico, pincéis, cores, espessura, mapa, papel/ajustes).
   Cada bloco fica embaixo, na lateral esquerda/direita ou oculto; o padrão deixa embaixo só o essencial. O usuário escolhe em
   Configurações (engrenagem do canto superior direito, que NUNCA some). Layout salvo em localStorage (`hm-ideas-layout-v1`); `normalizeLayout`
@@ -395,3 +400,19 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   `italic`, `underline`, `strike`, `lineHeight`, `letterSpacing`, `bg` (opcionais). `measureBlock(text, family, size, fx)`.
   `loadFonts()` + `Renderer.repaintText()` redesenham quando as fontes chegam. `TextBar`/`TextPanelBody` (components/TextControls)
   valem para o texto em edição, a seleção e o padrão dos próximos.
+
+### Barras de bloquinhos (0.9.1)
+- `core/layout.ts` (`version: 3`): cada ferramenta/botão é um **item** (`ITEMS`); itens ficam em **barras** (`Bar`: `items`, `dock` =
+  esquerda/direita/embaixo ou `null` = solta em `x/y`, `vertical`). Barras do mesmo lado ficam lado a lado na ordem da lista.
+  `moveItems` (um item: para dentro de uma barra num índice, para uma borda = barra nova encaixada, ou solto = barra nova
+  flutuante) e `moveBar` (barra inteira; soltar sobre outra funde). Barra que fica vazia some. Numa barra solta de um item só,
+  soltar em cima/embaixo forma coluna e dos lados forma linha (`vertical` do alvo). `normalizeLayout` migra o formato 2 (blocos)
+  e aceita lixo. Item novo = entrada em `ITEMS` + JSX no `items` do `Toolbar.tsx` (+ onde entra nos padrões/áreas de trabalho).
+- Gesto sem alças (`components/BarDrag.tsx`): pressionar um item e passar de 6 px (mouse) / 12 px (caneta/dedo) arrasta; o clique
+  seguinte é engolido. Pressionar o espaço da barra arrasta a barra. `dropTargetAt` acha barra próxima (38 px) → borda (56 px) →
+  solto. Cópia fantasma segue o ponteiro; `.ins-mark` mostra onde entra; `.dropzones` acendem a borda. Travar = nada se arrasta.
+- Opções contextuais saíram das barras: o item **Opções da ferramenta** abre `PropsPanel` (mesmo conteúdo do painel Propriedades).
+  **Blocos** (biblioteca) e **Imagem e arquivos** (colar, arquivo, vídeo/link) são itens separados.
+- Grafos: vértices nomeados 1, 2, 3… (`nextVertexName`, geradores e matriz); `nodeLayout` mantém vértice redondo/cápsula;
+  `LabelEditor` redondo e centralizado; Selecionar + Shift+arrastar de um vértice = aresta dirigida, Ctrl+Shift = não dirigida
+  (gesto `gedge` em `selectTool`; Shift+clique sem arrastar continua somando à seleção).

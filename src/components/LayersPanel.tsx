@@ -65,6 +65,8 @@ export function LayersPanel() {
             edit((p) => mergeDown(p, active));
             if (below) setActive(below);
           }}><Icon><path d="M12 4v12M7 11l5 5 5-5M5 20h14" /></Icon></button>
+          <button className="btn sm" disabled={idx >= page.layers.length - 1} title="Subir camada" aria-label="Subir camada" onClick={() => edit((p) => moveLayer(p, active, 1))}><Icon><path d="M12 19V5M6 11l6-6 6 6" /></Icon></button>
+          <button className="btn sm" disabled={idx <= 0} title="Descer camada" aria-label="Descer camada" onClick={() => edit((p) => moveLayer(p, active, -1))}><Icon><path d="M12 5v14M6 13l6 6 6-6" /></Icon></button>
           <button className="btn sm danger" disabled={page.layers.length <= 1} title="Apagar camada (e o que está nela)" aria-label="Apagar camada" onClick={() => {
             const n = elementsOfLayer(page, active).length;
             edit((p) => removeLayer(p, active));
@@ -105,36 +107,25 @@ export function LayersPanel() {
         })}
       </ul>
 
-      <div className="row tight">
-        <button className="chip sm" disabled={idx >= page.layers.length - 1} onClick={() => edit((p) => moveLayer(p, active, 1))}>Subir camada</button>
-        <button className="chip sm" disabled={idx <= 0} onClick={() => edit((p) => moveLayer(p, active, -1))}>Descer camada</button>
-        <button className="chip sm" onClick={() => { setEditing(active); setName(cur.name); }}>Renomear</button>
+      <div className="layer-props" aria-label={`Camada ativa: ${cur.name}`}>
+        <label className="prow">
+          <span>Opacidade</span>
+          <input type="range" min={0.05} max={1} step={0.05} value={cur.opacity} onChange={(e) => edit((p) => patchLayer(p, active, { opacity: +e.target.value }))} aria-label={`Opacidade de ${cur.name}`} />
+          <output>{Math.round(cur.opacity * 100)}%</output>
+        </label>
+        <label className="prow">
+          <span>Mistura</span>
+          <select className="ob-select" value={cur.blend ?? "normal"} aria-label="Mistura da camada"
+            onChange={(e) => { const v = e.target.value; edit((p) => ({ ...p, layers: p.layers.map((l) => (l.id === active ? { ...l, blend: v === "normal" ? undefined : (v as typeof l.blend) } : l)) })); }}>
+            {LAYER_BLENDS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+          </select>
+        </label>
       </div>
-      <label className="slider">
-        <span>Opacidade de “{cur.name}”</span>
-        <input type="range" min={0.05} max={1} step={0.05} value={cur.opacity} onChange={(e) => edit((p) => patchLayer(p, active, { opacity: +e.target.value }))} />
-        <output>{Math.round(cur.opacity * 100)}%</output>
-      </label>
-
-      <div className="row tight" role="radiogroup" aria-label="Mistura da camada">
-        <span className="rowlabel">Mistura</span>
-        {LAYER_BLENDS.map((b) => (
-          <button key={b.id} role="radio" aria-checked={(cur.blend ?? "normal") === b.id} className={(cur.blend ?? "normal") === b.id ? "chip sm on" : "chip sm"}
-            onClick={() => edit((p) => ({ ...p, layers: p.layers.map((l) => (l.id === active ? { ...l, blend: b.id === "normal" ? undefined : b.id } : l)) }))}>{b.label}</button>
-        ))}
-      </div>
-
-      <div className="sec-title">Seleção ({sel.length})</div>
-      <div className="row tight">
-        <button className="chip sm" disabled={!sel.length} onClick={() => edit((p) => moveToLayer(p, sel, active))} title="Leva os elementos selecionados para a camada ativa">Mover para “{cur.name}”</button>
-      </div>
-      <div className="row tight" aria-label="Ordem da seleção">
-        <button className="chip sm" disabled={!sel.length} onClick={() => zSelection("front")} title="Ctrl+Shift+]">Trazer para frente</button>
-        <button className="chip sm" disabled={!sel.length} onClick={() => zSelection("forward")} title="Ctrl+]">Avançar</button>
-        <button className="chip sm" disabled={!sel.length} onClick={() => zSelection("backward")} title="Ctrl+[">Recuar</button>
-        <button className="chip sm" disabled={!sel.length} onClick={() => zSelection("back")} title="Ctrl+Shift+[">Enviar para trás</button>
-      </div>
-      <p className="hint">O que você desenha entra na camada ativa (destacada). Camadas ocultas ou travadas não são selecionadas nem apagadas.</p>
+      {sel.length > 0 && (
+        <button className="chip wide" onClick={() => edit((p) => moveToLayer(p, sel, active))} title="Leva os elementos selecionados para a camada ativa">
+          Mover {sel.length === 1 ? "o selecionado" : `os ${sel.length} selecionados`} para “{cur.name}”
+        </button>
+      )}
     </div>
   );
 }

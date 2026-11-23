@@ -17,6 +17,34 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Rede de segurança: se o app não montar (erro antes do React, webview antiga…), mostra o erro em vez de uma tela vazia. -->
+    <script>
+      (function () {
+        var errs = [];
+        function note(m) { if (m && errs.length < 5) errs.push(String(m)); }
+        window.addEventListener("error", function (e) { note(e.message || (e.target && e.target.src ? "falha ao carregar " + e.target.src : "")); }, true);
+        window.addEventListener("unhandledrejection", function (e) { note(e.reason && (e.reason.stack || e.reason.message || e.reason)); });
+        setTimeout(function () {
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount > 0) return;
+          var box = document.createElement("div");
+          box.setAttribute("style", "position:fixed;inset:0;display:grid;place-items:center;background:#EDF0F4;font:15px system-ui,sans-serif;color:#1B2233;padding:24px");
+          box.innerHTML = '<div style="max-width:560px;background:#fff;border-radius:18px;padding:24px;box-shadow:0 10px 40px #0002">' +
+            '<h2 style="margin:0 0 8px">O HM Ideas não conseguiu abrir</h2>' +
+            '<p style="margin:0 0 12px;color:#5B677D">Seus cadernos continuam guardados. Tente recarregar; se não resolver, restaure as preferências (barras, tema) ou envie o erro abaixo.</p>' +
+            '<pre id="hm-err" style="white-space:pre-wrap;max-height:180px;overflow:auto;background:#F4F6FA;border-radius:10px;padding:10px;font-size:12px"></pre>' +
+            '<div style="display:flex;gap:8px;margin-top:12px"><button id="hm-reload" style="min-height:44px;padding:0 16px;border-radius:10px;border:0;background:#5B4BD6;color:#fff;font-weight:600">Recarregar</button>' +
+            '<button id="hm-reset" style="min-height:44px;padding:0 16px;border-radius:10px;border:1px solid #CFD7E4;background:#fff">Restaurar preferências</button></div></div>';
+          document.body.appendChild(box);
+          document.getElementById("hm-err").textContent = errs.join("\n\n") || "Nenhum erro registrado (o app demorou demais para iniciar). Navegador: " + navigator.userAgent;
+          document.getElementById("hm-reload").onclick = function () { location.reload(); };
+          document.getElementById("hm-reset").onclick = function () {
+            ["hm-ideas-layout-v1", "hm-ideas-theme-v1", "hm-ideas:start-home", "hmideas-tool"].forEach(function (k) { try { localStorage.removeItem(k); } catch (_) {} });
+            location.reload();
+          };
+        }, 9000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

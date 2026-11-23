@@ -7,7 +7,7 @@ import { Camera, defaultCamera } from "./camera";
 import { activeLayerId } from "./layers";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
-export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | ShapeType | LinearType;
+export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "vertex" | "edge" | ShapeType | LinearType;
 
 const HISTORY_LIMIT = 200;
 

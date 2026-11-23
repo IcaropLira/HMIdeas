@@ -1,15 +1,18 @@
-// Modelos prontos: cada um GERA elementos nativos editáveis (formas, textos, setas, quadros), já dentro de um quadro
-// com título — mover o quadro leva o modelo inteiro. Puro: as miniaturas da galeria desenham exatamente estes elementos.
-import { solveArrow } from "./binding";
-import { ArrowHead, FontFamily, FrameElement, HirakuElement, ID, LinearElement, ShapeElement, ShapeType, TextAlign, TextElement, isLinear, newId } from "./model";
+// Modelos prontos = CONJUNTOS DE BLOCOS nativos (post-it, tarefas, tabela, linha do tempo, kanban, slide, documento…;
+// core/blocks.ts) e, nos diagramas, formas + setas ligadas — tudo dentro de um quadro com título (mover o quadro leva o modelo). Puro: as miniaturas da galeria desenham exatamente estes elementos.
+import { Bindable, solveArrow } from "./binding";
+import { BLOCK_COLORS, BLOCK_KINDS, BlockSpec, defaultBlock, STICKY_COLORS, blockContentHeight, defaultBlockSize } from "./blocks";
+import { blockAt } from "./blockElement";
+import { ArrowHead, AttachmentElement, FontFamily, FrameElement, HirakuElement, ID, LinearElement, ShapeElement, ShapeType, TextAlign, TextElement, isLinear, newId } from "./model";
 import { elementBounds } from "./selection";
 import { makeText } from "./text";
 import { Measure } from "./mindmap";
 import { MAP_TEMPLATES, buildMapTemplate } from "./mapTemplates";
 
-export type TemplateCategory = "organizar" | "estudar" | "estrategia" | "diagramas" | "apresentar" | "mapas";
+export type TemplateCategory = "blocos" | "organizar" | "estudar" | "estrategia" | "diagramas" | "apresentar" | "mapas";
 
 export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
+  { id: "blocos", label: "Blocos avulsos" },
   { id: "organizar", label: "Organizar" },
   { id: "estudar", label: "Estudar" },
   { id: "estrategia", label: "Estratégia" },
@@ -78,8 +81,31 @@ class Builder {
     });
   }
 
-  /** Seta ligada a duas formas (acompanha as formas quando elas se movem). */
-  connect(a: ShapeElement, b: ShapeElement, o: { color?: string; label?: string } = {}): LinearElement {
+  /** Bloco nativo (post-it, cartão, tarefas, tabela…) com canto em (x, y). Listas e cartões crescem para caber o texto. */
+  block(spec: BlockSpec, x: number, y: number, w?: number, h?: number): AttachmentElement {
+    const s = defaultBlockSize(spec);
+    const W = w ?? s.w;
+    const H = Math.max(h ?? s.h, blockContentHeight(spec, W));
+    return this.push(blockAt(spec, x, y, W, H));
+  }
+
+  /** Ajusta o quadro aberto para envolver o conteúdo (margem `pad`) e devolve os elementos. */
+  fit(pad = 24): HirakuElement[] {
+    const f = this.els.find((e): e is FrameElement => e.type === "frame" && e.id === this.frame);
+    if (!f) return this.els;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const e of this.els) {
+      if (e === f) continue;
+      const bb = elementBounds(e);
+      minX = Math.min(minX, bb.minX); minY = Math.min(minY, bb.minY); maxX = Math.max(maxX, bb.maxX); maxY = Math.max(maxY, bb.maxY);
+    }
+    if (!Number.isFinite(minX)) return this.els;
+    const nf = { ...f, x: minX - pad, y: minY - pad, w: maxX - minX + 2 * pad, h: maxY - minY + 2 * pad };
+    return this.els.map((e) => (e === f ? nf : e));
+  }
+
+  /** Seta ligada a duas formas/blocos (acompanha quando eles se movem). */
+  connect(a: Bindable, b: Bindable, o: { color?: string; label?: string } = {}): LinearElement {
     const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
     const arrow: LinearElement = {
       id: newId(), type: "arrow", points: [ac, bc], stroke: o.color ?? SOFT, strokeWidth: 2, strokeStyle: "solid",
@@ -109,101 +135,84 @@ class Builder {
 
 // ---------------- modelos ----------------
 export const TEMPLATES: Template[] = [
+  // ---------------- organizar ----------------
   {
-    id: "postits", name: "Post-its", hint: "Três notas adesivas coloridas", category: "organizar",
+    id: "brainstorm", name: "Brainstorm", hint: "Seis post-its coloridos para soltar ideias", category: "organizar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 660, 250, "Post-its", "#D9A92A");
-      [T.yellow, T.red, T.green].forEach((tone, i) => {
-        b.box(24 + i * 210, 30, 190, 190, tone, { rounded: false, sw: 0 });
-        b.text(40 + i * 210, 46, ["Ideia", "Lembrete", "Feito!"][i], { size: 20, color: tone.ink, family: "hand" });
-        b.text(40 + i * 210, 84, "Escreva aqui…", { size: 15, color: tone.ink, family: "hand" });
-      });
-      return b.els;
+      b.open(0, 0, 0, 0, "Brainstorm", "#D9A92A");
+      const ideas = ["Ideia maluca", "E se…?", "Problema a resolver", "Referência", "Pergunta", "Próximo passo"];
+      ideas.forEach((t, i) => b.block({ kind: "sticky", text: t, color: STICKY_COLORS[i % STICKY_COLORS.length] }, 24 + (i % 3) * 196, 30 + Math.floor(i / 3) * 196, 176, 176));
+      return b.fit();
     },
   },
   {
-    id: "todo", name: "Lista de tarefas", hint: "Caixinhas para marcar e prioridade", category: "organizar",
+    id: "postits", name: "Post-its", hint: "Três notas adesivas", category: "organizar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 420, 400, "Tarefas", "#4D6FC4");
-      b.text(24, 24, "Hoje", { size: 26 });
-      for (let i = 0; i < 7; i++) {
-        const y = 80 + i * 42;
-        b.box(26, y, 22, 22, T.white, { rounded: false });
-        b.line([{ x: 62, y: y + 22 }, { x: 330, y: y + 22 }], { color: "#D4DAE5", sw: 1 });
-        if (i < 3) b.box(346, y + 3, 46, 18, [T.red, T.yellow, T.green][i], { sw: 0 });
-      }
-      b.text(62, 82, "Primeira tarefa", { size: 15, color: SOFT });
-      return b.els;
+      b.open(0, 0, 0, 0, "Post-its", "#D9A92A");
+      ["Ideia", "Lembrete", "Feito!"].forEach((t, i) => b.block({ kind: "sticky", text: `${t}\nEscreva aqui…`, color: [STICKY_COLORS[0], STICKY_COLORS[2], STICKY_COLORS[5]][i] }, 24 + i * 220, 30, 200, 200));
+      return b.fit();
+    },
+  },
+  {
+    id: "todo", name: "Lista de tarefas", hint: "Hoje e esta semana, com caixinhas que marcam", category: "organizar",
+    build() {
+      const b = new Builder();
+      b.open(0, 0, 0, 0, "Tarefas", "#3E9A66");
+      b.block({ kind: "todo", title: "Hoje", color: BLOCK_COLORS[2], items: ["Responder mensagens", "Revisar anotações", "Exercícios", "Academia", "Ler 20 páginas"].map((text, i) => ({ text, done: i === 0 })) }, 24, 30, 300);
+      b.block({ kind: "todo", title: "Esta semana", color: BLOCK_COLORS[0], items: ["Entregar trabalho", "Marcar reunião", "Organizar arquivos"].map((text) => ({ text, done: false })) }, 344, 30, 300);
+      b.block({ kind: "callout", icon: "🎯", text: "Foco do dia: uma coisa importante de cada vez.", color: BLOCK_COLORS[3] }, 344, 230, 300, 80);
+      return b.fit();
     },
   },
   {
     id: "kanban", name: "Kanban", hint: "A fazer · Fazendo · Feito", category: "organizar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 720, 430, "Kanban", "#4D6FC4");
-      const cols = [["A fazer", T.gray], ["Fazendo", T.yellow], ["Feito", T.green]] as const;
-      cols.forEach(([name, tone], i) => {
-        const x = 20 + i * 232;
-        b.box(x, 20, 216, 390, T.gray, { fill: "#F5F7FB" });
-        b.box(x, 20, 216, 44, tone, { sw: 0 });
-        b.text(x + 14, 32, name, { size: 18, color: tone.ink });
-        for (let k = 0; k < (i === 0 ? 3 : i === 1 ? 2 : 1); k++) {
-          b.box(x + 12, 78 + k * 86, 192, 74, T.white);
-          b.text(x + 24, 90 + k * 86, "Tarefa", { size: 15 });
-          b.box(x + 24, 120 + k * 86, 52, 14, [T.blue, T.purple, T.teal][k], { sw: 0 });
-        }
-      });
-      return b.els;
+      b.open(0, 0, 0, 0, "Kanban", "#4D6FC4");
+      b.block({ kind: "kanban", title: "Projeto", color: BLOCK_COLORS[0], columns: [{ title: "A fazer", cards: ["Pesquisar referências", "Escrever rascunho", "Montar apresentação"] }, { title: "Fazendo", cards: ["Protótipo"] }, { title: "Revisão", cards: ["Texto da introdução"] }, { title: "Feito", cards: ["Definir tema"] }] }, 24, 30, 900, 400);
+      return b.fit();
     },
   },
   {
-    id: "week", name: "Semana", hint: "Planejamento de 7 dias", category: "organizar",
+    id: "week", name: "Semana", hint: "Sete listas, uma por dia", category: "organizar",
     build() {
       const b = new Builder();
-      const days = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
-      b.open(0, 0, 20 + days.length * 132, 360, "Semana", "#2B9AA0");
-      days.forEach((d, i) => {
-        const x = 16 + i * 132;
-        const tone = i >= 5 ? T.purple : T.teal;
-        b.box(x, 16, 124, 40, tone, { sw: 0 });
-        b.label(x + 62, 36, d, { size: 17, color: tone.ink });
-        b.box(x, 62, 124, 280, T.white);
-        for (let k = 1; k < 6; k++) b.line([{ x: x + 10, y: 62 + k * 46 }, { x: x + 114, y: 62 + k * 46 }], { color: "#E2E7EF", sw: 1 });
-      });
-      return b.els;
+      const days = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
+      b.open(0, 0, 0, 0, "Semana", "#2B9AA0");
+      days.forEach((d, i) => b.block({ kind: "todo", title: d, color: i >= 5 ? BLOCK_COLORS[4] : BLOCK_COLORS[5], items: [{ text: "", done: false }, { text: "", done: false }, { text: "", done: false }] }, 24 + (i % 4) * 236, 30 + Math.floor(i / 4) * 230, 220, 210));
+      b.block({ kind: "sticky", text: "Metas da semana", color: STICKY_COLORS[0] }, 24 + 3 * 236, 260, 220, 210);
+      return b.fit();
     },
   },
   {
-    id: "timeline", name: "Linha do tempo", hint: "Marcos em ordem", category: "organizar",
+    id: "timeline", name: "Linha do tempo", hint: "Marcos com data, distribuídos sozinhos", category: "organizar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 760, 260, "Linha do tempo", "#7B57C9");
-      b.line([{ x: 30, y: 130 }, { x: 730, y: 130 }], { color: "#7B57C9", sw: 4, end: "triangle" });
-      const tones = [T.blue, T.green, T.yellow, T.red, T.purple];
-      for (let i = 0; i < 5; i++) {
-        const x = 70 + i * 140;
-        const up = i % 2 === 0;
-        b.box(x - 9, 121, 18, 18, tones[i], { type: "ellipse", sw: 2 });
-        b.line([{ x, y: up ? 121 : 139 }, { x, y: up ? 92 : 168 }], { color: tones[i].stroke, sw: 2 });
-        b.card(x - 60, up ? 26 : 168, 120, 66, tones[i], `Etapa ${i + 1}`, "Data");
-      }
-      return b.els;
+      b.open(0, 0, 0, 0, "Linha do tempo", "#7B57C9");
+      b.block({ kind: "timeline", title: "Projeto", color: BLOCK_COLORS[4], items: [{ date: "Jan", text: "Ideia" }, { date: "Mar", text: "Pesquisa" }, { date: "Mai", text: "Protótipo" }, { date: "Ago", text: "Testes" }, { date: "Nov", text: "Lançamento" }] }, 24, 30, 820, 190);
+      return b.fit();
     },
   },
   {
-    id: "table", name: "Tabela", hint: "Grade 4 × 4 com cabeçalho", category: "organizar",
+    id: "table", name: "Tabela", hint: "Tabela de verdade: células editáveis, + linha/coluna", category: "organizar",
     build() {
       const b = new Builder();
-      const cw = 150, rh = 46, n = 4;
-      b.open(0, 0, cw * n + 40, rh * 5 + 40, "Tabela", "#4D6FC4");
-      for (let r = 0; r < 5; r++) for (let c = 0; c < n; c++) {
-        const head = r === 0;
-        b.box(20 + c * cw, 20 + r * rh, cw, rh, head ? T.blue : T.white, { rounded: false, sw: 1, fill: head ? T.blue.fill : r % 2 ? "#FFFFFF" : "#F6F8FC" });
-        if (head) b.label(20 + c * cw + cw / 2, 20 + rh / 2, `Coluna ${c + 1}`, { size: 15, color: T.blue.ink });
-      }
-      return b.els;
+      b.open(0, 0, 0, 0, "Tabela", "#4D6FC4");
+      b.block({ kind: "table", header: true, color: BLOCK_COLORS[0], rows: [["Item", "Responsável", "Prazo", "Status"], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""]] }, 24, 30, 600, 230);
+      return b.fit();
+    },
+  },
+  {
+    id: "meeting", name: "Reunião", hint: "Pauta, decisões e ações com dono", category: "organizar",
+    build() {
+      const b = new Builder();
+      b.open(0, 0, 0, 0, "Reunião", "#5E6B7E");
+      b.block({ kind: "doc", title: "Pauta", color: BLOCK_COLORS[7], body: "Data · participantes\n\n# Tópicos\n- abertura\n- status\n- próximos passos" }, 24, 30, 340, 420);
+      b.block({ kind: "table", header: true, color: BLOCK_COLORS[0], rows: [["Decisão", "Por quê"], ["", ""], ["", ""]] }, 384, 30, 380, 130);
+      b.block({ kind: "todo", title: "Ações", color: BLOCK_COLORS[2], items: [{ text: "Fulano: enviar resumo", done: false }, { text: "Ciclana: atualizar planilha", done: false }] }, 384, 180, 380);
+      return b.fit();
     },
   },
 
@@ -212,64 +221,61 @@ export const TEMPLATES: Template[] = [
     id: "cornell", name: "Notas Cornell", hint: "Palavras-chave · anotações · resumo", category: "estudar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 640, 760, "Notas Cornell", "#4D6FC4");
-      b.text(24, 22, "Assunto:", { size: 18, color: SOFT });
-      b.line([{ x: 24, y: 58 }, { x: 616, y: 58 }], { color: "#4D6FC4", sw: 2 });
-      b.box(24, 70, 170, 520, T.blue, { fill: "#EEF3FD", sw: 0, rounded: false });
-      b.text(36, 82, "Perguntas /\npalavras-chave", { size: 14, color: T.blue.ink });
-      b.text(212, 82, "Anotações da aula", { size: 14, color: SOFT });
-      for (let k = 1; k < 16; k++) b.line([{ x: 206, y: 82 + k * 32 }, { x: 616, y: 82 + k * 32 }], { color: "#E2E7EF", sw: 1 });
-      b.line([{ x: 24, y: 604 }, { x: 616, y: 604 }], { color: "#4D6FC4", sw: 2 });
-      b.box(24, 616, 592, 120, T.yellow, { fill: "#FFF8DC", sw: 0, rounded: false });
-      b.text(36, 628, "Resumo", { size: 15, color: T.yellow.ink });
-      return b.els;
+      b.open(0, 0, 0, 0, "Notas Cornell", "#4D6FC4");
+      b.block({ kind: "card", title: "Perguntas", body: "Palavras-chave e perguntas que a aula responde.", color: BLOCK_COLORS[0] }, 24, 30, 200, 520);
+      b.block({ kind: "doc", title: "Anotações da aula", color: BLOCK_COLORS[0], body: "# Assunto\nAnote aqui durante a aula.\n\n- ideia\n- exemplo" }, 240, 30, 420, 520);
+      b.block({ kind: "callout", icon: "📝", text: "Resumo: em 2–3 frases, o que você aprendeu?", color: BLOCK_COLORS[3] }, 24, 566, 636, 100);
+      return b.fit();
     },
   },
   {
     id: "chapter", name: "Resumo de conteúdo", hint: "Ideia central, conceitos, exemplos e dúvidas", category: "estudar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 700, 520, "Resumo", "#7B57C9");
-      b.box(20, 20, 660, 90, T.purple);
-      b.text(40, 34, "Ideia central", { size: 20, color: T.purple.ink });
-      b.text(40, 68, "Em uma frase, do que se trata?", { size: 14, color: SOFT });
-      b.card(20, 126, 320, 180, T.blue, "Conceitos-chave", "• \n• \n• ");
-      b.card(360, 126, 320, 180, T.green, "Exemplos", "• \n• ");
-      b.card(20, 322, 320, 178, T.yellow, "Fórmulas / regras");
-      b.card(360, 322, 320, 178, T.red, "Dúvidas", "?");
-      return b.els;
+      b.open(0, 0, 0, 0, "Resumo", "#7B57C9");
+      b.block({ kind: "callout", icon: "💡", text: "Ideia central: em uma frase, do que se trata?", color: BLOCK_COLORS[4] }, 24, 30, 660, 80);
+      b.block({ kind: "card", title: "Conceitos-chave", body: "• \n• \n• ", color: BLOCK_COLORS[0] }, 24, 126, 320, 180);
+      b.block({ kind: "card", title: "Exemplos", body: "• \n• ", color: BLOCK_COLORS[2] }, 364, 126, 320, 180);
+      b.block({ kind: "card", title: "Fórmulas / regras", body: "", color: BLOCK_COLORS[3] }, 24, 322, 320, 180);
+      b.block({ kind: "todo", title: "Dúvidas", color: BLOCK_COLORS[1], items: [{ text: "Perguntar ao professor…", done: false }] }, 364, 322, 320, 180);
+      return b.fit();
     },
   },
   {
     id: "flashcards", name: "Flashcards", hint: "Pergunta e resposta lado a lado", category: "estudar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 640, 470, "Flashcards", "#2B9AA0");
+      b.open(0, 0, 0, 0, "Flashcards", "#2B9AA0");
       for (let i = 0; i < 3; i++) {
-        const y = 24 + i * 146;
-        b.box(20, y, 290, 128, T.teal);
-        b.text(36, y + 12, `Pergunta ${i + 1}`, { size: 13, color: T.teal.ink });
-        b.box(330, y, 290, 128, T.white, { dashed: true });
-        b.text(346, y + 12, "Resposta", { size: 13, color: SOFT });
+        const y = 30 + i * 150;
+        b.block({ kind: "card", title: `Pergunta ${i + 1}`, body: "Escreva a pergunta…", color: BLOCK_COLORS[5] }, 24, y, 290, 130);
+        b.block({ kind: "sticky", text: "Resposta", color: STICKY_COLORS[5] }, 334, y, 290, 130);
       }
-      return b.els;
+      return b.fit();
     },
   },
   {
     id: "studyplan", name: "Plano de estudos", hint: "Matérias × dias da semana", category: "estudar",
     build() {
       const b = new Builder();
+      b.open(0, 0, 0, 0, "Plano de estudos", "#3E9A66");
       const days = ["Seg", "Ter", "Qua", "Qui", "Sex"];
       const subjects = ["Matemática", "Português", "Ciências", "História", "Inglês"];
-      b.open(0, 0, 160 + days.length * 104 + 20, 60 + subjects.length * 56 + 20, "Plano de estudos", "#3E9A66");
-      days.forEach((d, i) => b.label(160 + i * 104 + 52, 40, d, { size: 15, color: SOFT }));
-      subjects.forEach((s, r) => {
-        const tone = [T.blue, T.red, T.green, T.yellow, T.purple][r];
-        b.box(20, 64 + r * 56, 132, 46, tone, { sw: 0 });
-        b.text(32, 76 + r * 56, s, { size: 14, color: tone.ink });
-        days.forEach((_, i) => b.box(160 + i * 104, 64 + r * 56, 96, 46, T.white));
-      });
-      return b.els;
+      b.block({ kind: "table", header: true, color: BLOCK_COLORS[2], rows: [["", ...days], ...subjects.map((s) => [s, "", "", "", "", ""])] }, 24, 30, 700, 280);
+      b.block({ kind: "todo", title: "Metas", color: BLOCK_COLORS[2], items: [{ text: "Revisar a matéria da semana", done: false }, { text: "Fazer 1 simulado", done: false }] }, 744, 30, 260);
+      return b.fit();
+    },
+  },
+  {
+    id: "code", name: "Estudo de código", hint: "Código, explicação e pontos de atenção", category: "estudar",
+    build() {
+      const b = new Builder();
+      b.open(0, 0, 0, 0, "Estudo de código", "#3D4557");
+      const code = b.block({ kind: "code", lang: "python", color: BLOCK_COLORS[7], code: "def busca_binaria(v, x):\n    lo, hi = 0, len(v) - 1\n    while lo <= hi:\n        m = (lo + hi) // 2\n        if v[m] == x: return m\n        if v[m] < x: lo = m + 1\n        else: hi = m - 1\n    return -1" }, 24, 30, 460, 250);
+      const card = b.block({ kind: "card", title: "Como funciona", body: "Divide o intervalo ao meio a cada passo: O(log n).", color: BLOCK_COLORS[0] }, 560, 30, 280, 150);
+      b.connect(code, card);
+      b.block({ kind: "callout", icon: "⚠️", text: "Só funciona com o vetor ORDENADO.", color: BLOCK_COLORS[1] }, 560, 200, 280, 80);
+      return b.fit();
     },
   },
 
@@ -278,95 +284,85 @@ export const TEMPLATES: Template[] = [
     id: "swot", name: "Matriz SWOT", hint: "Forças, fraquezas, oportunidades e ameaças", category: "estrategia",
     build() {
       const b = new Builder();
-      b.open(0, 0, 640, 520, "SWOT", "#4D6FC4");
-      const q = [["Forças", "S", T.green], ["Fraquezas", "W", T.red], ["Oportunidades", "O", T.blue], ["Ameaças", "T", T.yellow]] as const;
-      q.forEach(([name, letter, tone], i) => {
-        const x = 20 + (i % 2) * 304, y = 20 + Math.floor(i / 2) * 244;
-        b.box(x, y, 296, 236, tone);
-        b.label(x + 268, y + 30, letter, { size: 34, color: tone.stroke });
-        b.text(x + 16, y + 14, name, { size: 20, color: tone.ink });
-        b.text(x + 16, y + 50, "• ", { size: 15, color: SOFT });
-      });
-      return b.els;
+      b.open(0, 0, 0, 0, "SWOT", "#4D6FC4");
+      const q = [["Forças (S)", BLOCK_COLORS[2]], ["Fraquezas (W)", BLOCK_COLORS[1]], ["Oportunidades (O)", BLOCK_COLORS[0]], ["Ameaças (T)", BLOCK_COLORS[3]]] as const;
+      q.forEach(([name, color], i) => b.block({ kind: "card", title: name, body: "• \n• \n• ", color }, 24 + (i % 2) * 316, 30 + Math.floor(i / 2) * 236, 300, 220));
+      return b.fit();
     },
   },
   {
-    id: "eisenhower", name: "Matriz de Eisenhower", hint: "Urgente × importante", category: "estrategia",
+    id: "eisenhower", name: "Matriz de Eisenhower", hint: "Urgente × importante, com listas", category: "estrategia",
     build() {
       const b = new Builder();
-      b.open(0, 0, 660, 560, "Prioridades", "#D2554A");
-      b.label(208, 30, "Urgente", { size: 15, color: SOFT });
-      b.label(512, 30, "Não urgente", { size: 15, color: SOFT });
-      const q = [["Fazer agora", T.red], ["Agendar", T.blue], ["Delegar", T.yellow], ["Eliminar", T.gray]] as const;
-      q.forEach(([name, tone], i) => {
-        const x = 60 + (i % 2) * 304, y = 52 + Math.floor(i / 2) * 248;
-        b.box(x, y, 296, 240, tone);
-        b.text(x + 16, y + 14, name, { size: 20, color: tone.ink });
-      });
-      b.text(14, 160, "Importante", { size: 13, color: SOFT });
-      b.text(14, 410, "Não\nimportante", { size: 13, color: SOFT });
-      return b.els;
+      b.open(0, 0, 0, 0, "Prioridades", "#D2554A");
+      b.label(214, 40, "Urgente", { size: 15, color: SOFT });
+      b.label(530, 40, "Não urgente", { size: 15, color: SOFT });
+      b.text(14, 170, "Importante", { size: 13, color: SOFT });
+      b.text(14, 420, "Não\nimportante", { size: 13, color: SOFT });
+      const q = [["Fazer agora", BLOCK_COLORS[1]], ["Agendar", BLOCK_COLORS[0]], ["Delegar", BLOCK_COLORS[3]], ["Eliminar", BLOCK_COLORS[7]]] as const;
+      q.forEach(([name, color], i) => b.block({ kind: "todo", title: name, color, items: [{ text: "", done: false }, { text: "", done: false }, { text: "", done: false }] }, 64 + (i % 2) * 316, 60 + Math.floor(i / 2) * 250, 300, 236));
+      return b.fit();
     },
   },
   {
     id: "proscons", name: "Prós e contras", hint: "Para decidir com calma", category: "estrategia",
     build() {
       const b = new Builder();
-      b.open(0, 0, 600, 420, "Decisão", "#3E9A66");
-      b.text(20, 20, "Decisão:", { size: 20 });
-      b.box(20, 64, 272, 336, T.green);
-      b.text(36, 78, "👍 Prós", { size: 19, color: T.green.ink });
-      b.box(308, 64, 272, 336, T.red);
-      b.text(324, 78, "👎 Contras", { size: 19, color: T.red.ink });
-      return b.els;
+      b.open(0, 0, 0, 0, "Decisão", "#3E9A66");
+      b.block({ kind: "callout", icon: "❓", text: "Decisão: escreva aqui a pergunta.", color: BLOCK_COLORS[7] }, 24, 30, 580, 70);
+      b.block({ kind: "card", title: "👍 Prós", body: "• \n• \n• ", color: BLOCK_COLORS[2] }, 24, 116, 282, 280);
+      b.block({ kind: "card", title: "👎 Contras", body: "• \n• \n• ", color: BLOCK_COLORS[1] }, 322, 116, 282, 280);
+      return b.fit();
     },
   },
   {
     id: "5w2h", name: "5W2H", hint: "Plano de ação em 7 perguntas", category: "estrategia",
     build() {
       const b = new Builder();
-      const rows = [["O quê?", "What"], ["Por quê?", "Why"], ["Onde?", "Where"], ["Quando?", "When"], ["Quem?", "Who"], ["Como?", "How"], ["Quanto?", "How much"]];
-      b.open(0, 0, 620, 40 + rows.length * 56, "5W2H", "#7B57C9");
-      rows.forEach(([pt, en], i) => {
-        const tone = i < 5 ? T.purple : T.blue;
-        b.box(20, 20 + i * 56, 150, 48, tone, { sw: 0 });
-        b.text(32, 26 + i * 56, pt, { size: 16, color: tone.ink });
-        b.text(32, 48 + i * 56, en, { size: 11, color: SOFT });
-        b.box(180, 20 + i * 56, 420, 48, T.white);
-      });
-      return b.els;
+      b.open(0, 0, 0, 0, "5W2H", "#7B57C9");
+      const rows = ["O quê? (What)", "Por quê? (Why)", "Onde? (Where)", "Quando? (When)", "Quem? (Who)", "Como? (How)", "Quanto? (How much)"];
+      b.block({ kind: "table", header: true, color: BLOCK_COLORS[4], rows: [["Pergunta", "Resposta"], ...rows.map((r) => [r, ""])] }, 24, 30, 620, 360);
+      return b.fit();
     },
   },
   {
     id: "bmc", name: "Canvas de negócio", hint: "Business Model Canvas (9 blocos)", category: "estrategia",
     build() {
       const b = new Builder();
-      b.open(0, 0, 1000, 600, "Modelo de negócio", "#2B9AA0");
-      const W = 192;
-      const cell = (x: number, y: number, w: number, h: number, t: string, tone: Tone) => { b.box(x, y, w, h, tone, { fill: "#FFFFFF" }); b.text(x + 12, y + 10, t, { size: 14, color: tone.ink }); };
-      cell(20, 20, W, 380, "Parceiros-chave", T.blue);
-      cell(20 + W, 20, W, 190, "Atividades-chave", T.blue);
-      cell(20 + W, 210, W, 190, "Recursos-chave", T.blue);
-      cell(20 + 2 * W, 20, W, 380, "Proposta de valor", T.red);
-      cell(20 + 3 * W, 20, W, 190, "Relacionamento", T.green);
-      cell(20 + 3 * W, 210, W, 190, "Canais", T.green);
-      cell(20 + 4 * W, 20, W, 380, "Segmentos de clientes", T.green);
-      cell(20, 400, 2.5 * W, 180, "Estrutura de custos", T.yellow);
-      cell(20 + 2.5 * W, 400, 2.5 * W, 180, "Fontes de receita", T.yellow);
-      return b.els;
+      b.open(0, 0, 0, 0, "Modelo de negócio", "#2B9AA0");
+      const W = 196, G = 8;
+      const cell = (x: number, y: number, w: number, h: number, t: string, color: string) => b.block({ kind: "card", title: t, body: "", color }, 24 + x * (W + G), 30 + y, w * W + (w - 1) * G, h);
+      cell(0, 0, 1, 388, "Parceiros-chave", BLOCK_COLORS[0]);
+      cell(1, 0, 1, 190, "Atividades-chave", BLOCK_COLORS[0]);
+      cell(1, 198, 1, 190, "Recursos-chave", BLOCK_COLORS[0]);
+      cell(2, 0, 1, 388, "Proposta de valor", BLOCK_COLORS[1]);
+      cell(3, 0, 1, 190, "Relacionamento", BLOCK_COLORS[2]);
+      cell(3, 198, 1, 190, "Canais", BLOCK_COLORS[2]);
+      cell(4, 0, 1, 388, "Segmentos de clientes", BLOCK_COLORS[2]);
+      b.block({ kind: "card", title: "Estrutura de custos", body: "", color: BLOCK_COLORS[3] }, 24, 426, 2.5 * W + 2 * G, 160);
+      b.block({ kind: "card", title: "Fontes de receita", body: "", color: BLOCK_COLORS[3] }, 24 + 2.5 * W + 3 * G, 426, 2.5 * W + 1 * G, 160);
+      return b.fit();
     },
   },
   {
     id: "retro", name: "Retrospectiva", hint: "Foi bem · Melhorar · Ações", category: "estrategia",
     build() {
       const b = new Builder();
-      b.open(0, 0, 720, 420, "Retrospectiva", "#4D6FC4");
-      ([["😀 Foi bem", T.green], ["🤔 Melhorar", T.yellow], ["🚀 Ações", T.blue]] as const).forEach(([n, tone], i) => {
-        b.box(20 + i * 232, 20, 216, 380, tone);
-        b.text(36 + i * 232, 34, n, { size: 19, color: tone.ink });
-        b.box(34 + i * 232, 80, 188, 80, T.yellow, { rounded: false, sw: 0 });
-      });
-      return b.els;
+      b.open(0, 0, 0, 0, "Retrospectiva", "#4D6FC4");
+      b.block({ kind: "kanban", title: "Sprint", color: BLOCK_COLORS[2], columns: [{ title: "😀 Foi bem", cards: ["Entregamos no prazo"] }, { title: "🤔 Melhorar", cards: ["Menos reuniões"] }, { title: "🚀 Ações", cards: ["Revisão às sextas"] }] }, 24, 30, 700, 360);
+      return b.fit();
+    },
+  },
+  {
+    id: "project", name: "Projeto", hint: "Objetivo, cronograma, kanban e riscos", category: "estrategia",
+    build() {
+      const b = new Builder();
+      b.open(0, 0, 0, 0, "Projeto", "#4D6FC4");
+      b.block({ kind: "callout", icon: "🎯", text: "Objetivo: o que muda quando o projeto terminar?", color: BLOCK_COLORS[0] }, 24, 30, 900, 70);
+      b.block({ kind: "timeline", title: "Cronograma", color: BLOCK_COLORS[4], items: [{ date: "S1", text: "Kick-off" }, { date: "S3", text: "MVP" }, { date: "S6", text: "Beta" }, { date: "S8", text: "Entrega" }] }, 24, 120, 900, 170);
+      b.block({ kind: "kanban", title: "Tarefas", color: BLOCK_COLORS[0], columns: [{ title: "A fazer", cards: ["Definir escopo"] }, { title: "Fazendo", cards: [] }, { title: "Feito", cards: [] }] }, 24, 310, 600, 300);
+      b.block({ kind: "todo", title: "Riscos", color: BLOCK_COLORS[1], items: [{ text: "Prazo apertado", done: false }, { text: "Dependência externa", done: false }] }, 644, 310, 280);
+      return b.fit();
     },
   },
 
@@ -469,33 +465,36 @@ export const TEMPLATES: Template[] = [
     },
   },
 
+
   // ---------------- apresentar ----------------
   {
-    id: "slides", name: "Slides", hint: "Três slides 16:9 para apresentar", category: "apresentar",
+    id: "slides", name: "Slides", hint: "Três slides 16:9 numerados", category: "apresentar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 1060, 290, "Apresentação", "#7B57C9");
-      for (let i = 0; i < 3; i++) {
-        const x = 20 + i * 344;
-        b.box(x, 30, 328, 184.5, T.white, { rounded: false, sw: 1 });
-        b.box(x, 30, 328, 10, [T.purple, T.red, T.teal][i], { rounded: false, sw: 0, fill: [T.purple, T.red, T.teal][i].stroke });
-        b.text(x + 20, 58, i === 0 ? "Título da apresentação" : `Tópico ${i}`, { size: i === 0 ? 20 : 18 });
-        b.text(x + 20, 96, i === 0 ? "Seu nome · data" : "• Ponto principal\n• Detalhe", { size: 13, color: SOFT });
-        b.text(x + 4, 224, `Slide ${i + 1}`, { size: 12, color: SOFT });
-      }
-      return b.els;
+      b.open(0, 0, 0, 0, "Apresentação", "#7B57C9");
+      const slides = [["Título da apresentação", "Seu nome · data"], ["Tópico 1", "- Ponto principal\n- Detalhe\n- Exemplo"], ["Conclusão", "- O que fica\n- Próximos passos"]];
+      slides.forEach(([title, body], i) => b.block({ kind: "slide", title, body, number: i + 1, color: [BLOCK_COLORS[4], BLOCK_COLORS[1], BLOCK_COLORS[5]][i] }, 24 + i * 380, 30, 360, 202));
+      return b.fit();
     },
   },
   {
-    id: "doc", name: "Página A4", hint: "Folha em branco com título e linhas", category: "apresentar",
+    id: "doc", name: "Página A4", hint: "Documento com título, seções e listas", category: "apresentar",
     build() {
       const b = new Builder();
-      b.open(0, 0, 595, 842, "Documento", "#5E6B7E");
-      b.box(0, 0, 595, 842, T.white, { rounded: false, sw: 0 });
-      b.text(56, 56, "Título", { size: 30 });
-      b.text(56, 104, "Subtítulo ou data", { size: 15, color: SOFT });
-      for (let k = 0; k < 20; k++) b.line([{ x: 56, y: 170 + k * 30 }, { x: 539, y: 170 + k * 30 }], { color: "#E7EBF2", sw: 1 });
-      return b.els;
+      b.open(0, 0, 0, 0, "Documento", "#5E6B7E");
+      b.block({ kind: "doc", title: "Título", color: BLOCK_COLORS[7], body: "Subtítulo ou data\n\n# Introdução\nEscreva aqui.\n\n# Desenvolvimento\n- primeiro ponto\n- segundo ponto\n\n# Conclusão\n" }, 24, 30, 595, 842);
+      return b.fit();
+    },
+  },
+  {
+    id: "diary", name: "Diário", hint: "Página do dia, gratidão e tarefas", category: "apresentar",
+    build() {
+      const b = new Builder();
+      b.open(0, 0, 0, 0, "Diário", "#D1307A");
+      b.block({ kind: "doc", title: "Hoje", color: BLOCK_COLORS[6], body: "Como foi o dia?\n\n# Destaques\n- \n\n# Aprendi\n- " }, 24, 30, 380, 480);
+      b.block({ kind: "sticky", text: "Gratidão:\n1.\n2.\n3.", color: STICKY_COLORS[2] }, 424, 30, 220, 220);
+      b.block({ kind: "todo", title: "Amanhã", color: BLOCK_COLORS[6], items: [{ text: "", done: false }, { text: "", done: false }] }, 424, 270, 220);
+      return b.fit();
     },
   },
   {
@@ -514,6 +513,12 @@ export const TEMPLATES: Template[] = [
     },
   },
 ];
+
+// cada bloco nativo também aparece sozinho (categoria "blocos")
+for (const k of [...BLOCK_KINDS].reverse()) {
+  TEMPLATES.unshift({ id: `block-${k.id}`, name: k.label, hint: k.hint, category: "blocos", build: () => [blockAt(defaultBlock(k.id), 0, 0)] });
+}
+TEMPLATES.sort((a, b) => (a.category === "blocos" ? 0 : 1) - (b.category === "blocos" ? 0 : 1));
 
 // mapas mentais entram na mesma galeria
 for (const m of MAP_TEMPLATES) {

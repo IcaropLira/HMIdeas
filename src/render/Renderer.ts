@@ -7,7 +7,7 @@ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../cor
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
-import { linearPath } from "../core/linear";
+import { linearPath, pathMidpoint } from "../core/linear";
 import { decimateForPreview } from "../core/ink";
 import { MARGIN_COLOR, PaperLayer, autoLineColor, drawPaperPattern, layerAlpha } from "../core/paper";
 import { paintFrame, paintNode } from "./mindDraw";
@@ -16,6 +16,7 @@ import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visible
 import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
 import { figurePrims } from "../core/figures";
+import { paintBlock } from "./blockDraw";
 import { AlgoOverlay } from "../core/algoView";
 import { arrowHead } from "./figureSvg";
 
@@ -32,21 +33,6 @@ interface Node {
   dep?: unknown[];
 }
 
-/** Ponto no meio do caminho (pelo comprimento). */
-function pathMidpoint(pts: { x: number; y: number }[]) {
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-  let acc = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-    if (acc + d >= total / 2 && d > 0) {
-      const t = (total / 2 - acc) / d;
-      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
-    }
-    acc += d;
-  }
-  return pts[0] ?? { x: 0, y: 0 };
-}
 
 const sameDep = (a?: unknown[], b?: unknown[]) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
 
@@ -332,6 +318,9 @@ export class Renderer {
       } else if (el.kind === "figure" && el.figure) {
         this.paintFigure(node, el);
         node.eventMode = "none";
+      } else if (el.kind === "block" && el.block) {
+        paintBlock(node, el, this.textRes());
+        node.eventMode = "none";
       } else if (el.kind === "pdf" && el.data) {
         this.paintPdf(node, el);
         node.eventMode = "none";
@@ -590,7 +579,7 @@ export class Renderer {
     this.resTimer = setTimeout(() => {
       const r = this.textRes();
       for (const n of this.nodes.values()) {
-        if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && n.el.kind === "figure") || (isLinear(n.el) && n.el.label)) {
+        if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && (n.el.kind === "figure" || n.el.kind === "block")) || (isLinear(n.el) && n.el.label)) {
           for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
           continue;
         }

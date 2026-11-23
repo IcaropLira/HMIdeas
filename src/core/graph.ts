@@ -214,7 +214,7 @@ export function buildGraphElements(g: ParsedGraph, layout: GraphLayout, measure?
     const p = pos.get(v)!;
     const tw = measure ? measure(v, 18) : v.length * 10.5;
     const d = Math.max(48, tw + 26);
-    nodes.set(v, makeNode(newId(), p.x - cx - d / 2, p.y - cy - 24, v, { ...vertexStyle(), w: d, h: 48 }));
+    nodes.set(v, makeNode(newId(), p.x - cx - d / 2, p.y - cy - 24, v, { ...vertexStyle(), w: d, h: 48, vertex: true }));
   }
   const byId = new Map<ID, HirakuElement>([...nodes.values()].map((n) => [n.id, n]));
   const edges: LinearElement[] = [];

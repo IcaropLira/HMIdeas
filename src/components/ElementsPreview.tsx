@@ -7,6 +7,7 @@ import { shapePath } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { safeColor } from "../render/svgThumb";
 import { figureSvg } from "../render/figureSvg";
+import { blockSvg } from "../render/blockDraw";
 
 const d = (pts: { x: number; y: number }[], close = true) =>
   pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join("") + (close ? "Z" : "");
@@ -66,6 +67,7 @@ function El({ el }: { el: HirakuElement }) {
   }
   if (el.type === "attachment") {
     if (el.kind === "figure" && el.figure) return <g dangerouslySetInnerHTML={{ __html: figureSvg(el) }} />;
+    if (el.kind === "block" && el.block) return <g dangerouslySetInnerHTML={{ __html: blockSvg(el) }} />;
     return <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={8} fill="#F7F8FC" stroke="#9AA8C0" />;
   }
   if (el.type === "stroke") {

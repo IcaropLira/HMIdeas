@@ -18,6 +18,10 @@ import { beginLabel, settleMoved } from "../core/mapActions";
 import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
 import { settleFrames } from "../core/frames";
 import { interactiveElements } from "../core/layers";
+import { blockHitAt, blockTap } from "../core/blocks";
+import { useBlockEdit } from "../core/blockView";
+import { useEdgeLabel } from "../core/graphEdit";
+import { primsFor } from "../render/blockDraw";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
@@ -139,6 +143,12 @@ export function createSelectController(renderer: Renderer) {
 
       // 0) linha/seta sozinha: editar pontos
       const lone = sel.length === 1 && isLinear(sel[0]) ? sel[0] : null;
+      if (lone && dbl && elementHit(lone, P.x, P.y, hitTol * 2)) {
+        // duplo toque na seta já selecionada (inclusive no ponto do meio): rótulo / peso
+        lastTap = null;
+        useEdgeLabel.getState().open(lone.id);
+        return;
+      }
       if (lone) {
         const h = hitLineHandle(lone, s, touchy ? 24 : 11);
         if (h.vertex >= 0) {
@@ -187,6 +197,31 @@ export function createSelectController(renderer: Renderer) {
       if (!lasso) {
         const hit = topHit(P, hitTol);
         if (hit) {
+          // blocos: caixinha da lista de tarefas marca/desmarca com um toque; duplo toque abre o editor do bloco
+          if (hit.type === "attachment" && hit.kind === "block" && hit.block && !s.shift) {
+            const prims = primsFor(hit);
+            const tap = prims && blockHitAt(prims, P.x - hit.x, P.y - hit.y);
+            if (tap) {
+              lastTap = null;
+              useDoc.getState().updateElements([{ ...hit, block: blockTap(hit.block, tap) }]);
+              useSel.getState().set([hit.id]);
+              refresh();
+              return;
+            }
+            if (dbl) {
+              lastTap = null;
+              useSel.getState().set([hit.id]);
+              useBlockEdit.getState().open(hit.id);
+              return;
+            }
+          }
+          if (dbl && isLinear(hit)) {
+            // duplo toque numa seta/linha: editar o rótulo (peso da aresta)
+            lastTap = null;
+            useSel.getState().set([hit.id]);
+            useEdgeLabel.getState().open(hit.id);
+            return;
+          }
           if (dbl && (hit.type === "text" || hit.type === "node" || hit.type === "frame")) {
             lastTap = null;
             if (hit.type === "text") beginEditText(hit);

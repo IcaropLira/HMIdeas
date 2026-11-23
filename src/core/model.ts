@@ -3,6 +3,7 @@
 
 import { parseYouTube } from "./embed";
 import { FigureSpec, cleanFigure } from "./figures";
+import { BlockSpec, cleanBlock } from "./blocks";
 
 export type ID = string;
 
@@ -245,6 +246,8 @@ export interface NodeElement {
   /** Imagem pequena no topo do nó (data URL) e a proporção altura/largura dela. */
   image?: string;
   imageRatio?: number;
+  /** Vértice de grafo (ferramenta Vértice / grafos gerados): não vira filho de mapa ao ser solto sobre outro nó. */
+  vertex?: boolean;
   opacity: number;
 }
 
@@ -271,7 +274,7 @@ export interface FrameElement {
   opacity: number;
 }
 
-export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figure"] as const;
+export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figure", "block"] as const;
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
@@ -295,6 +298,8 @@ export interface AttachmentElement {
   mode?: "carousel" | "scroll";
   /** "figure": sólido, gráfico de função, espaço 3D… (core/figures.ts). */
   figure?: FigureSpec;
+  /** "block": bloco nativo (post-it, tarefas, tabela, linha do tempo…; core/blocks.ts). */
+  block?: BlockSpec;
   opacity: number;
 }
 
@@ -434,6 +439,8 @@ const cleanAttachment = (e: any): AttachmentElement => {
   if (kind === "pdf" && typeof e.data !== "string") kind = "file"; // sem o conteúdo embutido, vira arquivo comum
   const figure = kind === "figure" ? cleanFigure(e.figure) : null;
   if (kind === "figure" && !figure) kind = "file";
+  const block = kind === "block" ? cleanBlock(e.block) : null;
+  if (kind === "block" && !block) kind = "file";
   return {
     ...e,
     frameId: typeof e.frameId === "string" ? e.frameId : null,
@@ -444,6 +451,7 @@ const cleanAttachment = (e: any): AttachmentElement => {
     ratio: kind === "pdf" ? Math.min(4, Math.max(0.25, num(e.ratio, 1.414))) : undefined,
     mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
     figure: figure ?? undefined,
+    block: block ?? undefined,
   };
 };
 
@@ -482,6 +490,7 @@ const cleanNode = (e: any): NodeElement => ({
   due: typeof e.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.due) ? e.due : undefined,
   image: typeof e.image === "string" && e.image.startsWith("data:image/") ? e.image : undefined,
   imageRatio: Number.isFinite(e.imageRatio) ? Math.max(0.1, Math.min(4, e.imageRatio)) : undefined,
+  vertex: e.vertex === true ? true : undefined,
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

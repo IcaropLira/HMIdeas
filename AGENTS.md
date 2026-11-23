@@ -81,6 +81,9 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [x] 0.6: camadas, barras lego (grupos), papel com qualquer cor e 11 padrões, galeria de modelos, grafos + algoritmos, sólidos/planos/
   gráficos/calculadora, temas de mapa mental, tela inicial, temas da interface e modo foco
 - [ ] 0.6: validar no tablet o arraste de grupos de barras e o modo "Controlar player" do vídeo (WebView2/WebKitGTK)
+- [x] 0.7: blocos nativos (post-it, cartão, tarefas, tabela, linha do tempo, kanban, slide, documento, destaque, código), modelos feitos
+  de blocos, ferramentas Vértice/Aresta (Tab cria vizinho ligado, arestas com peso/direção) e correção da tela em branco
+- [ ] 0.7: validar no tablet o toque na caixinha de tarefa e o arraste de aresta com o dedo
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -298,3 +301,22 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   ordenação, cores de capa, importar. Abre ao iniciar (`hm-ideas:start-home`, desligável).
 - `core/theme.ts`: temas (`THEMES`, CSS em `:root[data-theme]`), cor de destaque (`ACCENTS` → `--accent`, `--accent-2`, `--accent-strong`,
   `--accent-soft` em estilo inline do `<html>`), densidade, alças discretas (`data-grips`) e modo foco (`html.focus-mode`, Ctrl+.).
+
+### Blocos nativos (0.7)
+- Bloco = `AttachmentElement` com `kind: "block"` e `block: BlockSpec` (`core/blocks.ts`, puro; saneado em `cleanBlock`). Cada tipo tem DADOS
+  próprios (post-it: texto+cor; tarefas: itens com `done`; tabela: `rows`; linha do tempo: marcos; kanban: colunas…). `.hiraku` segue `version: 1`.
+- `blockPrims(spec, w, h, measure)` gera retângulos/linhas/círculos/textos em coordenadas locais + `hits` (áreas clicáveis: caixinha da tarefa).
+  `render/blockDraw.ts` desenha as MESMAS primitivas no Pixi (`paintBlock`) e em SVG (`blockSvg`, prévias/miniaturas); a medida de texto é o
+  canvas 2D (`canvasMeasure`), então a quebra de linha bate. Post-it encolhe a fonte até caber; cartão/tarefas/destaque crescem (`fitBlock`).
+- Comportamento: toque na caixinha → `blockTap` (um passo de desfazer); duplo toque, Enter ou "Editar" → `components/BlockEditor.tsx`
+  (`useBlockEdit`), que edita AO VIVO com `previewElements` e grava um único passo ao fechar. Setas ligam blocos (`isBindable` inclui blocos).
+- Modelos (`core/templates.ts`) são CONJUNTOS de blocos (`Builder.block`, `Builder.fit` ajusta o quadro ao conteúdo); diagramas seguem com
+  formas + setas ligadas. A aba "Blocos avulsos" da galeria e o painel Inserir criam um bloco por vez.
+- Novo tipo de bloco = entrada em `BLOCK_KINDS` + `defaultBlock`/`defaultBlockSize`/`cleanBlock`/`blockPrims` + campos no `BlockEditor`.
+
+### Ferramentas de grafo (0.7)
+- `core/graphEdit.ts`: ferramenta **Vértice** (N; toque no vazio cria A, B, C…; arrastar de um vértice liga/cria vizinho) e **Aresta** (G; arraste
+  de vértice a vértice, soltar no vazio cria vértice). Opções em `useGraphTool` (direcionada, ponderada). `NodeElement.vertex` marca vértices
+  (não viram filhos de mapa ao serem soltos sobre outro nó). Tab no vértice selecionado → `connectedVertex` (direção mais livre, `freeSpotNear`).
+- Peso/rótulo: `components/EdgeLabelEditor.tsx` (`useEdgeLabel`) — abre ao criar aresta ponderada, com duplo toque numa seta ou Enter com ela
+  selecionada. Apagar vértice apaga as arestas dele (`incidentEdges` em `deleteSelection`). Os algoritmos leem tudo por `graphFromElements`.

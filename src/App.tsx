@@ -12,6 +12,11 @@ import { NotebookManager } from "./components/NotebookManager";
 import { zSelection } from "./components/LayersPanel";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { AlgoPlayer } from "./components/AlgoPlayer";
+import { BlockEditor } from "./components/BlockEditor";
+import { EdgeLabelEditor } from "./components/EdgeLabelEditor";
+import { isLinear } from "./core/model";
+import { connectedVertex, isVertex, useEdgeLabel, useGraphTool } from "./core/graphEdit";
+import { editSelectedBlock } from "./core/blockView";
 import { useTheme } from "./core/theme";
 import { copyWithMark, initPaste } from "./components/clipboard";
 import {
@@ -27,6 +32,7 @@ import { initPageViewSync } from "./core/pageView";
 import { ToolId, useDoc, useSel, useTool } from "./core/store";
 
 const TOOL_KEYS: Record<string, ToolId> = {
+  n: "vertex", g: "edge",
   v: "select", l: "lasso", p: "pen", e: "eraser", h: "hand", r: "rect", o: "ellipse", d: "diamond", a: "arrow", t: "text", m: "mindmap", f: "frame",
   // numeração igual à do Excalidraw
   "1": "select", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "0": "eraser",
@@ -67,14 +73,33 @@ export default function App() {
         return;
       }
 
-      const oneNode = (() => {
+      const one = (() => {
         const ids = useSel.getState().ids;
-        if (ids.length !== 1) return false;
-        const el = selectActivePage(useDoc.getState()).elements.find((x) => x.id === ids[0]);
-        return el?.type === "node";
+        if (ids.length !== 1) return undefined;
+        const all = selectActivePage(useDoc.getState()).elements;
+        const el = all.find((x) => x.id === ids[0]);
+        return el ? { el, vertex: isVertex(el, all) } : undefined;
       })();
+      const oneVertex = !!one?.vertex;
+      const oneNode = one?.el.type === "node" && !oneVertex;
 
-      if (k === "tab" && !e.shiftKey) {
+      if (k === "tab" && !e.shiftKey && oneVertex) {
+        // Tab num vértice: novo vértice já ligado a ele (o novo fica selecionado → Tab de novo continua o caminho)
+        e.preventDefault();
+        const all = selectActivePage(useDoc.getState()).elements;
+        const g = useGraphTool.getState();
+        const r = connectedVertex(all, one!.el.id, { directed: g.directed, label: g.weighted ? "1" : undefined });
+        if (r) {
+          const fixed = one!.el.type === "node" && !one!.el.vertex ? [{ ...one!.el, vertex: true }] : [];
+          if (fixed.length) useDoc.getState().replaceElements([...all.map((x) => (x.id === one!.el.id ? fixed[0] : x)), r.vertex, r.edge]);
+          else useDoc.getState().addElements([r.vertex, r.edge]);
+          useSel.getState().set([r.vertex.id]);
+          if (g.weighted) useEdgeLabel.getState().open(r.edge.id);
+        }
+      } else if (k === "enter" && one && isLinear(one.el)) {
+        e.preventDefault();
+        useEdgeLabel.getState().open(one.el.id);
+      } else if (k === "tab" && !e.shiftKey) {
         if (addChildToSelection()) e.preventDefault();
       } else if (k === "f2") {
         if (editSelectedLabel()) e.preventDefault();
@@ -107,7 +132,7 @@ export default function App() {
         const n = e.shiftKey ? 10 : 1;
         nudgeSelection(k === "arrowleft" ? -n : k === "arrowright" ? n : 0, k === "arrowup" ? -n : k === "arrowdown" ? n : 0);
       } else if (k === "enter") {
-        if (editSelectedText() || editSelectedLabel()) e.preventDefault(); // Enter edita o texto selecionado
+        if (editSelectedText() || editSelectedLabel() || editSelectedBlock()) e.preventDefault(); // Enter edita o texto selecionado
       } else if (TOOL_KEYS[k]) {
         useTool.getState().setTool(TOOL_KEYS[k]);
       }
@@ -126,6 +151,8 @@ export default function App() {
       <TemplateGallery />
       <FocusExit />
       <AlgoPlayer />
+      <BlockEditor />
+      <EdgeLabelEditor />
       <TextEditor />
       <LabelEditor />
       <Toast />

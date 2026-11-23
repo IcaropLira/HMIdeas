@@ -1,3 +1,6 @@
+import { editSelectedBlock } from "../core/blockView";
+import { BlockTiles } from "./BlockGallery";
+import { useGraphTool } from "../core/graphEdit";
 import { MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { defaultCamera } from "../core/camera";
@@ -5,7 +8,7 @@ import { ARROW_HEADS, LineStyle, SHAPE_TYPES } from "../core/model";
 import { resetPageCameras } from "../core/pageView";
 import { downloadDoc, parseDoc } from "../core/serialize";
 import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
-import { ToolId, useDoc, useSel, useTool, useView } from "../core/store";
+import { ToolId, selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { FONTS, FONT_SIZES } from "../core/text";
 import { useUI } from "../core/ui";
 import { BrushPanel } from "./BrushPanel";
@@ -64,6 +67,14 @@ export function Toolbar() {
   const canRedo = useDoc((s) => s.future.length > 0);
   const zoom = useView((s) => s.camera.zoom);
   const selCount = useSel((s) => s.ids.length);
+  const graph = useGraphTool();
+  const oneSel = useSel((s) => (s.ids.length === 1 ? s.ids[0] : null));
+  const selBlock = useDoc((s) => {
+    if (!oneSel) return false;
+    const ids = [oneSel];
+    const e = selectActivePage(s).elements.find((x) => x.id === ids[0]);
+    return !!e && e.type === "attachment" && e.kind === "block";
+  });
   const [panel, setPanel] = useState<Panel>(null);
   const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -222,7 +233,7 @@ export function Toolbar() {
     ),
     insert: (
       <div className="group">
-        <button className={panel === "insert" ? "btn on" : "btn"} onClick={() => toggle("insert")} aria-expanded={panel === "insert"} aria-label="Inserir" title="Inserir: imagem, arquivo, link, colar (Ctrl+V)">
+        <button className={panel === "insert" ? "btn on" : "btn"} onClick={() => toggle("insert")} aria-expanded={panel === "insert"} aria-label="Inserir" title="Inserir: blocos (post-it, tarefas, tabela…), imagem, arquivo, colar (Ctrl+V)">
           <Icon><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><circle cx="9" cy="10" r="1.8" /><path d="M4 17l5-4.5 3.5 3L16 12l4.5 4.5" /></Icon>
         </button>
       </div>
@@ -298,6 +309,18 @@ export function Toolbar() {
         <button className={panel === "science" ? "btn on" : "btn"} onClick={() => toggle("science")} aria-expanded={panel === "science"} aria-label="Grafos e matemática" title="Grafos, sólidos, planos, gráficos e calculadora">
           <Icon><circle cx="6" cy="6" r="2.2" /><circle cx="18" cy="7" r="2.2" /><circle cx="11" cy="18" r="2.2" /><path d="M8 6.4l7.8.4M7 7.8l3 8.3M16.9 9l-4.6 7.2" /></Icon>
         </button>
+        {toolBtn("vertex", "Vértice", <><circle cx="12" cy="12" r="5.5" /><path d="M12 9.5v5M9.5 12h5" /></>, "Vértice (N): toque no vazio cria; arraste de um vértice para ligar. Tab no vértice selecionado cria um vizinho ligado")}
+        {toolBtn("edge", "Aresta", <><circle cx="5.5" cy="17.5" r="2.5" /><circle cx="18.5" cy="6.5" r="2.5" /><path d="M7.5 15.8l9-7.6" /></>, "Aresta (G): arraste de um vértice a outro; soltar no vazio cria um vértice novo")}
+        {(t.tool === "vertex" || t.tool === "edge") && (
+          <>
+            <button className={graph.directed ? "btn on" : "btn"} onClick={() => graph.set({ directed: !graph.directed })} aria-pressed={graph.directed} aria-label="Aresta direcionada" title={graph.directed ? "Direcionada (seta) — toque para não direcionada" : "Não direcionada — toque para direcionada (seta)"}>
+              <Icon>{graph.directed ? <><path d="M5 19L19 5" /><path d="M11 5h8v8" /></> : <path d="M5 19L19 5" />}</Icon>
+            </button>
+            <button className={graph.weighted ? "btn text on" : "btn text"} onClick={() => graph.set({ weighted: !graph.weighted })} aria-pressed={graph.weighted} aria-label="Aresta ponderada" title={graph.weighted ? "Ponderada: ao criar, digite o peso" : "Sem peso — toque para ponderada"}>
+              {graph.weighted ? "Peso ✓" : "Peso"}
+            </button>
+          </>
+        )}
       </div>
     ),
     page: (
@@ -526,6 +549,9 @@ export function Toolbar() {
 
       {panel === "insert" && (
         <div className="panel" role="dialog" aria-label="Inserir">
+          <div className="sec-title">Blocos</div>
+          <BlockTiles onPick={() => setPanel(null)} />
+          <div className="sec-title">Mais</div>
           <div className="tiles three" role="toolbar" aria-label="Inserir no quadro">
             <button className="tile icon" onClick={() => { void pasteFromButton(); setPanel(null); }} title="Cola o que está na área de transferência (Ctrl+V também funciona)">
               <Pic><rect x="13" y="5" width="18" height="20" rx="2" /><path d="M18 5V3h8v2M17 13h10M17 18h7" /></Pic><span>Colar</span>
@@ -605,6 +631,7 @@ export function Toolbar() {
         {selCount > 0 && (
           <div className="toolbar selbar" role="toolbar" aria-label="Ações da seleção" onClickCapture={() => { anchorRef.current = null; }}>
             <span className="count">{selCount} {selCount === 1 ? "selecionado" : "selecionados"}</span>
+            {selBlock && <button className="btn text" onClick={() => editSelectedBlock()}>Editar</button>}
             <button className="btn text" onClick={() => toggle("map")}>Mapa…</button>
             <button className="btn text" onClick={duplicateSelection}>Duplicar</button>
             <button className="btn text danger" onClick={deleteSelection}>Apagar</button>

@@ -921,3 +921,10 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .mini-field input.wide { width: 110px; }
 .result-box.mono pre { margin: 6px 0; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
 .slider output { grid-row: 1; grid-column: 2; }
+.node-content { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: var(--surface-2); }
+.stickers { display: flex; flex-direction: column; gap: 2px; }
+.sticker-row { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
+.stk { aspect-ratio: 1; border: 0; border-radius: 8px; background: none; font-size: 18px; cursor: pointer; padding: 0; }
+.stk:hover { background: var(--accent-soft); }
+.stk.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+.mini-field input[type="date"] { width: 140px; }

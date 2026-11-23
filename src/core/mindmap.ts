@@ -135,16 +135,95 @@ export function withDependents(els: HirakuElement[], ids: Iterable<ID>): Set<ID>
 
 // ---------- tamanho do nó ----------
 const PAD: Record<NodeShape, [number, number]> = {
-  pill: [18, 8], rounded: [14, 8], rect: [12, 8], ellipse: [26, 12], underline: [6, 6], none: [4, 4],
+  pill: [18, 8], rounded: [14, 8], rect: [12, 8], ellipse: [26, 12], underline: [6, 6], none: [4, 4], card: [14, 12],
 };
 
-export function nodeSize(n: Pick<NodeElement, "text" | "fontFamily" | "fontSize" | "shape" | "icon">, measure: Measure): { w: number; h: number } {
+/** Cor estável de uma etiqueta (pelo texto). */
+export const TAG_COLORS = ["#2F5BD3", "#D2453A", "#2E9B5F", "#C98612", "#7B4FC9", "#0E8A9B", "#D1307A", "#5E6B7E"];
+export const tagColor = (t: string) => TAG_COLORS[Math.abs([...t].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 3)) % TAG_COLORS.length];
+
+/** Linhas da nota que viram itens de lista de tarefas. */
+export function checklist(note?: string): { text: string; done: boolean }[] {
+  return (note ?? "").split("\n").map((l) => /^\s*[-*]?\s*\[( |x|X)\]\s*(.*)$/.exec(l)).filter(Boolean).map((m) => ({ done: m![1].toLowerCase() === "x", text: m![2] }));
+}
+/** Progresso efetivo: o escolhido, ou o da lista de tarefas da nota. */
+export function nodeProgress(n: Pick<NodeElement, "progress" | "note">): number | null {
+  if (n.progress !== undefined) return n.progress;
+  const c = checklist(n.note);
+  return c.length ? Math.round((c.filter((x) => x.done).length / c.length) * 100) : null;
+}
+
+export type NodeContent = Pick<NodeElement, "text" | "fontFamily" | "fontSize" | "shape" | "icon"> & Partial<Pick<NodeElement, "note" | "tags" | "progress" | "due" | "image" | "imageRatio">>;
+
+/** Onde fica cada parte dentro do nó (coordenadas relativas ao canto). Usado no tamanho e no desenho. */
+export interface NodeLayoutBox {
+  w: number; h: number;
+  img: { x: number; y: number; w: number; h: number } | null;
+  /** Centro vertical do rótulo; `left` = alinhado à esquerda (cartão). */
+  labelY: number; left: boolean;
+  note: { y: number; lines: string[]; size: number } | null;
+  chips: { y: number; items: { text: string; color: string; w: number }[] } | null;
+  bar: { y: number; value: number } | null;
+}
+
+export function nodeLayout(n: NodeContent, measure: Measure): NodeLayoutBox {
   const label = n.text || " ";
   const m = measure(label, n.fontFamily, n.fontSize);
   const [px, py] = PAD[n.shape];
   const iconW = n.icon ? n.fontSize * 1.35 : 0;
-  const minW = n.shape === "none" || n.shape === "underline" ? 24 : 56;
-  return { w: Math.max(minW, Math.ceil(m.w + iconW + px * 2)), h: Math.ceil(Math.max(m.h, n.icon ? n.fontSize * 1.25 : 0) + py * 2) };
+  const card = n.shape === "card";
+  const minW = n.shape === "none" || n.shape === "underline" ? 24 : card ? 180 : 56;
+  let w = Math.max(minW, Math.ceil(m.w + iconW + px * 2));
+  let y = py;
+  // imagem
+  let img: NodeLayoutBox["img"] = null;
+  if (n.image) {
+    const iw = card ? Math.max(w - px * 2, 160) : 140;
+    const ih = Math.round(iw * (n.imageRatio ?? 0.66));
+    w = Math.max(w, iw + px * 2);
+    img = { x: 0, y, w: iw, h: ih };
+    y += ih + 8;
+  }
+  const textH = Math.max(m.h, n.icon ? n.fontSize * 1.25 : 0);
+  const labelY = y + textH / 2;
+  y += textH;
+  // nota (só no cartão): até 5 linhas
+  let note: NodeLayoutBox["note"] = null;
+  if (card && n.note) {
+    const size = Math.max(11, Math.round(n.fontSize * 0.72));
+    const lines = n.note.split("\n").slice(0, 6).map((l) => l.replace(/^\s*[-*]?\s*\[( )\]\s*/, "☐ ").replace(/^\s*[-*]?\s*\[[xX]\]\s*/, "☑ "));
+    const nm = measure(lines.join("\n"), n.fontFamily, size);
+    w = Math.max(w, Math.min(320, Math.ceil(nm.w + px * 2)));
+    y += 6;
+    note = { y, lines, size };
+    y += nm.h;
+  }
+  // etiquetas e data
+  const chipItems = [...(n.tags ?? []).map((t) => ({ text: t, color: tagColor(t) })), ...(n.due ? [{ text: `📅 ${n.due.slice(8, 10)}/${n.due.slice(5, 7)}`, color: "#5E6B7E" }] : [])];
+  let chips: NodeLayoutBox["chips"] = null;
+  if (chipItems.length) {
+    const cs = Math.max(10, Math.round(n.fontSize * 0.6));
+    const items = chipItems.map((c) => ({ ...c, w: Math.ceil(measure(c.text, "sans", cs).w + 12) }));
+    const total = items.reduce((s, c) => s + c.w + 4, -4);
+    w = Math.max(w, total + px * 2);
+    y += 6;
+    chips = { y, items };
+    y += cs + 8;
+  }
+  const prog = nodeProgress(n);
+  let bar: NodeLayoutBox["bar"] = null;
+  if (prog !== null) {
+    y += 6;
+    bar = { y, value: prog };
+    y += 5;
+  }
+  if (img) img.x = card ? px : (w - img.w) / 2;
+  return { w, h: Math.ceil(y + py), img, labelY, left: card, note, chips, bar };
+}
+
+export function nodeSize(n: NodeContent, measure: Measure): { w: number; h: number } {
+  const L = nodeLayout(n, measure);
+  return { w: L.w, h: L.h };
 }
 
 /** Recalcula w/h de um nó (a posição fica; o layout ajusta depois). */
@@ -443,7 +522,7 @@ export function reorderByPosition(els: HirakuElement[], id: ID): HirakuElement[]
 }
 
 // ---------- estilo ----------
-export type NodePatch = Partial<Pick<NodeElement, "shape" | "fill" | "stroke" | "color" | "fontSize" | "fontFamily" | "icon" | "done" | "branchColor" | "side" | "layout" | "branchStyle" | "strokeWidth">>;
+export type NodePatch = Partial<Pick<NodeElement, "shape" | "fill" | "stroke" | "color" | "fontSize" | "fontFamily" | "icon" | "done" | "branchColor" | "side" | "layout" | "branchStyle" | "strokeWidth" | "note" | "link" | "tags" | "progress" | "due" | "image" | "imageRatio">>;
 
 /** Aplica estilo aos nós `ids` (opcionalmente a todos os descendentes) e refaz tamanho/layout. */
 export function styleNodes(els: HirakuElement[], ids: ID[], patch: NodePatch, measure: Measure, withSubtree = false): HirakuElement[] {
@@ -661,6 +740,11 @@ export const MAP_THEMES: MapTheme[] = [
     id: "minimal", name: "Minimalista", palette: ["#1B2233", "#52627A", "#1B2233", "#52627A"], branchStyle: "straight",
     root: { shape: "underline", fill: null, stroke: "#1B2233", color: "#1B2233" },
     level: (d) => ({ shape: d === 1 ? "underline" : "none", fill: null, stroke: "#1B2233", color: d === 1 ? "#1B2233" : "#52627A" }),
+  },
+  {
+    id: "cards", name: "Cartões", palette: ["#2F5BD3", "#D2453A", "#2E9B5F", "#C98612", "#7B4FC9", "#0E8A9B"], branchStyle: "elbow",
+    root: { shape: "card", fill: "#1B2233", stroke: null, color: "#FFFFFF" },
+    level: (d, c) => (d === 1 ? { shape: "card", fill: "#FFFFFF", stroke: c, color: "#1B2233" } : { shape: "underline", fill: null, stroke: c, color: "#1B2233" }),
   },
   {
     id: "sticky", name: "Post-its", palette: ["#F7D154", "#F39C6B", "#7FD1AE", "#8EC5FC", "#F49AC2"], branchStyle: "elbow", font: "hand",

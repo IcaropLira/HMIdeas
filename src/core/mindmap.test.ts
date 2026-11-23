@@ -172,3 +172,25 @@ describe("temas e utilidades de mapa", () => {
     }
   });
 });
+
+import { checklist, nodeLayout, nodeProgress } from "./mindmap";
+describe("conteúdo rico do nó", () => {
+  const base = { text: "Tarefa", fontFamily: "sans" as const, fontSize: 18, shape: "card" as const, icon: null };
+  it("nota com lista vira progresso automático", () => {
+    expect(checklist("- [x] a\n- [ ] b\nlivre")).toEqual([{ done: true, text: "a" }, { done: false, text: "b" }]);
+    expect(nodeProgress({ note: "- [x] a\n- [ ] b" })).toBe(50);
+    expect(nodeProgress({ progress: 80, note: "- [ ] a" })).toBe(80);
+    expect(nodeProgress({})).toBeNull();
+  });
+  it("cada conteúdo aumenta o nó e fica em ordem: imagem, texto, nota, etiquetas, barra", () => {
+    const plain = nodeLayout(base, approxMeasure);
+    const rich = nodeLayout({ ...base, image: "data:image/png;base64,x", imageRatio: 0.5, note: "- [ ] a\n- [x] b", tags: ["aula"], due: "2026-11-30" }, approxMeasure);
+    expect(rich.h).toBeGreaterThan(plain.h + 80);
+    expect(rich.img!.y).toBeLessThan(rich.labelY);
+    expect(rich.labelY).toBeLessThan(rich.note!.y);
+    expect(rich.note!.y).toBeLessThan(rich.chips!.y);
+    expect(rich.chips!.y).toBeLessThan(rich.bar!.y);
+    expect(rich.note!.lines[0].startsWith("☐")).toBe(true);
+    expect(rich.chips!.items).toHaveLength(2);
+  });
+});

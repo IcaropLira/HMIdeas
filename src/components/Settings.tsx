@@ -4,7 +4,6 @@ import { Icon } from "./Icon";
 import { BarsPane } from "./LayoutSettings";
 import { ShortcutEditor } from "./ShortcutEditor";
 import { WorkspacePane } from "./WorkspacePane";
-import { rotateBlock } from "./BlockHandle";
 import { useLayout } from "../core/layout";
 import { APP_VERSION } from "../core/repo";
 import { downloadDoc, parseDoc } from "../core/serialize";
@@ -88,7 +87,7 @@ export function Settings() {
 
   let body: ReactNode;
   if (tab === "barras") {
-    body = <BarsPane layout={layout} onSide={L.setSide} onMove={L.move} onRotate={rotateBlock} onLocked={L.setLocked} onReset={L.reset} />;
+    body = <BarsPane layout={layout} onChange={(n) => L.setLayout(n)} onLocked={L.setLocked} onReset={L.reset} />;
   } else if (tab === "caneta") {
     body = (
       <section className="pane">

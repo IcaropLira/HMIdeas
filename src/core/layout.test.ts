@@ -1,315 +1,76 @@
 import { describe, expect, it } from "vitest";
-import { BLOCKS, DEFAULT_LAYOUT, LAYOUT_KEY, blocksOn, clampPosition, detachBlock, dockGroup, floatLeaders, floatSide, groupMembers, homeBlock, homeGroup, joinGroup, loadLayout, mergeGroups, moveBlock, moveGroup, normalizeLayout, placeBlock, placeBlockAt, saveLayout, snapPosition, snapToRects } from "./layout";
+import {
+  DEFAULT_LAYOUT, ITEMS, clampPosition, findItem, hiddenItems, hideItem, isVertical, makeLayout, moveBar, moveItems, normalizeLayout, showItem,
+} from "./layout";
 
-const memory = () => {
-  const m = new Map<string, string>();
-  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
-};
+const items = (L: ReturnType<typeof makeLayout>) => L.bars.map((b) => b.items.join(","));
 
-describe("layout das barras", () => {
-  it("o padrão tem só o essencial embaixo, cor/espessura/pincéis na direita e o resto na esquerda", () => {
-    expect(blocksOn(DEFAULT_LAYOUT, "bottom")).toEqual(["tools", "shapes", "history"]);
-    expect(blocksOn(DEFAULT_LAYOUT, "right")).toEqual(["brush", "colors", "size", "layers"]);
-    expect(blocksOn(DEFAULT_LAYOUT, "left")).toEqual(["insert", "map", "science", "page"]);
-    expect(blocksOn(DEFAULT_LAYOUT, "hidden")).toEqual([]);
+describe("barras de bloquinhos", () => {
+  it("o padrão tem cada item uma vez só", () => {
+    const all = DEFAULT_LAYOUT.bars.flatMap((b) => b.items);
+    expect(new Set(all).size).toBe(all.length);
+    expect(all.length + hiddenItems(DEFAULT_LAYOUT).length).toBe(ITEMS.length);
   });
 
-  it("todo bloco tem nome e aparece uma única vez na ordem", () => {
-    expect(new Set(DEFAULT_LAYOUT.order).size).toBe(BLOCKS.length);
-    for (const b of BLOCKS) expect(b.label.length).toBeGreaterThan(0);
+  it("arrastar para fora desacopla; soltar embaixo de outro solto forma uma coluna", () => {
+    let L = makeLayout({ bottom: [["select", "pen", "text"]] });
+    L = moveItems(L, ["text"], { kind: "float", x: 100, y: 100, vertical: true });
+    expect(items(L)).toEqual(["select,pen", "text"]);
+    const solo = L.bars[1].id;
+    L = moveItems(L, ["pen"], { kind: "into", bar: solo, index: 1, vertical: true });
+    expect(items(L)).toEqual(["select", "text,pen"]);
+    expect(isVertical(L.bars[1])).toBe(true);
+    // ao lado (horizontal) de um item só: vira linha
+    let H = makeLayout({}, [{ items: ["undo"], x: 0, y: 0 }]);
+    H = moveItems(makeLayout({ bottom: [["redo"]] }), [], { kind: "dock", side: "left" });
+    H = moveItems({ ...H, bars: [...H.bars, { id: "x", items: ["undo"], dock: null, x: 0, y: 0, vertical: true }] }, ["redo"], { kind: "into", bar: "x", index: 0, vertical: false });
+    expect(H.bars[0]).toMatchObject({ items: ["redo", "undo"], vertical: false });
   });
 
-  it("placeBlock leva o bloco para o fim do outro lado, sem mexer no resto", () => {
-    const l = placeBlock(DEFAULT_LAYOUT, "tools", "right");
-    expect(blocksOn(l, "right")).toEqual(["brush", "colors", "size", "layers", "tools"]);
-    expect(blocksOn(l, "bottom")).toEqual(["shapes", "history"]);
-    expect(placeBlock(DEFAULT_LAYOUT, "tools", "bottom")).toBe(DEFAULT_LAYOUT); // nada a fazer
+  it("reordenar dentro da mesma barra; barra vazia some", () => {
+    let L = makeLayout({ left: [["select", "pen", "text"], ["layers"]] });
+    L = moveItems(L, ["select"], { kind: "into", bar: L.bars[0].id, index: 3 });
+    expect(items(L)).toEqual(["pen,text,select", "layers"]);
+    L = moveItems(L, ["layers"], { kind: "into", bar: L.bars[0].id, index: 0 });
+    expect(items(L)).toEqual(["layers,pen,text,select"]);
   });
 
-  it("placeBlock para um lado vazio funciona (e oculto tira da tela)", () => {
-    const l = placeBlock(DEFAULT_LAYOUT, "colors", "hidden");
-    expect(blocksOn(l, "hidden")).toEqual(["colors"]);
-    expect(blocksOn(l, "right")).toEqual(["brush", "size", "layers"]);
+  it("borda da tela encaixa numa barra nova; barra inteira se move e funde", () => {
+    let L = makeLayout({ bottom: [["select", "pen"]] });
+    L = moveItems(L, ["pen"], { kind: "dock", side: "right" });
+    expect(L.bars[1]).toMatchObject({ items: ["pen"], dock: "right", vertical: true });
+    L = moveBar(L, L.bars[1].id, { kind: "float", x: 10, y: 20, vertical: true });
+    expect(L.bars[1]).toMatchObject({ dock: null, x: 10, y: 20 });
+    L = moveBar(L, L.bars[1].id, { kind: "into", bar: L.bars[0].id, index: 0 });
+    expect(items(L)).toEqual(["pen,select"]);
   });
 
-  it("moveBlock troca com o vizinho do MESMO lado e para nas pontas", () => {
-    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", -1), "right")).toEqual(["colors", "brush", "size", "layers"]);
-    expect(blocksOn(moveBlock(DEFAULT_LAYOUT, "colors", 1), "right")).toEqual(["brush", "size", "colors", "layers"]);
-    expect(moveBlock(DEFAULT_LAYOUT, "tools", -1)).toBe(DEFAULT_LAYOUT);
-    expect(moveBlock(DEFAULT_LAYOUT, "history", 1)).toBe(DEFAULT_LAYOUT);
+  it("ocultar e mostrar", () => {
+    let L = hideItem(DEFAULT_LAYOUT, "paper");
+    expect(findItem(L, "paper")).toBeNull();
+    L = showItem(L, "paper");
+    expect(findItem(L, "paper")).not.toBeNull();
   });
 
-  it("não muda o layout original (imutável)", () => {
-    const before = JSON.stringify(DEFAULT_LAYOUT);
-    placeBlock(DEFAULT_LAYOUT, "tools", "left");
-    moveBlock(DEFAULT_LAYOUT, "colors", -1);
-    expect(JSON.stringify(DEFAULT_LAYOUT)).toBe(before);
-  });
-});
-
-describe("normalizeLayout / persistência", () => {
-  it("lixo ou vazio vira o padrão", () => {
-    expect(normalizeLayout(null)).toEqual(DEFAULT_LAYOUT);
-    expect(normalizeLayout("oi")).toEqual(DEFAULT_LAYOUT);
-    expect(normalizeLayout({ order: 3, side: [] })).toEqual(DEFAULT_LAYOUT);
+  it("migra o formato antigo (blocos por lado e grupos soltos)", () => {
+    const L = normalizeLayout({
+      version: 2, order: ["tools", "history", "colors", "size"], locked: true,
+      side: { tools: "left", shapes: "hidden", history: "float", insert: "hidden", brush: "hidden", colors: "float", size: "right", map: "hidden", science: "hidden", layers: "hidden", page: "hidden" },
+      floats: { history: { x: 50, y: 60, vertical: true } }, group: { colors: "history" },
+    });
+    expect(L.locked).toBe(true);
+    expect(L.bars.find((b) => b.dock === "left")!.items).toEqual(["select", "pen", "text", "eraser", "laser", "hand"]);
+    expect(L.bars.find((b) => !b.dock)).toMatchObject({ items: ["undo", "redo", "colors"], x: 50, y: 60, vertical: true });
   });
 
-  it("descarta ids e lados inválidos, tira repetidos e devolve os blocos que faltam", () => {
-    const l = normalizeLayout({ order: ["colors", "colors", "fantasma", "tools"], side: { colors: "left", tools: "cima", fantasma: "left" } });
-    expect(l.order.slice(0, 2)).toEqual(["colors", "tools"]);
-    expect(new Set(l.order).size).toBe(BLOCKS.length);
-    expect(l.side.colors).toBe("left");
-    expect(l.side.tools).toBe("bottom"); // lado inválido volta ao padrão
-    expect("fantasma" in l.side).toBe(false);
+  it("aceita lixo sem quebrar e não repete itens", () => {
+    expect(normalizeLayout(null).bars.length).toBeGreaterThan(0);
+    const L = normalizeLayout({ version: 3, bars: [{ items: ["pen", "pen", "nada"], dock: "top" }, { items: ["pen"] }] });
+    expect(L.bars).toHaveLength(1);
+    expect(L.bars[0]).toMatchObject({ items: ["pen"], dock: null });
   });
 
-  it("salva e carrega; JSON quebrado ou storage ausente caem no padrão sem lançar erro", () => {
-    const s = memory();
-    const l = placeBlock(DEFAULT_LAYOUT, "tools", "left");
-    saveLayout(l, s);
-    expect(loadLayout(s)).toEqual(l);
-    s.setItem(LAYOUT_KEY, "{quebrado");
-    expect(loadLayout(s)).toEqual(DEFAULT_LAYOUT);
-    expect(loadLayout(null)).toEqual(DEFAULT_LAYOUT);
-    expect(() => saveLayout(l, null)).not.toThrow();
-    const cheio = { ...memory(), setItem: () => { throw new Error("cota"); } };
-    expect(() => saveLayout(l, cheio)).not.toThrow();
-  });
-});
-
-describe("blocos flutuantes", () => {
-  it("placeBlock para 'float' guarda a posição pedida; sem posição usa uma padrão escalonada", () => {
-    const a = placeBlock(DEFAULT_LAYOUT, "tools", "float", { x: 200, y: 90, vertical: true });
-    expect(a.side.tools).toBe("float");
-    expect(a.floats.tools).toEqual({ x: 200, y: 90, vertical: true });
-    expect(blocksOn(a, "bottom")).toEqual(["shapes", "history"]);
-    const b = placeBlock(a, "shapes", "float");
-    expect(b.floats.shapes).toBeDefined();
-    expect(b.floats.shapes).not.toEqual(b.floats.tools); // não empilha um sobre o outro
-  });
-
-  it("mover um bloco que já flutua só muda a posição (e não mexe na ordem)", () => {
-    const a = placeBlock(DEFAULT_LAYOUT, "tools", "float", { x: 10, y: 10, vertical: false });
-    const b = placeBlock(a, "tools", "float", { x: 300, y: 50, vertical: true });
-    expect(b.floats.tools).toEqual({ x: 300, y: 50, vertical: true });
-    expect(b.order).toEqual(a.order);
-  });
-
-  it("sair do modo flutuante apaga a posição guardada", () => {
-    const a = placeBlock(DEFAULT_LAYOUT, "tools", "float", { x: 10, y: 10, vertical: false });
-    const b = placeBlock(a, "tools", "bottom");
-    expect(b.floats.tools).toBeUndefined();
-    expect(b.side.tools).toBe("bottom");
-  });
-
-  it("layout da versão 1 (sem floats/locked) continua valendo", () => {
-    const v1 = { version: 1, order: DEFAULT_LAYOUT.order, side: { ...DEFAULT_LAYOUT.side, colors: "left" } };
-    const l = normalizeLayout(v1);
-    expect(l.version).toBe(2);
-    expect(l.side.colors).toBe("left");
-    expect(l.floats).toEqual({});
-    expect(l.locked).toBe(false);
-  });
-
-  it("flutuante sem posição válida volta ao lado padrão; posição inválida é descartada", () => {
-    const l = normalizeLayout({ side: { tools: "float", colors: "float" }, floats: { colors: { x: "a", y: 3, vertical: true }, tools: { x: 5, y: 6, vertical: false } } });
-    expect(l.side.tools).toBe("float");
-    expect(l.floats.tools).toEqual({ x: 5, y: 6, vertical: false });
-    expect(l.side.colors).toBe("right"); // padrão do bloco
-    expect(l.floats.colors).toBeUndefined();
-    expect(normalizeLayout({ side: { tools: "float" }, floats: { tools: { x: Infinity, y: 1, vertical: false } } }).side.tools).toBe("bottom");
-  });
-
-  it("'locked' só vale se for exatamente true", () => {
-    expect(normalizeLayout({ locked: true }).locked).toBe(true);
-    expect(normalizeLayout({ locked: "sim" }).locked).toBe(false);
-  });
-
-  it("salva e recarrega posição e trava", () => {
-    const s = memory();
-    const l = { ...placeBlock(DEFAULT_LAYOUT, "colors", "float", { x: 33, y: 44, vertical: true }), locked: true };
-    saveLayout(l, s);
-    expect(loadLayout(s)).toEqual(l);
-  });
-});
-
-describe("clampPosition (nunca sai da tela)", () => {
-  const vp = { w: 1000, h: 700 };
-  const size = { w: 300, h: 60 };
-
-  it("mantém o que já está dentro", () => {
-    expect(clampPosition({ x: 100, y: 100 }, size, vp)).toEqual({ x: 100, y: 100 });
-  });
-
-  it("puxa de volta o que passou de qualquer borda, respeitando a margem", () => {
-    expect(clampPosition({ x: -50, y: -9 }, size, vp)).toEqual({ x: 8, y: 8 });
-    expect(clampPosition({ x: 900, y: 690 }, size, vp)).toEqual({ x: 1000 - 300 - 8, y: 700 - 60 - 8 });
-  });
-
-  it("bloco maior que a janela fica colado no canto de cima/esquerda (e continua alcançável)", () => {
-    expect(clampPosition({ x: 400, y: 400 }, { w: 2000, h: 2000 }, vp)).toEqual({ x: 8, y: 8 });
-  });
-
-  it("janela encolhida (rotação, redimensionar) reposiciona o que ficou para fora", () => {
-    expect(clampPosition({ x: 700, y: 500 }, size, { w: 500, h: 400 })).toEqual({ x: 500 - 300 - 8, y: 400 - 60 - 8 });
-  });
-});
-
-describe("snapPosition (ímã nas bordas)", () => {
-  const vp = { w: 1000, h: 700 };
-  const horiz = { w: 300, h: 60 };
-  const vert = { w: 60, h: 300 };
-
-  it("longe de tudo: não gruda nem muda a orientação", () => {
-    const r = snapPosition({ x: 200, y: 150 }, horiz, vp, false);
-    expect(r).toMatchObject({ x: 200, y: 150, vertical: false, edgeX: null, edgeY: null });
-  });
-
-  it("perto da borda esquerda gruda nela e vira vertical", () => {
-    const r = snapPosition({ x: 20, y: 150 }, vert, vp, false);
-    expect(r).toMatchObject({ x: 8, y: 150, vertical: true, edgeX: "start" });
-  });
-
-  it("perto da borda direita gruda e vira vertical", () => {
-    const r = snapPosition({ x: 1000 - 60 - 8 - 10, y: 150 }, vert, vp, false);
-    expect(r).toMatchObject({ x: 1000 - 60 - 8, vertical: true, edgeX: "end" });
-  });
-
-  it("perto de cima/embaixo gruda e vira horizontal", () => {
-    expect(snapPosition({ x: 200, y: 14 }, horiz, vp, true)).toMatchObject({ y: 8, vertical: false, edgeY: "start" });
-    expect(snapPosition({ x: 200, y: 700 - 60 - 8 - 12 }, horiz, vp, true)).toMatchObject({ y: 700 - 60 - 8, vertical: false, edgeY: "end" });
-  });
-
-  it("num canto (duas bordas) mantém a orientação que tinha", () => {
-    expect(snapPosition({ x: 10, y: 10 }, horiz, vp, false)).toMatchObject({ x: 8, y: 8, vertical: false });
-    expect(snapPosition({ x: 10, y: 10 }, vert, vp, true)).toMatchObject({ x: 8, y: 8, vertical: true });
-  });
-
-  it("o centro da tela também atrai (barra centralizada)", () => {
-    const r = snapPosition({ x: (1000 - 300) / 2 + 9, y: 300 }, horiz, vp, false);
-    expect(r.x).toBe(350);
-    expect(r.edgeX).toBe("center");
-    expect(r.vertical).toBe(false); // centro não muda orientação
-  });
-
-  it("fora do alcance do ímã não gruda", () => {
-    expect(snapPosition({ x: 60, y: 150 }, horiz, vp, false).edgeX).toBeNull();
-  });
-
-  it("soltar fora da tela sempre acaba dentro dela", () => {
-    const r = snapPosition({ x: -500, y: 5000 }, horiz, vp, false);
-    expect(r.x).toBeGreaterThanOrEqual(8);
-    expect(r.y).toBeLessThanOrEqual(700 - 60 - 8);
-    expect(r.x + 300).toBeLessThanOrEqual(1000);
-  });
-
-  it("a barra de páginas aberta (insetLeft) reserva espaço: o ímã da esquerda cola depois dela", () => {
-    expect(snapPosition({ x: 250, y: 150 }, vert, vp, false, { insetLeft: 256 })).toMatchObject({ x: 264, vertical: true, edgeX: "start" });
-  });
-
-  it("janela minúscula (bloco não cabe) não gera posição negativa nem NaN", () => {
-    const r = snapPosition({ x: 50, y: 50 }, { w: 800, h: 900 }, { w: 400, h: 300 }, false);
-    expect(Number.isFinite(r.x) && Number.isFinite(r.y)).toBe(true);
-    expect(r.x).toBeGreaterThanOrEqual(8);
-    expect(r.y).toBeGreaterThanOrEqual(8);
-  });
-});
-
-describe("juntar blocos de volta", () => {
-  it("placeBlockAt encaixa antes de um vizinho, tirando o bloco do modo flutuante", () => {
-    const solto = placeBlock(DEFAULT_LAYOUT, "colors", "float", { x: 200, y: 200, vertical: false });
-    const l = placeBlockAt(solto, "colors", "bottom", "shapes");
-    expect(l.side.colors).toBe("bottom");
-    expect(l.floats.colors).toBeUndefined();
-    expect(blocksOn(l, "bottom")).toEqual(["tools", "colors", "shapes", "history"]);
-  });
-
-  it("placeBlockAt sem vizinho vai para o fim do lado; com lado vazio também funciona", () => {
-    expect(blocksOn(placeBlockAt(DEFAULT_LAYOUT, "tools", "right", null), "right")).toEqual(["brush", "colors", "size", "layers", "tools"]);
-    const vazio = placeBlock(DEFAULT_LAYOUT, "map", "hidden");
-    expect(blocksOn(placeBlockAt(vazio, "map", "left", null), "left")).toEqual(["insert", "science", "page", "map"]);
-  });
-
-  it("homeBlock devolve ao lado de fábrica", () => {
-    const l = placeBlock(placeBlock(DEFAULT_LAYOUT, "size", "float", { x: 9, y: 9, vertical: true }), "tools", "hidden");
-    expect(homeBlock(homeBlock(l, "size"), "tools").side).toMatchObject({ size: "right", tools: "bottom" });
-  });
-
-  it("layout salvo sem o bloco novo (versão antiga) ganha o bloco Inserir no lugar padrão", () => {
-    const antigo = { version: 2, order: ["tools", "shapes", "history", "brush", "colors", "size", "map", "page"], side: { tools: "bottom" }, floats: {}, locked: false };
-    const l = normalizeLayout(antigo);
-    expect(l.side.insert).toBe("left");
-    expect(l.order).toContain("insert");
-  });
-});
-
-describe("grupos flutuantes (lego)", () => {
-  const solto = (l = DEFAULT_LAYOUT) => placeBlock(l, "colors", "float", { x: 300, y: 200, vertical: false });
-
-  it("juntar um bloco a um flutuante forma um grupo com uma posição só", () => {
-    const l = joinGroup(solto(), "size", "colors", false);
-    expect(groupMembers(l, "colors")).toEqual(["colors", "size"]);
-    expect(l.group.size).toBe("colors");
-    expect(l.floats.size).toBeUndefined();
-    expect(floatLeaders(l)).toEqual(["colors"]);
-    expect(blocksOn(l, "right")).toEqual(["brush", "layers"]);
-  });
-
-  it("antes/depois do alvo define a ordem dentro do grupo", () => {
-    const l = joinGroup(solto(), "tools", "colors", true);
-    expect(groupMembers(l, "colors")).toEqual(["tools", "colors"]);
-  });
-
-  it("tirar o líder do grupo passa a posição e a liderança para o próximo", () => {
-    let l = joinGroup(joinGroup(solto(), "size", "colors", false), "brush", "size", false);
-    l = detachBlock(l, "colors");
-    expect(floatLeaders(l).sort()).toEqual(["colors", "size"]);
-    expect(groupMembers(l, "size")).toEqual(["size", "brush"]);
-    expect(l.floats.size).toEqual({ x: 300, y: 200, vertical: false });
-  });
-
-  it("mover o grupo move todos; encaixar o grupo leva todos para a barra, na ordem", () => {
-    let l = joinGroup(solto(), "size", "colors", false);
-    l = moveGroup(l, "colors", { x: 10, y: 20, vertical: true });
-    expect(l.floats.colors).toEqual({ x: 10, y: 20, vertical: true });
-    const d = dockGroup(l, "colors", "bottom", "shapes");
-    expect(blocksOn(d, "bottom")).toEqual(["tools", "colors", "size", "shapes", "history"]);
-    expect(floatLeaders(d)).toEqual([]);
-    expect(d.group).toEqual({});
-  });
-
-  it("arrancar a barra lateral inteira vira um grupo flutuante com os mesmos blocos", () => {
-    const { layout, leader } = floatSide(DEFAULT_LAYOUT, "left", { x: 50, y: 60, vertical: true });
-    expect(leader).toBe("insert");
-    expect(blocksOn(layout, "left")).toEqual([]);
-    expect(groupMembers(layout, "insert")).toEqual(["insert", "map", "science", "page"]);
-  });
-
-  it("juntar dois grupos flutuantes", () => {
-    let l = joinGroup(solto(), "size", "colors", false);
-    l = placeBlock(l, "tools", "float", { x: 600, y: 50, vertical: false });
-    l = joinGroup(l, "shapes", "tools", false);
-    const m = mergeGroups(l, "tools", "size", false);
-    expect(groupMembers(m, "colors")).toEqual(["colors", "size", "tools", "shapes"]);
-    expect(floatLeaders(m)).toEqual(["colors"]);
-  });
-
-  it("encaixar de volta (home) devolve cada bloco do grupo ao seu lugar de fábrica", () => {
-    const l = homeGroup(joinGroup(solto(), "tools", "colors", false), "colors");
-    expect(l.side).toMatchObject({ colors: "right", tools: "bottom" });
-  });
-
-  it("normalize: grupo apontando para quem não flutua (ou corrente) é desfeito", () => {
-    const l = normalizeLayout({ side: { colors: "float", size: "float" }, floats: { colors: { x: 1, y: 2, vertical: false } }, group: { size: "colors", tools: "colors" } });
-    expect(l.group).toEqual({ size: "colors" });
-    const ruim = normalizeLayout({ side: { size: "float" }, group: { size: "colors" } });
-    expect(ruim.side.size).toBe("right");
-    expect(ruim.group).toEqual({});
-  });
-
-  it("ímã entre barras encosta lado a lado", () => {
-    const p = snapToRects({ x: 410, y: 105 }, { w: 100, h: 40 }, [{ x: 200, y: 100, w: 200, h: 44 }]);
-    expect(p).toEqual({ x: 406, y: 100 });
-    expect(snapToRects({ x: 700, y: 500 }, { w: 100, h: 40 }, [{ x: 200, y: 100, w: 200, h: 44 }])).toEqual({ x: 700, y: 500 });
+  it("barra solta nunca sai da janela", () => {
+    expect(clampPosition({ x: 2000, y: -40 }, { w: 100, h: 50 }, { w: 800, h: 600 })).toEqual({ x: 692, y: 8 });
   });
 });

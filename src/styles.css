@@ -1452,3 +1452,76 @@ body[data-pills="off"] .sidebar { top: calc(12px + var(--insetT, 0px) + env(safe
 .ws-pick input { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; }
 .ws-item.on .ws-pick b::after { content: " · ativa"; color: var(--accent); font-weight: 600; font-size: 12px; }
 .dock-tab { min-width: 0; }
+
+/* =====================================================================================
+   0.9.1 — barras de bloquinhos (sem alças): cada ferramenta é um item que se arrasta
+   ===================================================================================== */
+.bars-side { position: fixed; z-index: 5; top: calc(50% + (var(--insetT, 0px) - var(--insetB, 0px)) / 2); transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; max-height: calc(100vh - 120px - var(--insetT, 0px) - var(--insetB, 0px)); pointer-events: none; }
+.bars-side > * { pointer-events: auto; }
+.bars-side.left { left: calc(8px + var(--side) + var(--insetL, 0px) + env(safe-area-inset-left, 0px)); }
+.bars-side.right { right: calc(8px + var(--insetR, 0px) + env(safe-area-inset-right, 0px)); }
+.bars-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; max-width: 100%; }
+.toolbar.tbar { gap: 2px; padding: 4px; border-radius: 14px; cursor: default; touch-action: none; overflow: visible; }
+.toolbar.tbar.vbar { flex-direction: column; overflow-y: auto; max-height: 100%; }
+.float-layer .toolbar.tbar { position: absolute; }
+.titem { display: flex; align-items: center; justify-content: center; border-radius: 10px; touch-action: none; }
+.titem > .btn { margin: 0; }
+.titem.drag-src, .tbar.drag-src { opacity: .3; }
+.ins-mark { flex: none; display: block; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.hbar > .ins-mark { width: 3px; height: 32px; margin: 0 2px; }
+.vbar > .ins-mark { height: 3px; width: 32px; margin: 2px 0; }
+.bar-ghost { position: fixed; z-index: 95; pointer-events: none; opacity: .92; filter: drop-shadow(0 8px 18px rgba(20, 10, 60, .28)); }
+.bar-ghost > * { width: 100%; height: 100%; background: var(--chrome); border-radius: 12px; }
+/* bordas onde a barra encaixa (só aparecem arrastando) */
+.dropzones .dz { position: fixed; border: 2px dashed color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--accent) 6%, transparent); opacity: .7; transform: none; }
+.dropzones .dz[data-side="left"] { left: calc(4px + var(--insetL, 0px)); top: calc(var(--insetT, 0px) + 18%); bottom: calc(var(--insetB, 0px) + 18%); width: 10px; height: auto; }
+.dropzones .dz[data-side="right"] { right: calc(4px + var(--insetR, 0px)); top: calc(var(--insetT, 0px) + 18%); bottom: calc(var(--insetB, 0px) + 18%); width: 10px; height: auto; }
+.dropzones .dz[data-side="bottom"] { left: 25%; right: 25%; bottom: calc(4px + var(--insetB, 0px)); height: 10px; width: auto; }
+.dropzones .dz.on { opacity: 1; border-style: solid; background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.dropzones .dz[data-side="left"].on, .dropzones .dz[data-side="right"].on { width: 56px; }
+.dropzones .dz[data-side="bottom"].on { height: 56px; }
+/* cores e espessura como bloquinhos */
+.swatches { display: flex; align-items: center; gap: 4px; padding: 0 4px; }
+.vbar .swatches { flex-direction: column; padding: 4px 0; }
+.vbar .swatch { margin: 0; }
+.sizeitem { display: flex; align-items: center; gap: 6px; padding: 0 6px; }
+.sizeitem input { width: 88px; accent-color: var(--accent); }
+.sizeitem input:disabled { opacity: .4; }
+.sizeitem .preview { width: 28px; height: 28px; }
+.vbar .sizeitem { flex-direction: column; padding: 6px 0; }
+.vbar .sizeitem input { width: 92px; margin: 32px -32px; transform: rotate(-90deg); }
+/* triângulo das ferramentas agrupadas: só aparece passando o mouse (ou na ativa) */
+.tg-corner { opacity: 0; transition: opacity 120ms ease; }
+.btn.tgroup:hover .tg-corner, .btn.tgroup:focus-visible .tg-corner { opacity: .5; }
+.btn.tgroup.on .tg-corner { opacity: .35; }
+@media (pointer: coarse) { .tg-corner { opacity: .3; } }
+/* inserir: lista limpa, uma linha por origem */
+.insertpanel { gap: 8px; }
+.ins-list { display: flex; flex-direction: column; gap: 2px; }
+.ins-item { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 10px; border: 0; border-radius: 12px; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.ins-item:hover, .ins-item:focus-visible { background: var(--accent-soft); outline: none; }
+.ins-item > span { display: flex; flex-direction: column; gap: 1px; }
+.ins-item b { font-size: 14px; font-weight: 600; }
+.ins-item small { font-size: 12px; color: var(--ink-soft); }
+.optpanel { max-height: min(70vh, 560px); overflow-y: auto; }
+/* configurações → barras */
+.barlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.barrow { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; }
+.barrow-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.barrow-head small { color: var(--ink-soft); }
+.baritems { display: flex; flex-wrap: wrap; gap: 4px; }
+.baritem { display: inline-flex; align-items: center; gap: 1px; padding: 2px 2px 2px 9px; border-radius: 8px; background: var(--surface-2); font-size: 12.5px; }
+.baritem span { margin-right: 4px; }
+
+/* ---- painéis mais limpos: botões discretos, propriedades em linhas ---- */
+.panel .chip, .dock-body .chip { border-color: transparent; background: var(--surface-2); font-weight: 500; }
+.panel .chip:hover:not(:disabled), .dock-body .chip:hover:not(:disabled) { background: var(--accent-soft); }
+.panel .chip.on, .dock-body .chip.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent); }
+.layer-head .row.tight { gap: 0; }
+.layer-head .btn.sm { min-width: 30px; height: 30px; }
+.layer-props { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 12px; background: var(--surface-2); }
+.prow { display: grid; grid-template-columns: 78px 1fr auto; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-soft); }
+.prow input[type="range"] { width: 100%; accent-color: var(--accent); }
+.prow output { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+.prow select { grid-column: 2 / 4; max-width: none; }

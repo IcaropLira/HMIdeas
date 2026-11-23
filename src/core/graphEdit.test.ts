@@ -5,12 +5,12 @@ import { HirakuElement } from "./model";
 import { makeNode } from "./mindmap";
 
 describe("edição de grafos", () => {
-  it("nomes seguem A…Z e depois A1…", () => {
-    expect(nextVertexName([])).toBe("A");
-    const els: HirakuElement[] = [makeVertex("A", { x: 0, y: 0 }), makeVertex("C", { x: 100, y: 0 })];
-    expect(nextVertexName(els)).toBe("B");
-    const all = Array.from({ length: 26 }, (_, i) => makeVertex(String.fromCharCode(65 + i), { x: i * 60, y: 0 }));
-    expect(nextVertexName(all)).toBe("A1");
+  it("vértices são numerados 1, 2, 3… (o menor número livre)", () => {
+    expect(nextVertexName([])).toBe("1");
+    const els: HirakuElement[] = [makeVertex("1", { x: 0, y: 0 }), makeVertex("3", { x: 100, y: 0 })];
+    expect(nextVertexName(els)).toBe("2");
+    const all = Array.from({ length: 30 }, (_, i) => makeVertex(String(i + 1), { x: i * 60, y: 0 }));
+    expect(nextVertexName(all)).toBe("31");
   });
 
   it("aresta ligada vira grafo lido pelos algoritmos, com peso e direção", () => {
@@ -27,7 +27,7 @@ describe("edição de grafos", () => {
     const a = makeVertex("A", { x: 0, y: 0 }), b = makeVertex("B", { x: 150, y: 0 });
     const ab = makeEdge(a, b, { directed: false });
     const r = connectedVertex([a, b, ab], a.id, { directed: false })!;
-    expect(r.vertex.text).toBe("C");
+    expect(r.vertex.text).toBe("1");
     expect(r.edge.startBinding?.elementId).toBe(a.id);
     expect(r.edge.endBinding?.elementId).toBe(r.vertex.id);
     const c = { x: r.vertex.x + r.vertex.w / 2, y: r.vertex.y + r.vertex.h / 2 };

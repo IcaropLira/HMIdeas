@@ -153,7 +153,7 @@ export function nodeProgress(n: Pick<NodeElement, "progress" | "note">): number 
   return c.length ? Math.round((c.filter((x) => x.done).length / c.length) * 100) : null;
 }
 
-export type NodeContent = Pick<NodeElement, "text" | "fontFamily" | "fontSize" | "shape" | "icon"> & Partial<Pick<NodeElement, "note" | "tags" | "progress" | "due" | "image" | "imageRatio">>;
+export type NodeContent = Pick<NodeElement, "text" | "fontFamily" | "fontSize" | "shape" | "icon"> & Partial<Pick<NodeElement, "note" | "tags" | "progress" | "due" | "image" | "imageRatio" | "vertex">>;
 
 /** Onde fica cada parte dentro do nó (coordenadas relativas ao canto). Usado no tamanho e no desenho. */
 export interface NodeLayoutBox {
@@ -169,6 +169,12 @@ export interface NodeLayoutBox {
 export function nodeLayout(n: NodeContent, measure: Measure): NodeLayoutBox {
   const label = n.text || " ";
   const m = measure(label, n.fontFamily, n.fontSize);
+  if (n.vertex) {
+    // vértice de grafo: círculo (ou cápsula, se o nome for comprido) — nunca uma elipse achatada
+    const h = Math.max(48, Math.ceil(m.h + 18));
+    const w = Math.max(h, Math.ceil(m.w + 26));
+    return { w, h, img: null, labelY: h / 2, left: false, note: null, chips: null, bar: null };
+  }
   const [px, py] = PAD[n.shape];
   const iconW = n.icon ? n.fontSize * 1.35 : 0;
   const card = n.shape === "card";

@@ -154,7 +154,7 @@ export function ToolOptions({ mode }: { mode: Mode }) {
       <>
         <button className={graph.directed ? "chip on" : "chip"} aria-pressed={graph.directed} onClick={() => graph.set({ directed: !graph.directed })}>Direcionada (seta)</button>
         <button className={graph.weighted ? "chip on" : "chip"} aria-pressed={graph.weighted} onClick={() => graph.set({ weighted: !graph.weighted })}>Ponderada (peso)</button>
-        <span className="ob-hint">{tool === "vertex" ? "Toque no vazio cria; arraste de um vértice para ligar. Tab no vértice cria um vizinho." : "Arraste de um vértice a outro; soltar no vazio cria um vértice."}</span>
+        <span className="ob-hint">{tool === "vertex" ? "Toque no vazio cria (1, 2, 3…); arraste de um vértice para ligar. Tab no vértice cria um vizinho." : "Arraste de um vértice a outro; soltar no vazio cria um vértice."} Com Selecionar: Shift+arrastar de um vértice = aresta dirigida, Ctrl+Shift = não dirigida.</span>
       </>
     );
   }
@@ -177,7 +177,7 @@ export function ToolOptions({ mode }: { mode: Mode }) {
         : <Field label="Caixa" mode={mode}><Seg label="O que a caixa pega" value={t.boxMode} onChange={(v) => t.set({ boxMode: v })} options={[["auto", "Pela direção", "→ só o que está dentro · ← tudo que a caixa toca"], ["inside", "Só dentro"], ["touch", "Tocando"]]} /></Field>}
       <button className={t.smartGuides ? "chip on" : "chip"} aria-pressed={t.smartGuides} onClick={() => t.set({ smartGuides: !t.smartGuides })} title={withKey("Guias inteligentes", "view.smartGuides")}>Guias inteligentes</button>
       <button className={t.snapGrid ? "chip on" : "chip"} aria-pressed={t.snapGrid} onClick={() => t.set({ snapGrid: !t.snapGrid })} title={withKey("Encaixar na grade", "view.snapGrid")}>Grade {t.gridSize}</button>
-      {mode === "bar" && <span className="ob-hint">Shift soma à seleção · Alt+arrastar duplica · Ctrl segurado desliga o encaixe · duplo clique entra no grupo</span>}
+      {mode === "bar" && <span className="ob-hint">Shift soma à seleção · Shift+arrastar de um vértice cria aresta · Alt+arrastar duplica · duplo clique entra no grupo</span>}
     </>
   );
 }

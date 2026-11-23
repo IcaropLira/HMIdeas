@@ -348,7 +348,8 @@ export function bstEdges(keys: number[]): string {
 /** Lista de arestas (texto aceito por parseGraph) do grafo gerado. */
 export function generate(id: GenId, n: number, seed = 1, directed = false): string {
   const r = rng(seed);
-  const L = (i: number) => (n <= 26 && id !== "grid" && id !== "hypercube" ? String.fromCharCode(65 + i) : String(i + 1));
+  // vértices numerados (1, 2, 3…), como em quase todo livro de grafos
+  const L = (i: number) => String(i + 1);
   const op = directed ? "->" : "-";
   const out: string[] = [];
   const e = (a: string, b: string, w?: number) => out.push(`${a} ${op} ${b}${w !== undefined ? ` : ${w}` : ""}`);
@@ -356,8 +357,8 @@ export function generate(id: GenId, n: number, seed = 1, directed = false): stri
     case "complete": for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) e(L(i), L(j)); break;
     case "cycle": for (let i = 0; i < n; i++) e(L(i), L((i + 1) % n)); break;
     case "path": for (let i = 0; i + 1 < n; i++) e(L(i), L(i + 1)); break;
-    case "star": for (let i = 1; i <= n; i++) e("C", String(i)); break;
-    case "wheel": for (let i = 0; i < n; i++) { e("H", String(i + 1)); e(String(i + 1), String(((i + 1) % n) + 1)); } break;
+    case "star": for (let i = 1; i <= n; i++) e("0", String(i)); break;
+    case "wheel": for (let i = 0; i < n; i++) { e("0", String(i + 1)); e(String(i + 1), String(((i + 1) % n) + 1)); } break;
     case "grid": for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const v = `${y}${x}`; if (x + 1 < n) e(v, `${y}${x + 1}`); if (y + 1 < n) e(v, `${y + 1}${x}`); } break;
     case "bintree": { const total = 2 ** n - 1; for (let i = 1; 2 * i <= total; i++) { e(String(i), String(2 * i)); if (2 * i + 1 <= total) e(String(i), String(2 * i + 1)); } if (total === 1) out.push("1"); break; }
     case "randtree": for (let i = 1; i < n; i++) e(String(Math.floor(r() * i) + 1), String(i + 1)); break;
@@ -415,7 +416,7 @@ export function matrixToEdges(text: string): string {
   let body = lines;
   const numeric = (row: string[]) => row.every((c) => Number.isFinite(Number(c.replace(",", "."))));
   if (!numeric(lines[0])) { names = lines[0]; body = lines.slice(1).map((r) => (numeric(r) ? r : r.slice(1))); }
-  else names = lines[0].map((_, i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? String(Math.floor(i / 26)) : ""));
+  else names = lines[0].map((_, i) => String(i + 1));
   const M = body.map((r) => r.map((c) => Number(c.replace(",", "."))));
   const n = Math.min(names.length, M.length);
   const sym = M.every((r, i) => r.every((v, j) => v === (M[j]?.[i] ?? v)));

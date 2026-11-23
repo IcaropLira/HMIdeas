@@ -1,87 +1,72 @@
+// Configurações → Barras: o mesmo que arrastar, mas por botões (teclado, leitor de tela, e para achar bloquinhos ocultos).
 import { Icon } from "./Icon";
-import { BLOCKS, BlockId, DockSide, Layout, SIDES, blocksOn } from "../core/layout";
+import { Bar, ItemId, Layout, Side, hiddenItems, hideItem, itemLabel, moveBar, moveItems, rotateBar, showItem } from "../core/layout";
 
-interface ViewProps {
-  layout: Layout;
-  onSide: (id: BlockId, side: DockSide) => void;
-  onMove: (id: BlockId, dir: -1 | 1) => void;
-  onRotate: (id: BlockId) => void;
-  onLocked: (locked: boolean) => void;
-  onReset: () => void;
-  onClose: () => void;
-}
+const SIDE_LABEL: Record<Side, string> = { left: "Esquerda", right: "Direita", bottom: "Embaixo" };
 
-/** Aba "Barras": onde cada bloco de botões fica. Puro: recebe o layout e os callbacks, para testar sem DOM. */
-export function BarsPane({ layout, onSide, onMove, onRotate, onLocked, onReset }: Omit<ViewProps, "onClose">) {
+export function BarsPane({ layout, onChange, onLocked, onReset }: { layout: Layout; onChange: (L: Layout) => void; onLocked: (v: boolean) => void; onReset: () => void }) {
+  const hidden = hiddenItems(layout);
+  const where = (b: Bar) => (b.dock ? SIDE_LABEL[b.dock] : `Solta${b.vertical ? " (vertical)" : " (horizontal)"}`);
+  const step = (b: Bar, id: ItemId, dir: -1 | 1) => {
+    const i = b.items.indexOf(id);
+    const j = i + dir;
+    if (j < 0 || j >= b.items.length) return;
+    onChange(moveItems(layout, [id], { kind: "into", bar: b.id, index: dir > 0 ? j + 1 : j }));
+  };
   return (
     <section aria-labelledby="cfg-bars" className="pane">
       <h3 id="cfg-bars">Barras de ferramentas</h3>
       <p className="hint">
-        As barras funcionam como peças de lego. Os <b>seis pontinhos</b> arrastam um bloco sozinho (desacopla); a <b>pílula</b> no
-        começo de cada barra arrasta a barra inteira, com todos os blocos juntos. Solte sobre outra barra (encaixada ou
-        flutuante) para juntar antes/depois do bloco embaixo do ponteiro, ou numa <b>zona de encaixe</b> (esquerda, embaixo,
-        direita). As barras soltas grudam nas bordas da tela e umas nas outras. Duplo clique na pílula gira a barra.
+        Cada ferramenta é um bloquinho. <b>Arraste</b> um bloquinho para trocar de lugar, para outra barra ou para fora (vira uma barra solta);
+        solte-o em cima, embaixo ou ao lado de outro bloquinho solto para juntar os dois numa barra nova. Arrastar o espaço entre os
+        bloquinhos leva a barra inteira; perto da borda da tela ela encaixa. Duplo clique no espaço de uma barra solta a gira.
       </p>
       <div className="row" role="group" aria-label="Posições">
         <button className={layout.locked ? "chip on" : "chip"} aria-pressed={layout.locked} onClick={() => onLocked(!layout.locked)}>
-          {layout.locked ? "Posições travadas" : "Travar posições"}
+          {layout.locked ? "Barras travadas" : "Travar barras"}
         </button>
-        <button className="chip" onClick={onReset} title="Volta todos os grupos para o lugar de fábrica">Juntar tudo (restaurar padrão)</button>
+        <button className="chip" onClick={onReset}>Restaurar padrão</button>
       </div>
-      <ul className="blocklist">
-        {BLOCKS.map((b) => {
-          const side = layout.side[b.id];
-          const same = blocksOn(layout, side);
-          const i = same.indexOf(b.id);
-          const hidden = side === "hidden";
-          return (
-            <li key={b.id} className="blockrow">
-              <div className="blockinfo">
-                <span className="blockname">{b.label}</span>
-                <span className="hint">{b.hint}</span>
-              </div>
-              <div className="row" role="radiogroup" aria-label={`Onde fica: ${b.label}`}>
-                {SIDES.map((s) => (
-                  <button key={s.id} role="radio" aria-checked={side === s.id} className={side === s.id ? "chip sm on" : "chip sm"} onClick={() => onSide(b.id, s.id)}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              <div className="blockmove">
-                {side === "float" && (
-                  <button className="btn sm" onClick={() => onRotate(b.id)} aria-label={`Girar ${b.label}`} title="Girar (horizontal ↔ vertical)">
-                    <Icon><path d="M4 12a8 8 0 0114-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 01-14 5.3L4 15" /><path d="M4 20v-5h5" /></Icon>
-                  </button>
-                )}
-                <button className="btn sm" disabled={hidden || i <= 0} onClick={() => onMove(b.id, -1)} aria-label={`Mover ${b.label} para antes`} title="Mover para antes">
-                  <Icon><path d="M6 14l6-6 6 6" /></Icon>
+      <ul className="barlist">
+        {layout.bars.map((b, k) => (
+          <li key={b.id} className="barrow">
+            <div className="barrow-head">
+              <b>{`Barra ${k + 1}`}</b><small>{where(b)}</small>
+              <span className="ob-fill" />
+              <select className="ob-select" aria-label={`Onde fica a barra ${k + 1}`} value={b.dock ?? "float"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onChange(v === "float" ? moveBar(layout, b.id, { kind: "float", x: 160 + k * 24, y: 140 + k * 24, vertical: b.vertical }) : moveBar(layout, b.id, { kind: "dock", side: v as Side }));
+                }}>
+                <option value="left">Esquerda</option><option value="right">Direita</option><option value="bottom">Embaixo</option><option value="float">Solta</option>
+              </select>
+              {!b.dock && (
+                <button className="btn sm" onClick={() => onChange(rotateBar(layout, b.id))} aria-label={`Girar a barra ${k + 1}`} title="Girar (horizontal ↔ vertical)">
+                  <Icon><path d="M4 12a8 8 0 0114-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 01-14 5.3L4 15" /><path d="M4 20v-5h5" /></Icon>
                 </button>
-                <button className="btn sm" disabled={hidden || i < 0 || i >= same.length - 1} onClick={() => onMove(b.id, 1)} aria-label={`Mover ${b.label} para depois`} title="Mover para depois">
-                  <Icon><path d="M6 10l6 6 6-6" /></Icon>
-                </button>
-              </div>
-            </li>
-          );
-        })}
+              )}
+            </div>
+            <div className="baritems">
+              {b.items.map((id, i) => (
+                <span key={id} className="baritem">
+                  <span>{itemLabel(id)}</span>
+                  <button className="kb-x" disabled={i === 0} onClick={() => step(b, id, -1)} aria-label={`${itemLabel(id)} para antes`} title="Para antes">‹</button>
+                  <button className="kb-x" disabled={i === b.items.length - 1} onClick={() => step(b, id, 1)} aria-label={`${itemLabel(id)} para depois`} title="Para depois">›</button>
+                  <button className="kb-x" onClick={() => onChange(hideItem(layout, id))} aria-label={`Ocultar ${itemLabel(id)}`} title="Ocultar">×</button>
+                </span>
+              ))}
+            </div>
+          </li>
+        ))}
       </ul>
+      {hidden.length > 0 && (
+        <>
+          <h3>Ocultos</h3>
+          <div className="chips-wrap">
+            {hidden.map((id) => <button key={id} className="chip" onClick={() => onChange(showItem(layout, id))} title="Mostrar de novo">{`+ ${itemLabel(id)}`}</button>)}
+          </div>
+        </>
+      )}
     </section>
   );
 }
-
-/** Versão autônoma (modal só com as barras): mantida para os testes de fumaça. */
-export function LayoutSettingsView(props: ViewProps) {
-  return (
-    <div className="modal-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
-      <div className="panel settings" role="dialog" aria-modal="true" aria-label="Configurações">
-        <div className="settings-head">
-          <strong>Configurações</strong>
-          <button className="btn sm" onClick={props.onClose} aria-label="Fechar" title="Fechar (Esc)">
-            <Icon><path d="M6 6l12 12M18 6L6 18" /></Icon>
-          </button>
-        </div>
-        <BarsPane {...props} />
-      </div>
-    </div>
-  );
-}
-

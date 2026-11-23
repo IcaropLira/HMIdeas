@@ -33,8 +33,11 @@ export function LabelEditor() {
   const size = node ? el.fontSize : 14;
   const family = node ? el.fontFamily : "sans";
   const m = measureBlock(session.text || " ", family, size);
-  const w = Math.max(node ? el.w : 140, Math.ceil(m.w) + 24) * z;
+  // vértice de grafo: editor redondo do tamanho do círculo, com o texto no meio (antes ficava um retângulo achatado)
+  const round = node && (el.vertex || el.shape === "ellipse");
+  const w = Math.max(node ? el.w : 140, Math.ceil(m.w) + 24, round ? el.h : 0) * z;
   const h = Math.max(node ? el.h : 24, Math.ceil(m.h) + 8) * z;
+  const padY = round ? Math.max(0, (h - m.h * z) / 2 - 2) : undefined;
   const cx = node ? el.x + el.w / 2 : el.x + 70;
   const left = (node ? cx : el.x + (w / z) / 2) * z + cam.x - w / 2;
   const top = node ? (el.y + el.h / 2) * z + cam.y - h / 2 : (el.y - 14) * z + cam.y - h / 2;
@@ -76,7 +79,9 @@ export function LabelEditor() {
         fontFamily: FONT_CSS[family],
         color: node ? el.color : el.color,
         background: node && el.fill ? el.fill : "#fff",
-        borderRadius: node && el.shape === "pill" ? h / 2 : 6,
+        borderRadius: round ? h / 2 : node && el.shape === "pill" ? h / 2 : 6,
+        paddingTop: padY, paddingBottom: round ? 0 : undefined,
+        fontWeight: round ? 600 : undefined,
         textAlign: node ? "center" : "left",
       }}
     />

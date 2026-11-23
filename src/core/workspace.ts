@@ -2,7 +2,7 @@
 // aparecem (menu, opções, status). Trocar de área de trabalho NUNCA mexe no documento. O estado é salvo em
 // localStorage; as áreas prontas podem ser alteradas e restauradas ao padrão.
 import { create } from "zustand";
-import { BlockId, DEFAULT_LAYOUT, DockSide, Layout, normalizeLayout, useLayout } from "./layout";
+import { DEFAULT_LAYOUT, Layout, makeLayout, normalizeLayout, useLayout } from "./layout";
 import { DockLayout, PanelId, clampFloats, dockOf, normalizeDock, openPanel, removePanel, togglePanel } from "./docking";
 
 export interface Chrome {
@@ -28,9 +28,6 @@ export interface Workspace {
 
 export type PresetId = "geral" | "desenho" | "mapas" | "escrita" | "estudos" | "organizacao" | "minimalista";
 
-const sides = (map: Partial<Record<BlockId, DockSide>>): Layout =>
-  normalizeLayout({ ...DEFAULT_LAYOUT, side: { ...Object.fromEntries(DEFAULT_LAYOUT.order.map((id) => [id, "hidden"])), ...map } });
-
 const FULL: Chrome = { menubar: true, optionsbar: true, statusbar: true, pills: false };
 
 export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Omit<Workspace, "id" | "name" | "preset"> }[] = [
@@ -38,7 +35,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "geral", name: "Geral", hint: "Menus, opções da ferramenta, propriedades e objetos à direita",
     make: () => ({
       chrome: FULL,
-      toolbar: sides({ tools: "left", shapes: "left", insert: "left", map: "left", science: "left", history: "bottom", brush: "bottom", colors: "bottom", size: "bottom" }),
+      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options"], ["blocks", "insert", "templates"]], bottom: [["mindmap", "frame", "vertex", "edge"], ["colors", "size"]] }),
       dock: dockOf({ right: { size: 300, stacks: [{ panels: ["props", "transform", "align"], size: 1.1 }, { panels: ["objects", "layers", "history"], size: 1 }] } }),
     }),
   },
@@ -46,7 +43,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "desenho", name: "Desenho", hint: "Caneta, pincéis, cores e camadas à mão",
     make: () => ({
       chrome: FULL,
-      toolbar: sides({ tools: "left", shapes: "left", history: "bottom", size: "bottom" }),
+      toolbar: makeLayout({ left: [["select", "pen", "eraser", "hand"], ["shape", "line", "text"], ["options"]], bottom: [["size"]] }),
       dock: dockOf({ right: { size: 300, stacks: [{ panels: ["colors"], size: 1.1 }, { panels: ["brushes", "props"], size: 1.2 }, { panels: ["layers", "navigator"], size: 0.9 }] } }),
     }),
   },
@@ -54,7 +51,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "mapas", name: "Mapas mentais", hint: "Mapa & quadros, objetos e conexões",
     make: () => ({
       chrome: FULL,
-      toolbar: sides({ tools: "left", map: "left", insert: "left", shapes: "left", history: "bottom", colors: "bottom" }),
+      toolbar: makeLayout({ left: [["select", "mindmap", "frame", "text"], ["shape", "line", "pen"], ["blocks", "insert", "templates"]], bottom: [["colors"]] }),
       dock: dockOf({ right: { size: 320, stacks: [{ panels: ["map", "props"], size: 1.3 }, { panels: ["objects", "navigator"], size: 1 }] } }),
     }),
   },
@@ -62,7 +59,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "escrita", name: "Escrita", hint: "Texto em destaque, pouca coisa na tela",
     make: () => ({
       chrome: { menubar: true, optionsbar: true, statusbar: true, pills: false },
-      toolbar: sides({ tools: "bottom", insert: "bottom", history: "bottom", colors: "bottom" }),
+      toolbar: makeLayout({ bottom: [["select", "text", "pen", "eraser", "hand"], ["blocks", "insert"], ["colors"]] }),
       dock: dockOf({ right: { size: 300, iconic: false, stacks: [{ panels: ["text", "props"], size: 1 }, { panels: ["library"], size: 1 }] } }),
     }),
   },
@@ -70,7 +67,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "estudos", name: "Estudos", hint: "Biblioteca de blocos, grafos, matemática e modelos",
     make: () => ({
       chrome: FULL,
-      toolbar: sides({ tools: "left", shapes: "left", science: "left", insert: "left", map: "left", history: "bottom", colors: "bottom", size: "bottom" }),
+      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options"]], bottom: [["vertex", "edge", "science", "mindmap"], ["blocks", "insert", "templates"], ["colors", "size"]] }),
       dock: dockOf({ right: { size: 330, stacks: [{ panels: ["library", "materials"], size: 1.3 }, { panels: ["science", "props"], size: 1 }] } }),
     }),
   },
@@ -78,7 +75,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "organizacao", name: "Organização", hint: "Objetos e camadas à esquerda; alinhar e transformar à direita",
     make: () => ({
       chrome: FULL,
-      toolbar: sides({ tools: "bottom", shapes: "bottom", insert: "bottom", history: "bottom" }),
+      toolbar: makeLayout({ bottom: [["select", "pen", "text", "eraser", "hand"], ["shape", "line", "options"], ["blocks", "insert"]] }),
       dock: dockOf({
         left: { size: 280, stacks: [{ panels: ["objects", "layers"], size: 1 }] },
         right: { size: 290, stacks: [{ panels: ["align"], size: 1.2 }, { panels: ["transform", "props"], size: 1 }] },

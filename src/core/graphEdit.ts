@@ -23,15 +23,10 @@ export function isVertex(e: HirakuElement, all?: HirakuElement[]): e is NodeElem
   return all.some((x) => x.type === "arrow" && (x.startBinding?.elementId === e.id || x.endBinding?.elementId === e.id)) && !all.some((x) => x.type === "node" && x.parentId === e.id);
 }
 
-/** Próximo nome livre: A…Z, depois A1…Z1, A2… */
+/** Próximo nome livre: 1, 2, 3… (o menor número que ainda não é nome de nenhum nó). */
 export function nextVertexName(all: HirakuElement[]): string {
   const used = new Set(all.filter((e): e is NodeElement => e.type === "node").map((n) => n.text.trim()));
-  for (let round = 0; ; round++) {
-    for (let i = 0; i < 26; i++) {
-      const name = String.fromCharCode(65 + i) + (round ? String(round) : "");
-      if (!used.has(name)) return name;
-    }
-  }
+  for (let i = 1; ; i++) if (!used.has(String(i))) return String(i);
 }
 
 const SIZE = 48;

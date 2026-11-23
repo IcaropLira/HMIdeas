@@ -5,9 +5,10 @@ import { reidentify } from "./binding";
 
 /** Camada efetiva de um elemento: a dele, se existir na página; senão a primeira (arquivos antigos). */
 export function layerIdOf(page: Pick<Page, "layers">, el: HirakuElement): ID {
+  const layers = page.layers ?? [];
   const id = el.layerId;
-  if (id && page.layers.some((l) => l.id === id)) return id;
-  return page.layers[0]?.id ?? "";
+  if (id && layers.some((l) => l.id === id)) return id;
+  return layers[0]?.id ?? "";
 }
 
 const interactiveCache = new WeakMap<Page, HirakuElement[]>();
@@ -18,7 +19,7 @@ const interactiveCache = new WeakMap<Page, HirakuElement[]>();
 export function interactiveElements(page: Page): HirakuElement[] {
   const hit = interactiveCache.get(page);
   if (hit) return hit;
-  const off = new Set(page.layers.filter((l) => !l.visible || l.locked).map((l) => l.id));
+  const off = new Set((page.layers ?? []).filter((l) => !l.visible || l.locked).map((l) => l.id));
   const out = off.size ? page.elements.filter((e) => !off.has(layerIdOf(page, e))) : page.elements;
   interactiveCache.set(page, out);
   return out;
@@ -29,7 +30,7 @@ const visibleCache = new WeakMap<Page, HirakuElement[]>();
 export function visibleElements(page: Page): HirakuElement[] {
   const hit = visibleCache.get(page);
   if (hit) return hit;
-  const hidden = new Set(page.layers.filter((l) => !l.visible).map((l) => l.id));
+  const hidden = new Set((page.layers ?? []).filter((l) => !l.visible).map((l) => l.id));
   const out = hidden.size ? page.elements.filter((e) => !hidden.has(layerIdOf(page, e))) : page.elements;
   visibleCache.set(page, out); // mesma página → mesma lista (seletores do React não entram em laço)
   return out;

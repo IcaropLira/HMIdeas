@@ -2,6 +2,7 @@
 // Tudo aqui é serializável em JSON e tratado como IMUTÁVEL.
 
 import { parseYouTube } from "./embed";
+import { FigureSpec, cleanFigure } from "./figures";
 
 export type ID = string;
 
@@ -255,7 +256,7 @@ export interface FrameElement {
   opacity: number;
 }
 
-export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf"] as const;
+export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figure"] as const;
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
@@ -277,6 +278,8 @@ export interface AttachmentElement {
   pages?: number;
   ratio?: number;
   mode?: "carousel" | "scroll";
+  /** "figure": sólido, gráfico de função, espaço 3D… (core/figures.ts). */
+  figure?: FigureSpec;
   opacity: number;
 }
 
@@ -404,6 +407,8 @@ const cleanAttachment = (e: any): AttachmentElement => {
   let kind: AttachmentKind = (ATTACHMENT_KINDS as readonly string[]).includes(e.kind) ? e.kind : "file";
   if (kind === "video" && !parseYouTube(str(e.url, ""))) kind = "link"; // sem link reconhecível, vira cartão de link
   if (kind === "pdf" && typeof e.data !== "string") kind = "file"; // sem o conteúdo embutido, vira arquivo comum
+  const figure = kind === "figure" ? cleanFigure(e.figure) : null;
+  if (kind === "figure" && !figure) kind = "file";
   return {
     ...e,
     frameId: typeof e.frameId === "string" ? e.frameId : null,
@@ -413,6 +418,7 @@ const cleanAttachment = (e: any): AttachmentElement => {
     pages: kind === "pdf" ? Math.max(1, Math.floor(num(e.pages, 1))) : undefined,
     ratio: kind === "pdf" ? Math.min(4, Math.max(0.25, num(e.ratio, 1.414))) : undefined,
     mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
+    figure: figure ?? undefined,
   };
 };
 

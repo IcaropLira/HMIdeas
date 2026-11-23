@@ -7,6 +7,7 @@ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../cor
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
+import { linearPath } from "../core/linear";
 import { decimateForPreview } from "../core/ink";
 import { MARGIN_COLOR, PaperLayer, autoLineColor, drawPaperPattern, layerAlpha } from "../core/paper";
 import { paintFrame, paintNode } from "./mindDraw";
@@ -14,6 +15,8 @@ import { InkNode, InkStyle, drawStrokeElement } from "./strokeDraw";
 import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visiblePages, youtubeThumb } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
+import { figurePrims } from "../core/figures";
+import { arrowHead } from "./figureSvg";
 
 const LINE = "#1B2233";
 const INDIGO = "#2F4B8F";
@@ -26,6 +29,22 @@ interface Node {
   view?: HirakuElement;
   /** Dependências do desenho (pai, raiz, nº de filhos): mudou → repinta. */
   dep?: unknown[];
+}
+
+/** Ponto no meio do caminho (pelo comprimento). */
+function pathMidpoint(pts: { x: number; y: number }[]) {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (acc + d >= total / 2 && d > 0) {
+      const t = (total / 2 - acc) / d;
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+    }
+    acc += d;
+  }
+  return pts[0] ?? { x: 0, y: 0 };
 }
 
 const sameDep = (a?: unknown[], b?: unknown[]) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
@@ -171,7 +190,7 @@ export class Renderer {
       let n = this.nodes.get(el.id);
       const dep = hasNodes && el.type === "node" ? this.nodeDep(el, byId, kids) : undefined;
       if (!n) {
-        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
+        const g = el.type === "text" || el.type === "node" || el.type === "frame" || el.type === "attachment" || isLinear(el) ? new Container() : el.type === "stroke" ? new InkNode() : new Graphics();
         n = { g, el, dep };
         this.nodes.set(el.id, n);
         this.paint(g, el, n);
@@ -300,6 +319,9 @@ export class Renderer {
       } else if (el.kind === "video" && parseYouTube(el.url)) {
         this.paintVideo(node, el);
         node.eventMode = "none";
+      } else if (el.kind === "figure" && el.figure) {
+        this.paintFigure(node, el);
+        node.eventMode = "none";
       } else if (el.kind === "pdf" && el.data) {
         this.paintPdf(node, el);
         node.eventMode = "none";
@@ -339,6 +361,23 @@ export class Renderer {
       }
       node.addChild(t);
       node.alpha = el.opacity;
+    } else if (isLinear(el)) {
+      // linha/seta + rótulo opcional no meio (peso de aresta, condição de fluxograma)
+      for (const ch of node.removeChildren()) ch.destroy({ children: true });
+      const g = new Graphics();
+      drawLinearElement(g, el);
+      node.addChild(g);
+      if (el.label) {
+        const mid = pathMidpoint(linearPath(el));
+        const t = new Text({ text: el.label, style: { fontFamily: "Inter, system-ui, sans-serif", fontSize: 15, fontWeight: "600", fill: el.stroke } });
+        t.resolution = this.textRes();
+        t.anchor.set(0.5);
+        t.position.set(mid.x, mid.y);
+        const pad = 4;
+        const bg = new Graphics().roundRect(mid.x - t.width / 2 - pad, mid.y - t.height / 2 - pad / 2, t.width + pad * 2, t.height + pad, 6).fill({ color: 0xffffff, alpha: 0.92 }).stroke({ color: el.stroke, width: 1, alpha: 0.35 });
+        node.addChild(bg, t);
+      }
+      node.alpha = 1;
     } else if (el.type === "stroke") {
       drawStrokeElement(node as InkNode, el);
     } else {
@@ -452,6 +491,44 @@ export class Renderer {
     }
   }
 
+  /** Figura matemática: as mesmas primitivas das prévias SVG (core/figures.ts), desenhadas com Graphics + Text. */
+  private paintFigure(node: Container, el: Extract<HirakuElement, { type: "attachment" }>) {
+    const p = figurePrims(el.figure!, el.w, el.h);
+    const g = new Graphics();
+    g.position.set(el.x, el.y);
+    node.addChild(g);
+    for (const q of p.polys) g.poly(q.pts.flatMap((v) => [v.x, v.y]), true).fill({ color: q.fill, alpha: q.alpha });
+    for (const l of p.lines) {
+      const pts = l.closed ? [...l.pts, l.pts[0]] : l.pts;
+      if (l.dash) {
+        // tracejado manual (o Pixi não tem dash): segmentos de 3w com intervalo 2.5w
+        const on = l.width * 3, off = l.width * 2.5;
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i];
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          for (let t = 0; t < len; t += on + off) {
+            const t2 = Math.min(len, t + on);
+            g.moveTo(a.x + ((b.x - a.x) * t) / len, a.y + ((b.y - a.y) * t) / len).lineTo(a.x + ((b.x - a.x) * t2) / len, a.y + ((b.y - a.y) * t2) / len);
+          }
+        }
+      } else {
+        g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      }
+      g.stroke({ width: l.width, color: l.color, alpha: l.alpha ?? 1, cap: "round", join: "round" });
+    }
+    for (const a of p.arrows) g.poly(arrowHead(a.from, a.to, a.size).flatMap((v) => [v.x, v.y]), true).fill({ color: a.color });
+    for (const d of p.dots) g.circle(d.x, d.y, d.r).fill({ color: d.color });
+    const res = this.textRes();
+    for (const t of p.texts) {
+      const tx = new Text({ text: t.text, style: { fontFamily: "Inter, system-ui, sans-serif", fontSize: t.size, fill: t.color, fontWeight: t.bold ? "600" : "400" } });
+      tx.resolution = res;
+      tx.anchor.set(t.anchor === "start" ? 0 : t.anchor === "middle" ? 0.5 : 1, t.base === "top" ? 0 : t.base === "middle" ? 0.5 : 1);
+      tx.position.set(el.x + t.x, el.y + t.y);
+      node.addChild(tx);
+    }
+  }
+
   private note(node: Container, el: Extract<HirakuElement, { type: "attachment" }>, msg: string) {
     const t = new Text({ text: msg, style: { fontFamily: "Arial", fontSize: 14, fill: 0x52627A } });
     t.position.set(el.x + (el.w - t.width) / 2, el.y + el.h / 2 - t.height / 2);
@@ -503,7 +580,7 @@ export class Renderer {
     this.resTimer = setTimeout(() => {
       const r = this.textRes();
       for (const n of this.nodes.values()) {
-        if (n.el.type === "node" || n.el.type === "frame") {
+        if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && n.el.kind === "figure") || (isLinear(n.el) && n.el.label)) {
           for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
           continue;
         }

@@ -13,6 +13,7 @@ import { ColorPicker } from "./ColorPicker";
 import { MapPanel } from "./MapPanel";
 import { PaperPanel } from "./PaperPanel";
 import { LayersPanel } from "./LayersPanel";
+import { SciencePanel } from "./SciencePanel";
 import { APP_VERSION } from "../core/repo";
 import { checkForUpdates, isTauri } from "../core/updater";
 import { isInsideAny } from "../core/outside";
@@ -94,7 +95,7 @@ export function Toolbar() {
   /** Põe o painel flutuante em (x, y), mantendo-o dentro da janela (estimativa conservadora do tamanho máximo). */
   const placePanel = (x: number, y: number) => {
     const margin = 8;
-    const width = Math.min(376, window.innerWidth - margin * 2);
+    const width = Math.min(440, window.innerWidth - margin * 2);
     const height = Math.min(680, window.innerHeight - margin * 2);
     setPanelPosition({
       x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
@@ -116,7 +117,7 @@ export function Toolbar() {
     setPanel((cur) => (cur === p ? null : p));
     if (a && a.side !== "bottom") {
       // Botão de uma barra lateral ou flutuante: o painel abre ao lado dele, para o lado onde há mais espaço.
-      const w = Math.min(376, window.innerWidth - 16);
+      const w = Math.min(440, window.innerWidth - 16);
       const toRight = a.side === "left" || (a.side === "float" && a.rect.left + a.rect.width / 2 < window.innerWidth / 2);
       placePanel(toRight ? a.rect.right + 8 : a.rect.left - w - 8, a.rect.top);
     } else {
@@ -342,6 +343,7 @@ export function Toolbar() {
 
       {panel === "brush" && <BrushPanel />}
       {panel === "layers" && <LayersPanel />}
+      {panel === "science" && <SciencePanel />}
       {panel === "map" && <MapPanel />}
 
       {panel === "eraser" && (

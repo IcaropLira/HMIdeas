@@ -731,3 +731,36 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
   .gallery .tabs-title { display: none; }
   .gallery-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
+
+/* ---- grafos e matemática ---- */
+.sciencepanel { width: min(430px, calc(100vw - 16px)); max-height: min(82vh, 760px); overflow-y: auto; gap: 10px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface-2); position: sticky; top: -14px; z-index: 1; }
+.seg button { min-height: 34px; border: 0; border-radius: 9px; background: none; color: var(--ink-soft); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.seg button.on { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(20, 20, 60, .12); }
+.result-box { padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--ink); font-size: 13px; line-height: 1.45; }
+.mini-field { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+.mini-field input, .mini-field select, .mini-select { height: 32px; min-width: 0; width: 84px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.mini-field select { width: auto; max-width: 140px; }
+.mini-select { width: auto; }
+.fn-row { display: flex; align-items: center; gap: 6px; }
+.fn-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.fn-name { font: 13px ui-monospace, monospace; color: var(--ink-soft); white-space: nowrap; }
+.fn-in { font-family: ui-monospace, monospace; text-transform: none; height: 36px; }
+.hint.err { color: var(--danger); }
+.hint code, .result-box code { font: 12px ui-monospace, monospace; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+.calc-in { height: 48px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: 18px ui-monospace, monospace; -webkit-user-select: text; user-select: text; }
+.calc-out { font: 600 22px ui-monospace, monospace; text-align: right; color: var(--accent); min-height: 30px; overflow-wrap: anywhere; }
+.calc-out.err { font-size: 14px; color: var(--danger); font-family: inherit; }
+.calc-keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.ck { height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--ink); font: inherit; font-size: 15px; cursor: pointer; }
+.ck.num { background: var(--surface); font-weight: 600; }
+.ck.danger { color: var(--danger); }
+.ck:hover { border-color: var(--accent); }
+.calc-hist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow-y: auto; }
+.calc-hist li { display: flex; justify-content: space-between; gap: 8px; font: 13px ui-monospace, monospace; padding: 4px 6px; border-radius: 6px; }
+.calc-hist li:hover { background: var(--surface-2); }
+.calc-hist button { border: 0; background: none; color: var(--ink-soft); font: inherit; cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fig-editor { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 12px; background: var(--accent-soft); }
+.el-preview { display: block; max-width: 100%; height: auto; }
+.btn.primary { min-height: 40px; height: auto; }
+.panel > * { flex-shrink: 0; }

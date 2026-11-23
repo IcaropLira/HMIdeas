@@ -532,7 +532,7 @@ export function Toolbar() {
             <div className="menu" role="menu" onClick={() => setMoreOpen(false)}>
               {!isTauri() && <a role="menuitem" href={`${import.meta.env.BASE_URL}download.html`}>Baixar o app</a>}
               <button role="menuitem" onClick={() => void checkForUpdates(true)}>Verificar atualizações · v{APP_VERSION}</button>
-              <button role="menuitem" onClick={() => useUI.getState().setNotebooksOpen(true)}>Cadernos…</button>
+              <button role="menuitem" onClick={() => useUI.getState().setNotebooksOpen(true)}>Tela inicial (cadernos)</button>
               <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("atalhos")}>Atalhos de teclado</button>
             </div>
           )}

@@ -7,12 +7,12 @@ import { MARGIN_COLOR, autoLineColor, layerAlpha, paperSvgPaths } from "../core/
 import { selectActivePage, useDoc } from "../core/store";
 
 /** Miniatura de um papel. Usada no painel e na tela inicial (capa de caderno novo). */
-export function PaperSwatch({ kind, bg, line, scale = 1, w = 96, h = 64, zoom = 0.55 }: { kind: PaperKind; bg: string; line?: string | null; scale?: number; w?: number; h?: number; zoom?: number }) {
+export function PaperSwatch({ kind, bg, line, scale = 1, w = 96, h = 64, zoom = 0.55, slice }: { kind: PaperKind; bg: string; line?: string | null; scale?: number; w?: number; h?: number; zoom?: number; slice?: boolean }) {
   const p = paperSvgPaths(kind, w, h, scale, zoom);
   const color = line ?? autoLineColor(bg);
   const dark = autoLineColor(bg) !== "#1B2233";
   return (
-    <svg className="paper-swatch" viewBox={`0 0 ${w} ${h}`} width={w} height={h} aria-hidden="true">
+    <svg className="paper-swatch" viewBox={`0 0 ${w} ${h}`} width={w} height={h} preserveAspectRatio={slice ? "xMidYMid slice" : undefined} aria-hidden="true">
       <rect width={w} height={h} fill={bg} />
       {p.thin && <path d={p.thin} stroke={color} strokeOpacity={layerAlpha(0, dark) * 1.6} strokeWidth={0.8} fill="none" />}
       {p.bold && <path d={p.bold} stroke={color} strokeOpacity={layerAlpha(1, dark) * 1.4} strokeWidth={0.9} fill="none" />}

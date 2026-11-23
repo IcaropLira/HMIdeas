@@ -1,4 +1,5 @@
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { START_HOME_KEY } from "./NotebookManager";
 import { Icon } from "./Icon";
 import { BarsPane } from "./LayoutSettings";
 import { rotateBlock } from "./BlockHandle";
@@ -70,6 +71,7 @@ export function Settings() {
   const theme = useTheme();
   const t = useTool();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [startHome, setStartHome] = useState(() => { try { return localStorage.getItem(START_HOME_KEY) !== "0"; } catch { return true; } });
   const close = () => useUI.getState().setSettingsOpen(false);
 
   useEffect(() => {
@@ -127,8 +129,9 @@ export function Settings() {
       <section className="pane">
         <h3>Cadernos e arquivos</h3>
         <p className="hint">Os cadernos ficam salvos neste dispositivo. Exporte um arquivo .hiraku para guardar uma cópia externa.</p>
+        <Toggle on={startHome} onChange={(v) => { setStartHome(v); try { localStorage.setItem(START_HOME_KEY, v ? "1" : "0"); } catch { /* sem armazenamento */ } }} label="Abrir na tela inicial" hint="Ao abrir o app, mostra os cadernos (desligado: volta direto ao último caderno)." />
         <div className="row">
-          <button className="chip" onClick={() => { close(); useUI.getState().setNotebooksOpen(true); }}>Abrir cadernos</button>
+          <button className="chip" onClick={() => { close(); useUI.getState().setNotebooksOpen(true); }}>Tela inicial (cadernos)</button>
           <button className="chip" onClick={() => downloadDoc(useDoc.getState().doc)}>Salvar .hiraku</button>
           <button className="chip" onClick={() => fileRef.current?.click()}>Abrir .hiraku</button>
           <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void openFile(e.target.files?.[0]); e.target.value = ""; }} />

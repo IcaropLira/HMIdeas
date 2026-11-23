@@ -10,6 +10,7 @@ import { PageNav, Sidebar, Toast } from "./components/Pages";
 import { Toolbar } from "./components/Toolbar";
 import { NotebookManager } from "./components/NotebookManager";
 import { zSelection } from "./components/LayersPanel";
+import { TemplateGallery } from "./components/TemplateGallery";
 import { copyWithMark, initPaste } from "./components/clipboard";
 import {
   deleteSelection, duplicateSelection, editSelectedText,
@@ -113,6 +114,7 @@ export default function App() {
       <NotebookManager />
       <Sidebar />
       <Toolbar />
+      <TemplateGallery />
       <TextEditor />
       <LabelEditor />
       <Toast />

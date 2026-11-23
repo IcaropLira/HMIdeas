@@ -13,6 +13,9 @@ interface UIState {
   dropHint: string | null;
   setDrag: (dragging: string | null, dropHint?: string | null) => void;
   /** Cadernos (gerenciador): janela aberta e nome do caderno atual (mostrado no topo). */
+  /** Galerias (modelos, mapas mentais, grafos e figuras). */
+  templatesOpen: boolean;
+  setTemplatesOpen: (open: boolean) => void;
   notebooksOpen: boolean;
   setNotebooksOpen: (open: boolean) => void;
   notebookName: string;
@@ -37,6 +40,8 @@ export const useUI = create<UIState>((set) => ({
   dragging: null,
   dropHint: null,
   setDrag: (dragging, dropHint = null) => set({ dragging, dropHint }),
+  templatesOpen: false,
+  setTemplatesOpen: (templatesOpen) => set({ templatesOpen }),
   notebooksOpen: false,
   setNotebooksOpen: (notebooksOpen) => set({ notebooksOpen }),
   notebookName: "",

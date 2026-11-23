@@ -1,12 +1,12 @@
 import { MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
-import { defaultCamera, screenToWorld } from "../core/camera";
-import { ARROW_HEADS, LineStyle, LinearElement, SHAPE_TYPES, newId, ShapeElement, TextElement } from "../core/model";
+import { defaultCamera } from "../core/camera";
+import { ARROW_HEADS, LineStyle, SHAPE_TYPES } from "../core/model";
 import { resetPageCameras } from "../core/pageView";
 import { downloadDoc, parseDoc } from "../core/serialize";
 import { applyColor, deleteSelection, duplicateSelection, restyleText } from "../core/actions";
 import { ToolId, useDoc, useSel, useTool, useView } from "../core/store";
-import { FONTS, FONT_SIZES, makeText } from "../core/text";
+import { FONTS, FONT_SIZES } from "../core/text";
 import { useUI } from "../core/ui";
 import { BrushPanel } from "./BrushPanel";
 import { ColorPicker } from "./ColorPicker";
@@ -43,87 +43,6 @@ const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }
 };
 
 type Panel = null | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "map" | "templates" | "insert" | "layers" | "science";
-
-type InsertKind = "postit" | "table" | "timeline" | "kanban" | "doc" | "slides";
-
-function getVisibleCenter(): { x: number; y: number } {
-  const cam = useView.getState().camera;
-  const sidebarOpen = useUI.getState().sidebarOpen;
-  const side = sidebarOpen && typeof window !== "undefined" && window.innerWidth >= 760 ? 244 : 0;
-  const winW = typeof window !== "undefined" ? window.innerWidth : 1200;
-  const winH = typeof window !== "undefined" ? window.innerHeight : 800;
-  const cx = side + (winW - side) / 2;
-  const cy = winH / 2;
-  return screenToWorld(cam, cx, cy);
-}
-
-/** Insere modelos iniciais editáveis usando os elementos nativos do documento no centro da visualização. */
-function insertTemplate(kind: InsertKind) {
-  const state = useDoc.getState();
-  const center = getVisibleCenter();
-  const bg = (id: string, x: number, y: number, w: number, h: number, fill: string): ShapeElement => ({
-    id, type: "rect", x, y, w, h, angle: 0, stroke: "#D5B95C", strokeWidth: 1,
-    strokeStyle: "solid", fill, rounded: true, opacity: 1,
-  });
-  const txt = (x: number, y: number, text: string, size = 20, color = "#29251C"): TextElement =>
-    makeText(newId(), x, y, text, { fontSize: size, fontFamily: "sans", align: "left", color });
-
-  const elements: (ShapeElement | TextElement | LinearElement)[] = [];
-  if (kind === "postit") {
-    const x = Math.round(center.x - 110);
-    const y = Math.round(center.y - 90);
-    elements.push(
-      bg(newId(), x, y, 220, 180, "#FFF2A8"),
-      txt(x + 14, y + 14, "Novo post-it", 22),
-      txt(x + 14, y + 52, "Clique duas vezes no texto para editar.", 14)
-    );
-  } else if (kind === "table") {
-    const x = Math.round(center.x - 225);
-    const y = Math.round(center.y - 100);
-    elements.push(txt(x, y, "TABELA", 24));
-    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
-      elements.push(bg(newId(), x + c * 150, y + 42 + r * 52, 144, 46, r === 0 ? "#DCE8FF" : "#FFFFFF"));
-      elements.push(txt(x + c * 150 + 8, y + 54 + r * 52, r === 0 ? ["Coluna 1", "Coluna 2", "Coluna 3"][c] : "Editar célula", 14));
-    }
-  } else if (kind === "timeline") {
-    const x = Math.round(center.x - 300);
-    const y = Math.round(center.y - 80);
-    elements.push(txt(x, y, "TIMELINE", 24));
-    elements.push({ id: newId(), type: "line", points: [{x, y: y + 100}, {x: x + 600, y: y + 100}], stroke: "#4776C5", strokeWidth: 3, strokeStyle: "solid", startHead: "none", endHead: "arrow", curved: false, opacity: 1 });
-    for (let i = 0; i < 4; i++) {
-      elements.push(bg(newId(), x + i * 155, y + 70, 130, 60, ["#DCE8FF", "#DDF4E4", "#FFF2A8", "#FBE0DE"][i]));
-      elements.push(txt(x + i * 155 + 8, y + 88, `Etapa ${i + 1}`, 16));
-    }
-  } else if (kind === "kanban") {
-    const x = Math.round(center.x - 315);
-    const y = Math.round(center.y - 150);
-    elements.push(txt(x, y, "KANBAN", 24));
-    const cols = [{name:"A fazer", color:"#DCE8FF"}, {name:"Em andamento", color:"#FFF2A8"}, {name:"Concluído", color:"#DDF4E4"}];
-    cols.forEach((col, i) => {
-      elements.push(bg(newId(), x + i * 210, y + 42, 196, 260, col.color));
-      elements.push(txt(x + i * 210 + 12, y + 54, col.name, 18));
-      elements.push(bg(newId(), x + i * 210 + 10, y + 92, 176, 68, "#FFFFFF"));
-      elements.push(txt(x + i * 210 + 18, y + 105, "Nova tarefa", 15));
-    });
-  } else if (kind === "doc") {
-    const x = Math.round(center.x - 260);
-    const y = Math.round(center.y - 310);
-    elements.push(bg(newId(), x, y, 520, 620, "#FFFFFF"), txt(x + 24, y + 24, "Novo documento", 30), txt(x + 24, y + 82, "Escreva suas ideias aqui…", 18));
-  } else {
-    const x = Math.round(center.x - 345);
-    const y = Math.round(center.y - 100);
-    elements.push(txt(x, y, "SLIDES", 24));
-    for (let i = 0; i < 3; i++) {
-      elements.push(bg(newId(), x + i * 230, y + 50, 210, 135, "#FFFFFF"));
-      elements.push(bg(newId(), x + i * 230 + 12, y + 62, 186, 8, ["#8B6BDE", "#E36B5D", "#2C9B83"][i]));
-      elements.push(txt(x + i * 230 + 14, y + 84, `Slide ${i + 1}`, 20));
-      elements.push(txt(x + i * 230 + 14, y + 118, "Adicionar conteúdo", 13));
-    }
-  }
-  state.addElements(elements);
-  useSel.getState().set(elements.map((e) => e.id));
-  useTool.getState().setTool("select");
-}
 
 export function Toolbar() {
   const t = useTool();
@@ -339,7 +258,7 @@ export function Toolbar() {
         <button className={panel === "map" ? "btn on" : "btn"} onClick={() => toggle("map")} aria-expanded={panel === "map"} aria-label="Mapa e quadros" title="Mapa & quadros: layout, formas, códigos de cor, recolher">
           <Icon><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></Icon>
         </button>
-        <button className={panel === "templates" ? "btn on" : "btn"} onClick={() => toggle("templates")} aria-expanded={panel === "templates"} aria-label="Modelos prontos" title="Modelos: Post-it, Tabela, Timeline, Kanban, Doc, Slides">
+        <button className="btn" onClick={() => { setPanel(null); useUI.getState().setTemplatesOpen(true); }} aria-label="Modelos prontos" title="Modelos prontos: Kanban, SWOT, Cornell, fluxograma, slides…">
           <Icon><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></Icon>
         </button>
       </div>
@@ -581,38 +500,12 @@ export function Toolbar() {
             <button className="chip" onClick={() => { void pasteFromButton(); setPanel(null); }} title="Cola o que está na área de transferência (Ctrl+V também funciona)">Colar</button>
             <button className="chip" onClick={() => { attachRef.current?.click(); setPanel(null); }}>Imagem ou arquivo…</button>
             <button className="chip" onClick={() => { setPanel(null); useTool.getState().set({ tool: "text" }); }}>Texto</button>
+            <button className="chip" onClick={() => { setPanel(null); useUI.getState().setTemplatesOpen(true); }}>Modelo pronto…</button>
           </div>
           <p className="hint">Dica: tire um print e aperte <b>Ctrl+V</b> com o quadro em foco. Também dá para arrastar arquivos e links para o quadro.</p>
         </div>
       )}
 
-      {panel === "templates" && (
-        <div className="panel" role="dialog" aria-label="Modelos prontos">
-          <div className="row" role="toolbar" aria-label="Inserir modelos">
-            {([
-              ["postit", "Post-it", "Inserir post-it editável"],
-              ["table", "Tabela", "Inserir grade de tabela"],
-              ["timeline", "Timeline", "Inserir linha do tempo"],
-              ["kanban", "Kanban", "Inserir quadro Kanban"],
-              ["doc", "Documento", "Inserir página de documento"],
-              ["slides", "Slides", "Inserir cartões de slides"],
-            ] as const).map(([kind, label, hint]) => (
-              <button
-                key={kind}
-                className="chip"
-                onClick={() => {
-                  insertTemplate(kind);
-                  setPanel(null);
-                }}
-                title={hint}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="hint">Modelos prontos adicionam blocos editáveis diretamente no centro da visualização atual.</p>
-        </div>
-      )}
     </>
   );
 

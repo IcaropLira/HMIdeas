@@ -123,6 +123,8 @@ export interface LinearElement {
   endHead: ArrowHead;
   /** true = curva suave passando pelos pontos. */
   curved: boolean;
+  /** Rótulo no meio da linha (peso de aresta de grafo, condição de fluxograma…). */
+  label?: string;
   /** Só setas: ligações das pontas a formas (a posição das pontas é recalculada a partir delas). */
   startBinding?: ArrowBinding | null;
   endBinding?: ArrowBinding | null;
@@ -509,7 +511,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                   brush: typeof e.brush === "string" && e.brush ? e.brush : "pen",
                 }
               : e.type === "arrow"
-                ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding) }
+                ? { ...e, startBinding: cleanBinding(e.startBinding), endBinding: cleanBinding(e.endBinding), label: typeof e.label === "string" && e.label ? e.label.slice(0, 80) : undefined }
                 : e.type === "text"
                   ? cleanText(e)
                   : e.type === "node"

@@ -115,5 +115,6 @@ export function thumbViewBox(paths: ThumbPath[]): string {
 
 export const pageThumb = (page: Page) => {
   const paths = visibleElements(page).map(thumbPath);
-  return { paths, viewBox: thumbViewBox(paths) };
+  // caderno com páginas: a miniatura mostra a folha inteira, na proporção dela
+  return { paths, viewBox: page.size ? `0 0 ${page.size.w} ${page.size.h}` : thumbViewBox(paths) };
 };

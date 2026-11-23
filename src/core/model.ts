@@ -4,6 +4,7 @@
 import { parseYouTube } from "./embed";
 import { FigureSpec, cleanFigure } from "./figures";
 import { BlockSpec, cleanBlock } from "./blocks";
+import { PageSize, cleanPageSize } from "./pageSize";
 
 export type ID = string;
 
@@ -379,6 +380,8 @@ export interface Page {
   paperScale?: number;
   /** Cor das linhas do papel; ausente/null = automática (escura no papel claro, clara no escuro). */
   lineColor?: string | null;
+  /** Folha de tamanho fixo (caderno com páginas). Ausente = quadro infinito. */
+  size?: PageSize;
   /** Camadas (de baixo para cima). Sempre ≥ 1 depois de normalizeDoc/createPage. */
   layers: Layer[];
   /** Ordem de empilhamento (último = por cima). Entre camadas, vale a ordem das camadas. */
@@ -547,6 +550,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       background: hex(p.background, DEFAULT_BACKGROUND),
       paperScale: Number.isFinite(p.paperScale) ? Math.max(0.5, Math.min(2, p.paperScale)) : undefined,
       lineColor: typeof p.lineColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lineColor) ? p.lineColor : undefined,
+      size: cleanPageSize(p.size),
       layers: cleanLayers(p.layers),
       elements: Array.isArray(p.elements)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

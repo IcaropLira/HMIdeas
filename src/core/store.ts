@@ -33,10 +33,10 @@ interface DocState {
   previewElements: (els: HirakuElement[]) => void;
   endPreview: (base: HirakuDoc) => void;
   cancelPreview: (base: HirakuDoc) => void;
-  setPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  setPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor" | "size">>) => void;
   /** Muda o papel SEM histórico (arrastar no seletor de cor); `endPreview(base)` grava como um passo só. */
   /** Aplica o papel a TODAS as páginas (um passo de desfazer). */
-  setPaperAll: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
+  setPaperAll: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor" | "size">>) => void;
   previewPaper: (patch: Partial<Pick<Page, "paper" | "background" | "paperScale" | "lineColor">>) => void;
 
   // páginas (alterações do documento → entram no desfazer), exceto setActivePage
@@ -160,7 +160,7 @@ export const useDoc = create<DocState>((set, get) => {
       const { doc } = get();
       const cur = selectActivePage(get());
       // A nova página herda o papel da atual (como um caderno com o mesmo modelo).
-      const page: Page = { ...createPage(`Página ${doc.pages.length + 1}`), paper: cur.paper, background: cur.background };
+      const page: Page = { ...createPage(`Página ${doc.pages.length + 1}`), paper: cur.paper, background: cur.background, ...(cur.size ? { size: cur.size } : {}), ...(cur.paperScale ? { paperScale: cur.paperScale } : {}), ...(cur.lineColor ? { lineColor: cur.lineColor } : {}) };
       const pages = [...doc.pages];
       pages.splice(doc.pages.findIndex((p) => p.id === cur.id) + 1, 0, page);
       commit({ ...doc, pages }, page.id);

@@ -1127,3 +1127,11 @@ textarea.block-inline-field { overflow-y: auto; }
 .pe-bar button:hover { background: var(--surface-2); }
 @media (max-width: 760px) { .pe-window { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .pe-explorer { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--line); } .pe-tip { display: none; } }
 .pe-content { margin-left: -28px; }
+
+/* ---- formato do caderno ---- */
+.nb-new-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.nb-new-head h2 { margin: 0; }
+.fmt-seg { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border-radius: 12px; background: var(--surface-2); }
+.fmt-seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: none; color: var(--ink-soft); font: inherit; font-size: 12.5px; cursor: pointer; }
+.fmt-seg button.on { background: var(--surface); color: var(--accent-strong, var(--accent)); box-shadow: 0 1px 4px #0001; font-weight: 600; }
+.chip.fmt { display: inline-flex; align-items: center; gap: 5px; }

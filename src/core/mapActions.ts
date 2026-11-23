@@ -11,6 +11,7 @@ import {
   setAllCollapsed, setNodeText, styleNodes, subtreeIds, toOutline, toggleCollapse, withDependents,
 } from "./mindmap";
 import { elementBounds } from "./selection";
+import { fitSheet } from "./pageSize";
 import { selectActivePage, useDoc, useSel, useTool, useView } from "./store";
 import { measureBlock } from "./text";
 import { useUI } from "./ui";
@@ -293,6 +294,8 @@ export function createFrameFromBox(b: { x: number; y: number; w: number; h: numb
 /** Vai (câmera) até um quadro/seleção. */
 export function fitToSelection(all = false) {
   const ids = new Set(selIds());
+  const size = selectActivePage(useDoc.getState()).size;
+  if (size && (all || !ids.size)) { useView.getState().setCamera(fitSheet(size, window.innerWidth, window.innerHeight)); return; }
   const pool = all || !ids.size ? els() : els().filter((e) => ids.has(e.id) || e.frameId && ids.has(e.frameId));
   const list = pool.filter((e) => !(e.type === "node" && e.hidden));
   if (!list.length) return;

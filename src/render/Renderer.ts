@@ -44,6 +44,11 @@ const drawEl = (g: Graphics, el: HirakuElement) => {
 export class Renderer {
   private app = new Application();
   private paperLayer = new Graphics();
+  /** Caderno com páginas: folha (sombra + cor do papel) num contêiner com a transformação do mundo, abaixo do padrão. */
+  private sheetLayer = new Graphics();
+  private paperMask = new Graphics();
+  private elementsMask = new Graphics();
+  private sheet: { w: number; h: number } | null = null;
   private world = new Container();
   /** Uma pilha por camada da página: [quadros (sempre abaixo), resto]. Ordem dos filhos = ordem das camadas. */
   private layerRoot = new Container();
@@ -84,8 +89,8 @@ export class Renderer {
       autoDensity: true,
       powerPreference: "high-performance",
     });
-    this.world.addChild(this.layerRoot, this.algoLayer, this.live, this.liveInk);
-    this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay, this.laserLayer);
+    this.world.addChild(this.elementsMask, this.layerRoot, this.algoLayer, this.live, this.liveInk);
+    this.app.stage.addChild(this.sheetLayer, this.paperMask, this.paperLayer, this.world, this.selLayer, this.overlay, this.laserLayer);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
       const { width, height } = this.app.screen;
@@ -108,6 +113,8 @@ export class Renderer {
     this.cam = cam;
     this.world.position.set(cam.x, cam.y);
     this.world.scale.set(cam.zoom);
+    this.sheetLayer.position.set(cam.x, cam.y);
+    this.sheetLayer.scale.set(cam.zoom);
     this.drawPaper();
     this.drawSelection();
     this.scheduleTextRes();
@@ -117,7 +124,41 @@ export class Renderer {
     const p = this.paper;
     if (kind === p.kind && bg === p.bg && scale === p.scale && line === p.line) return;
     this.paper = { kind, bg, scale, line };
-    this.app.renderer.background.color = bg;
+    this.applySheet();
+  }
+
+  /** Folha de tamanho fixo (caderno com páginas) ou null (quadro infinito). */
+  setSheet(size: { w: number; h: number } | null) {
+    const cur = this.sheet;
+    if ((!cur && !size) || (cur && size && cur.w === size.w && cur.h === size.h)) return;
+    this.sheet = size ? { w: size.w, h: size.h } : null;
+    this.applySheet();
+  }
+
+  private applySheet() {
+    const { bg } = this.paper;
+    const s = this.sheet;
+    const g = this.sheetLayer;
+    g.clear();
+    this.elementsMask.clear();
+    if (!s) {
+      this.app.renderer.background.color = bg;
+      this.paperLayer.mask = null;
+      this.layerRoot.mask = null;
+      this.paperMask.visible = false;
+      this.elementsMask.visible = false;
+    } else {
+      // mesa ao redor: um tom abaixo do papel (escura com papel escuro)
+      const dark = autoLineColor(bg) !== "#1B2233";
+      this.app.renderer.background.color = dark ? "#0E1016" : "#D5DAE3";
+      for (const [d, a] of [[18, 0.05], [10, 0.07], [4, 0.1]] as const) g.roundRect(-d / 2 + 2, -d / 2 + 6, s.w + d, s.h + d, 6).fill({ color: "#0B1020", alpha: a });
+      g.rect(0, 0, s.w, s.h).fill({ color: bg });
+      this.elementsMask.rect(0, 0, s.w, s.h).fill({ color: 0xffffff });
+      this.elementsMask.visible = true;
+      this.layerRoot.mask = this.elementsMask;
+      this.paperMask.visible = true;
+      this.paperLayer.mask = this.paperMask;
+    }
     this.drawPaper();
   }
 
@@ -128,6 +169,10 @@ export class Renderer {
     const H = this.app.screen.height;
     this.paperSize = { w: W, h: H };
     g.clear();
+    if (this.sheet) {
+      const c = this.cam;
+      this.paperMask.clear().rect(c.x, c.y, this.sheet.w * c.zoom, this.sheet.h * c.zoom).fill({ color: 0xffffff });
+    }
     const { kind, bg, scale, line } = this.paper;
     if (kind === "blank") return;
     const color = line ?? autoLineColor(bg);

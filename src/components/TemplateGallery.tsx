@@ -1,5 +1,4 @@
 // Galeria de modelos prontos: categorias, busca e prévias reais (os mesmos elementos que serão inseridos).
-import { useBlockEdit } from "../core/blockView";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Icon } from "./Icon";
 import { ElementsPreview } from "./ElementsPreview";
@@ -23,11 +22,6 @@ export function insertElements(els: HirakuElement[]) {
 
 export function insertTemplate(t: Template) {
   insertElements(t.build(measure));
-  if (t.category === "blocos") {
-    const id = useSel.getState().ids[0];
-    if (id) useBlockEdit.getState().open(id);
-    return;
-  }
   useUI.getState().showToast(t.category === "mapas"
     ? `Mapa “${t.name}” inserido. Tab cria um filho, Enter um irmão; troque o tema no painel Mapa.`
     : `“${t.name}” inserido. Arraste pelo título do quadro para mover tudo junto.`);
@@ -87,17 +81,17 @@ export function TemplateGallery() {
   if (!open || !built) return null;
   const close = () => useUI.getState().setTemplatesOpen(false);
   const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-  const list = TEMPLATES.filter((t) => (cat === "todos" ? t.category !== "blocos" : t.category === cat) && (!q || norm(`${t.name} ${t.hint}`).includes(norm(q))));
+  const list = TEMPLATES.filter((t) => (cat === "todos" || t.category === cat) && (!q || norm(`${t.name} ${t.hint}`).includes(norm(q))));
   return (
     <GalleryShell
       title="Modelos"
-      tabs={[{ id: "todos", label: "Todos", count: TEMPLATES.filter((t) => t.category !== "blocos").length }, ...TEMPLATE_CATEGORIES.map((c) => ({ ...c, count: TEMPLATES.filter((t) => t.category === c.id).length }))]}
+      tabs={[{ id: "todos", label: "Todos", count: TEMPLATES.length }, ...TEMPLATE_CATEGORIES.map((c) => ({ ...c, count: TEMPLATES.filter((t) => t.category === c.id).length }))]}
       tab={cat}
       onTab={(id) => setCat(id as TemplateCategory | "todos")}
       onClose={close}
       search={q}
       onSearch={setQ}
-      footer={<span>{cat === "mapas" ? "Mapas mentais de verdade: Tab cria filho, Enter cria irmão e o layout se ajusta sozinho. Troque o tema no painel Mapa." : cat === "blocos" ? "Cada bloco tem comportamento próprio: duplo toque (ou Enter) abre o editor; nas tarefas, um toque na caixinha marca. Setas ligam blocos." : "Modelos são conjuntos de blocos: tudo é editável e cada peça funciona sozinha. Arraste pelo título do quadro para mover o conjunto."}</span>}
+      footer={<span>{cat === "mapas" ? "Mapas mentais de verdade: Tab cria filho, Enter cria irmão e o layout se ajusta sozinho. Troque o tema no painel Mapa." : "Modelos são conjuntos de blocos: tudo é editável e cada peça funciona sozinha. Arraste pelo título do quadro para mover o conjunto."}</span>}
     >
       {list.map((t) => (
         <GalleryCard key={t.id} title={t.name} hint={t.hint} onClick={() => { close(); insertTemplate(t); }}>

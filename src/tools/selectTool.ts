@@ -18,10 +18,11 @@ import { beginLabel, settleMoved } from "../core/mapActions";
 import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
 import { settleFrames } from "../core/frames";
 import { interactiveElements } from "../core/layers";
-import { blockHitAt, blockTap } from "../core/blocks";
-import { useBlockEdit } from "../core/blockView";
+import { blockFields, blockHitAt, blockTap, fieldAt } from "../core/blocks";
+import { useBlockEdit, useBlockInline } from "../core/blockView";
+import { usePageEdit } from "../core/pageEdit";
 import { useEdgeLabel } from "../core/graphEdit";
-import { primsFor } from "../render/blockDraw";
+import { canvasMeasure, primsFor } from "../render/blockDraw";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
@@ -197,21 +198,27 @@ export function createSelectController(renderer: Renderer) {
       if (!lasso) {
         const hit = topHit(P, hitTol);
         if (hit) {
-          // blocos: caixinha da lista de tarefas marca/desmarca com um toque; duplo toque abre o editor do bloco
+          // blocos: áreas com comportamento próprio (caixinha da tarefa, virar flashcard, alternativa, estrelas…) respondem a
+          // um toque; duplo toque num texto edita ali mesmo; duplo toque fora de texto abre o editor do bloco
           if (hit.type === "attachment" && hit.kind === "block" && hit.block && !s.shift) {
+            const lx = P.x - hit.x, ly = P.y - hit.y;
+            if (dbl) {
+              lastTap = null;
+              useSel.getState().set([hit.id]);
+              if (hit.block.kind === "page") { usePageEdit.getState().open(hit.id); return; }
+              const fld = fieldAt(blockFields(hit.block, hit.w, hit.h, canvasMeasure), lx, ly);
+              if (fld) useBlockInline.getState().open(hit.id, fld.key);
+              else useBlockEdit.getState().open(hit.id);
+              return;
+            }
             const prims = primsFor(hit);
-            const tap = prims && blockHitAt(prims, P.x - hit.x, P.y - hit.y);
+            const tap = prims && blockHitAt(prims, lx, ly);
+            if (tap && tap.action === "open") { lastTap = null; useSel.getState().set([hit.id]); usePageEdit.getState().open(hit.id); return; }
             if (tap) {
               lastTap = null;
               useDoc.getState().updateElements([{ ...hit, block: blockTap(hit.block, tap) }]);
               useSel.getState().set([hit.id]);
               refresh();
-              return;
-            }
-            if (dbl) {
-              lastTap = null;
-              useSel.getState().set([hit.id]);
-              useBlockEdit.getState().open(hit.id);
               return;
             }
           }

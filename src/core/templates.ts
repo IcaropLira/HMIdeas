@@ -1,7 +1,7 @@
 // Modelos prontos = CONJUNTOS DE BLOCOS nativos (post-it, tarefas, tabela, linha do tempo, kanban, slide, documento…;
 // core/blocks.ts) e, nos diagramas, formas + setas ligadas — tudo dentro de um quadro com título (mover o quadro leva o modelo). Puro: as miniaturas da galeria desenham exatamente estes elementos.
 import { Bindable, solveArrow } from "./binding";
-import { BLOCK_COLORS, BLOCK_KINDS, BlockSpec, defaultBlock, STICKY_COLORS, blockContentHeight, defaultBlockSize } from "./blocks";
+import { BLOCK_COLORS, BlockSpec, STICKY_COLORS, blockContentHeight, defaultBlockSize } from "./blocks";
 import { blockAt } from "./blockElement";
 import { ArrowHead, AttachmentElement, FontFamily, FrameElement, HirakuElement, ID, LinearElement, ShapeElement, ShapeType, TextAlign, TextElement, isLinear, newId } from "./model";
 import { elementBounds } from "./selection";
@@ -9,10 +9,9 @@ import { makeText } from "./text";
 import { Measure } from "./mindmap";
 import { MAP_TEMPLATES, buildMapTemplate } from "./mapTemplates";
 
-export type TemplateCategory = "blocos" | "organizar" | "estudar" | "estrategia" | "diagramas" | "apresentar" | "mapas";
+export type TemplateCategory = "organizar" | "estudar" | "estrategia" | "diagramas" | "apresentar" | "mapas";
 
 export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
-  { id: "blocos", label: "Blocos avulsos" },
   { id: "organizar", label: "Organizar" },
   { id: "estudar", label: "Estudar" },
   { id: "estrategia", label: "Estratégia" },
@@ -513,12 +512,6 @@ export const TEMPLATES: Template[] = [
     },
   },
 ];
-
-// cada bloco nativo também aparece sozinho (categoria "blocos")
-for (const k of [...BLOCK_KINDS].reverse()) {
-  TEMPLATES.unshift({ id: `block-${k.id}`, name: k.label, hint: k.hint, category: "blocos", build: () => [blockAt(defaultBlock(k.id), 0, 0)] });
-}
-TEMPLATES.sort((a, b) => (a.category === "blocos" ? 0 : 1) - (b.category === "blocos" ? 0 : 1));
 
 // mapas mentais entram na mesma galeria
 for (const m of MAP_TEMPLATES) {

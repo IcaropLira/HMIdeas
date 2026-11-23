@@ -13,6 +13,9 @@ import { zSelection } from "./components/LayersPanel";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { AlgoPlayer } from "./components/AlgoPlayer";
 import { BlockEditor } from "./components/BlockEditor";
+import { BlockInlineEditor } from "./components/BlockInlineEditor";
+import { BlockLibrary } from "./components/BlockGallery";
+import { useUI } from "./core/ui";
 import { EdgeLabelEditor } from "./components/EdgeLabelEditor";
 import { isLinear } from "./core/model";
 import { connectedVertex, isVertex, useEdgeLabel, useGraphTool } from "./core/graphEdit";
@@ -52,7 +55,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement || (e.target as HTMLElement)?.isContentEditable) return;
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
 
@@ -133,6 +136,8 @@ export default function App() {
         nudgeSelection(k === "arrowleft" ? -n : k === "arrowright" ? n : 0, k === "arrowup" ? -n : k === "arrowdown" ? n : 0);
       } else if (k === "enter") {
         if (editSelectedText() || editSelectedLabel() || editSelectedBlock()) e.preventDefault(); // Enter edita o texto selecionado
+      } else if (k === "b" && !e.shiftKey) {
+        useUI.getState().setLibraryOpen(true);
       } else if (TOOL_KEYS[k]) {
         useTool.getState().setTool(TOOL_KEYS[k]);
       }
@@ -149,9 +154,11 @@ export default function App() {
       <Sidebar />
       <Toolbar />
       <TemplateGallery />
+      <BlockLibrary />
       <FocusExit />
       <AlgoPlayer />
       <BlockEditor />
+      <BlockInlineEditor />
       <EdgeLabelEditor />
       <TextEditor />
       <LabelEditor />

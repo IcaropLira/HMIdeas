@@ -17,6 +17,10 @@ interface UIState {
   templatesOpen: boolean;
   /** Categoria aberta na galeria de modelos. */
   templatesTab: string;
+  /** Biblioteca de blocos (aba inicial). */
+  libraryOpen: boolean;
+  libraryTab: string;
+  setLibraryOpen: (open: boolean, tab?: string) => void;
   setTemplatesOpen: (open: boolean, tab?: string) => void;
   notebooksOpen: boolean;
   setNotebooksOpen: (open: boolean) => void;
@@ -44,6 +48,9 @@ export const useUI = create<UIState>((set) => ({
   setDrag: (dragging, dropHint = null) => set({ dragging, dropHint }),
   templatesOpen: false,
   templatesTab: "todos",
+  libraryOpen: false,
+  libraryTab: "todos",
+  setLibraryOpen: (libraryOpen, tab) => set((s) => ({ libraryOpen, libraryTab: tab ?? (libraryOpen ? "todos" : s.libraryTab) })),
   setTemplatesOpen: (templatesOpen, tab) => set((s) => ({ templatesOpen, templatesTab: tab ?? (templatesOpen ? "todos" : s.templatesTab) })),
   notebooksOpen: false,
   setNotebooksOpen: (notebooksOpen) => set({ notebooksOpen }),

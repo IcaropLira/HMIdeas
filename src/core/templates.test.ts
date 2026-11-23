@@ -7,11 +7,6 @@ describe("modelos prontos", () => {
   it("cada modelo gera elementos válidos, dentro de um quadro, com ids únicos", () => {
     for (const t of TEMPLATES) {
       const els = t.build();
-      if (t.category === "blocos") {
-        expect(els.length, t.id).toBe(1);
-        expect(els[0].type === "attachment" && els[0].kind === "block", t.id).toBe(true);
-        continue;
-      }
       expect(els.length, t.id).toBeGreaterThan(1);
       if (t.category === "mapas") {
         // mapa mental: uma única raiz e todos os outros nós pendurados nela

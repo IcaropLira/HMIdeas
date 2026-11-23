@@ -764,3 +764,7 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .el-preview { display: block; max-width: 100%; height: auto; }
 .btn.primary { min-height: 40px; height: auto; }
 .panel > * { flex-shrink: 0; }
+.tile.icon { align-items: center; padding: 6px 4px; }
+.tile.icon svg { width: 44px; height: 28px; box-shadow: none; background: none; color: var(--ink); }
+.tile.icon.on svg { color: var(--accent); }
+.mappanel { width: min(420px, calc(100vw - 16px)); gap: 10px; }

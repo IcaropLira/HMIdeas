@@ -8,9 +8,16 @@ describe("modelos prontos", () => {
     for (const t of TEMPLATES) {
       const els = t.build();
       expect(els.length, t.id).toBeGreaterThan(1);
-      const frame = els.find((e) => e.type === "frame");
-      expect(frame, t.id).toBeTruthy();
-      for (const e of els) if (e.type !== "frame") expect(e.frameId, `${t.id}:${e.type}`).toBe(frame!.id);
+      if (t.category === "mapas") {
+        // mapa mental: uma única raiz e todos os outros nós pendurados nela
+        const nodes = els.filter((e) => e.type === "node");
+        expect(nodes.length, t.id).toBe(els.length);
+        expect(nodes.filter((n) => n.type === "node" && !n.parentId)).toHaveLength(1);
+      } else {
+        const frame = els.find((e) => e.type === "frame");
+        expect(frame, t.id).toBeTruthy();
+        for (const e of els) if (e.type !== "frame") expect(e.frameId, `${t.id}:${e.type}`).toBe(frame!.id);
+      }
       expect(new Set(els.map((e) => e.id)).size).toBe(els.length);
       const doc = normalizeDoc({ version: 1, pages: [{ id: "p", name: "P", paper: "blank", background: "#FFFFFF", elements: els }] });
       expect(doc.pages[0].elements.length, t.id).toBe(els.length);

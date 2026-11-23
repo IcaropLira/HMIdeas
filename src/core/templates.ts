@@ -4,8 +4,10 @@ import { solveArrow } from "./binding";
 import { ArrowHead, FontFamily, FrameElement, HirakuElement, ID, LinearElement, ShapeElement, ShapeType, TextAlign, TextElement, isLinear, newId } from "./model";
 import { elementBounds } from "./selection";
 import { makeText } from "./text";
+import { Measure } from "./mindmap";
+import { MAP_TEMPLATES, buildMapTemplate } from "./mapTemplates";
 
-export type TemplateCategory = "organizar" | "estudar" | "estrategia" | "diagramas" | "apresentar";
+export type TemplateCategory = "organizar" | "estudar" | "estrategia" | "diagramas" | "apresentar" | "mapas";
 
 export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
   { id: "organizar", label: "Organizar" },
@@ -13,6 +15,7 @@ export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
   { id: "estrategia", label: "Estratégia" },
   { id: "diagramas", label: "Diagramas" },
   { id: "apresentar", label: "Apresentar" },
+  { id: "mapas", label: "Mapas mentais" },
 ];
 
 export interface Template {
@@ -20,7 +23,8 @@ export interface Template {
   name: string;
   hint: string;
   category: TemplateCategory;
-  build: () => HirakuElement[];
+  /** `measure` mede textos de verdade na hora de inserir (as prévias usam uma aproximação). */
+  build: (measure?: Measure) => HirakuElement[];
 }
 
 // ---------------- paleta ----------------
@@ -510,6 +514,11 @@ export const TEMPLATES: Template[] = [
     },
   },
 ];
+
+// mapas mentais entram na mesma galeria
+for (const m of MAP_TEMPLATES) {
+  TEMPLATES.push({ id: `map-${m.id}`, name: m.name, hint: m.hint, category: "mapas", build: (measure) => buildMapTemplate(m, measure) });
+}
 
 export const templateById = (id: string) => TEMPLATES.find((t) => t.id === id);
 

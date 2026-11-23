@@ -4,7 +4,7 @@ import { Icon } from "./Icon";
 import { ElementsPreview } from "./ElementsPreview";
 import { HirakuElement } from "../core/model";
 import { TEMPLATES, TEMPLATE_CATEGORIES, Template, TemplateCategory, placeAt } from "../core/templates";
-import { viewCenter } from "../core/mapActions";
+import { measure, viewCenter } from "../core/mapActions";
 import { useDoc, useSel, useTool } from "../core/store";
 import { useUI } from "../core/ui";
 
@@ -15,13 +15,16 @@ export function insertElements(els: HirakuElement[]) {
   const placed = placeAt(els, c.x, c.y);
   useDoc.getState().addElements(placed);
   const frame = placed.find((e) => e.type === "frame" && !e.frameId);
-  useSel.getState().set(frame ? [frame.id] : placed.map((e) => e.id));
+  const root = placed.find((e) => e.type === "node" && !e.parentId && !placed.some((x) => x.type === "arrow"));
+  useSel.getState().set(frame ? [frame.id] : root ? [root.id] : placed.map((e) => e.id));
   useTool.getState().setTool("select");
 }
 
 export function insertTemplate(t: Template) {
-  insertElements(t.build());
-  useUI.getState().showToast(`“${t.name}” inserido. Arraste pelo título do quadro para mover tudo junto.`);
+  insertElements(t.build(measure));
+  useUI.getState().showToast(t.category === "mapas"
+    ? `Mapa “${t.name}” inserido. Tab cria um filho, Enter um irmão; troque o tema no painel Mapa.`
+    : `“${t.name}” inserido. Arraste pelo título do quadro para mover tudo junto.`);
 }
 
 /** Janela genérica com abas laterais (galerias): modelos, mapas, grafos… */
@@ -70,7 +73,9 @@ export function GalleryCard({ title, hint, onClick, children }: { title: string;
 
 export function TemplateGallery() {
   const open = useUI((s) => s.templatesOpen);
+  const initialTab = useUI((s) => s.templatesTab);
   const [cat, setCat] = useState<TemplateCategory | "todos">("todos");
+  useEffect(() => { if (open) setCat(initialTab as TemplateCategory | "todos"); }, [open, initialTab]);
   const [q, setQ] = useState("");
   const built = useMemo(() => (open ? new Map(TEMPLATES.map((t) => [t.id, t.build()])) : null), [open]);
   if (!open || !built) return null;
@@ -86,7 +91,7 @@ export function TemplateGallery() {
       onClose={close}
       search={q}
       onSearch={setQ}
-      footer={<span>Tudo é editável: textos, cores e formas. Cada modelo vem dentro de um quadro — arraste pelo título para mover o conjunto.</span>}
+      footer={<span>{cat === "mapas" ? "Mapas mentais de verdade: Tab cria filho, Enter cria irmão e o layout se ajusta sozinho. Troque o tema no painel Mapa." : "Tudo é editável: textos, cores e formas. Cada modelo vem dentro de um quadro — arraste pelo título para mover o conjunto."}</span>}
     >
       {list.map((t) => (
         <GalleryCard key={t.id} title={t.name} hint={t.hint} onClick={() => { close(); insertTemplate(t); }}>

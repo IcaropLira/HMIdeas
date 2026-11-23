@@ -138,3 +138,37 @@ describe("quadros", () => {
     expect(u.every((e) => !e.frameId)).toBe(true);
   });
 });
+
+import { MAP_THEMES, applyMapTheme, balanceSides, numberBranches, sortChildren, toMarkdown } from "./mindmap";
+import { MAP_TEMPLATES, buildMapTemplate } from "./mapTemplates";
+
+describe("temas e utilidades de mapa", () => {
+  const base = () => buildMapTemplate(MAP_TEMPLATES[0]);
+  const rootId = (els: ReturnType<typeof base>) => els.find((e) => e.type === "node" && !e.parentId)!.id;
+
+  it("tema pinta cada ramo principal com uma cor da paleta e mantém a árvore", () => {
+    const els = base();
+    const r = rootId(els);
+    const th = MAP_THEMES.find((t) => t.id === "rainbow")!;
+    const out = applyMapTheme(els, r, th, approxMeasure);
+    const kids = out.filter((e) => e.type === "node" && e.parentId === r);
+    kids.forEach((k, i) => expect(k.type === "node" && k.branchColor).toBe(th.palette[i % th.palette.length]));
+    expect(out.length).toBe(els.length);
+  });
+  it("numerar, ordenar, equilibrar e markdown", () => {
+    const els = base();
+    const r = rootId(els);
+    const num = numberBranches(els, r, true, approxMeasure);
+    expect(num.filter((e) => e.type === "node" && e.parentId === r).map((e) => e.type === "node" && e.icon)).toEqual(["1", "2", "3", "4", "5", "6"]);
+    const sorted = sortChildren(els, r);
+    expect(sorted.filter((e) => e.type === "node" && e.parentId === r).map((e) => e.type === "node" && e.text)).toEqual(["Ideia 1", "Ideia 2", "Ideia 3", "Ideia 4", "Ideia 5", "Ideia 6"]);
+    expect(balanceSides(els, r).length).toBe(els.length);
+    expect(toMarkdown(els, r).split("\n")[0]).toBe("# Tema");
+  });
+  it("todo modelo de mapa monta uma árvore só", () => {
+    for (const t of MAP_TEMPLATES) {
+      const els = buildMapTemplate(t);
+      expect(els.filter((e) => e.type === "node" && !e.parentId), t.id).toHaveLength(1);
+    }
+  });
+});

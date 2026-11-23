@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
+import { ElementsPreview } from "./ElementsPreview";
+import { insertTemplate } from "./TemplateGallery";
+import { TEMPLATES } from "../core/templates";
+import { MAP_TEMPLATES, buildMapTemplate } from "../core/mapTemplates";
 import { BRANCH_STYLES, MAP_LAYOUTS, NODE_SHAPES, NodeElement } from "../core/model";
 import { FRAME_COLORS } from "../core/frames";
 import {
@@ -7,15 +11,40 @@ import {
   recolorFrames, setBranchStyle, setMapLayout, styleSelection, toggleCollapseSelection, toggleDone, ungroupSelection,
   viewCenter, wrapSelectionInFrame,
 } from "../core/mapActions";
-import { BRANCH_PALETTE, NODE_ICONS, NODE_PRESETS, rootOf } from "../core/mindmap";
+import { BRANCH_PALETTE, MAP_THEMES, NODE_ICONS, NODE_PRESETS, applyMapTheme, balanceSides, numberBranches, rootOf, sortChildren, toMarkdown } from "../core/mindmap";
+import { measure } from "../core/mapActions";
 import { selectActivePage, useDoc, useSel } from "../core/store";
 import { useUI } from "../core/ui";
+
+/** Ícones das opções de layout, ligações e formas (desenhos pequenos, não texto). */
+const LAYOUT_ICON: Record<string, ReactNode> = {
+  both: <><rect x="17" y="11" width="10" height="6" rx="3" /><path d="M17 14c-4 0-4-7-8-7M17 14c-4 0-4 7-8 7M27 14c4 0 4-7 8-7M27 14c4 0 4 7 8 7" /></>,
+  right: <><rect x="4" y="11" width="10" height="6" rx="3" /><path d="M14 14c5 0 5-8 10-8M14 14h10M14 14c5 0 5 8 10 8" /><path d="M26 6h12M26 14h12M26 22h12" /></>,
+  left: <><rect x="30" y="11" width="10" height="6" rx="3" /><path d="M30 14c-5 0-5-8-10-8M30 14H20M30 14c-5 0-5 8-10 8" /><path d="M6 6h12M6 14h12M6 22h12" /></>,
+  down: <><rect x="17" y="3" width="10" height="6" rx="3" /><path d="M22 9v4M10 13h24M10 13v5M22 13v5M34 13v5" /><rect x="5" y="19" width="10" height="5" rx="2" /><rect x="17" y="19" width="10" height="5" rx="2" /><rect x="29" y="19" width="10" height="5" rx="2" /></>,
+};
+const BRANCH_ICON: Record<string, ReactNode> = {
+  curve: <path d="M6 22C20 22 18 6 38 6" />,
+  elbow: <path d="M6 22h14V6h18" />,
+  straight: <path d="M6 22L38 6" />,
+};
+const SHAPE_ICON: Record<string, ReactNode> = {
+  pill: <rect x="6" y="8" width="32" height="12" rx="6" />,
+  rounded: <rect x="6" y="7" width="32" height="14" rx="4" />,
+  rect: <rect x="6" y="7" width="32" height="14" />,
+  ellipse: <ellipse cx="22" cy="14" rx="16" ry="8" />,
+  underline: <><path d="M8 21h28" /><path d="M12 14h20" strokeOpacity=".35" /></>,
+  none: <path d="M12 14h20" strokeOpacity=".5" />,
+};
+const Pic = ({ children }: { children: ReactNode }) => (
+  <svg viewBox="0 0 44 28" width="44" height="28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
+);
 
 const Chip = ({ on, onClick, children, title }: { on?: boolean; onClick: () => void; children: React.ReactNode; title?: string }) => (
   <button className={on ? "chip sm on" : "chip sm"} onClick={onClick} title={title}>{children}</button>
 );
 
-/** Painel "Mapa & quadros": criar, layout, formas, códigos visuais, recolher, quadros, lista de texto. */
+/** Painel "Mapa & quadros": modelos, temas, layout, formas, códigos visuais, recolher, quadros, lista de texto. */
 export function MapPanel() {
   const ids = useSel((s) => s.ids);
   const els = useDoc((s) => selectActivePage(s).elements);
@@ -27,100 +56,153 @@ export function MapPanel() {
   const n0 = nodes[0];
   const root = n0 ? rootOf(els, n0.id) : null;
   const same = <K extends keyof NodeElement>(k: K) => (nodes.length && nodes.every((n) => n[k] === n0[k]) ? n0[k] : undefined);
+  const commitEls = (next: typeof els) => { if (next !== els) useDoc.getState().replaceElements(next); };
+  const toast = (m: string) => useUI.getState().showToast(m);
+
+  // prévias: 4 modelos e um minimapa por tema
+  const quick = useMemo(() => MAP_TEMPLATES.slice(0, 6).map((t) => ({ t, els: buildMapTemplate(t) })), []);
+  const themePreviews = useMemo(() => {
+    const mini = { id: "mini", name: "", hint: "", theme: "", layout: "both" as const, outline: "Tema\n  A\n    a\n  B\n  C\n  D" };
+    return MAP_THEMES.map((th) => ({ th, els: buildMapTemplate({ ...mini, theme: th.id }) }));
+  }, []);
 
   return (
     <div className="panel mappanel" role="dialog" aria-label="Mapa mental e quadros">
       <div className="row">
-        <span className="rowlabel">Criar</span>
-        <Chip onClick={() => createRootAt(viewCenter())} title="Novo mapa no centro da tela (ou Tab sem seleção)">Novo mapa</Chip>
+        <Chip onClick={() => createRootAt(viewCenter())} title="Novo mapa no centro da tela (ou Tab sem seleção)">+ Novo mapa</Chip>
         <Chip onClick={() => addChildToSelection()} title="Tab">Filho</Chip>
         <Chip onClick={() => addSiblingToSelection()} title="Enter">Irmão</Chip>
         <Chip onClick={wrapSelectionInFrame} title="Ctrl+G">Quadro</Chip>
         <Chip onClick={() => connectSelection()} title="K: seta ligando 2 nós de qualquer ramo">Ligar 2 nós</Chip>
       </div>
 
+      {!nodes.length && (
+        <>
+          <div className="sec-title">Começar de um modelo</div>
+          <div className="tiles three">
+            {quick.map(({ t, els: pv }) => (
+              <button key={t.id} className="tile" title={t.hint} onClick={() => { const tp = TEMPLATES.find((x) => x.id === `map-${t.id}`); if (tp) insertTemplate(tp); }}>
+                <ElementsPreview elements={pv} w={110} h={72} pad={10} bg="#FFFFFF" />
+                <span>{t.name}</span>
+              </button>
+            ))}
+          </div>
+          <button className="chip sm" onClick={() => useUI.getState().setTemplatesOpen(true, "mapas")}>Ver todos os modelos de mapa…</button>
+        </>
+      )}
+
+      {nodes.length > 0 && root && (
+        <>
+          <div className="sec-title">Tema do mapa</div>
+          <div className="tiles four">
+            {themePreviews.map(({ th, els: pv }) => (
+              <button key={th.id} className="tile" title={`Tema ${th.name}`} onClick={() => commitEls(applyMapTheme(els, root.id, th, measure))}>
+                <ElementsPreview elements={pv} w={84} h={52} pad={8} bg={th.id === "night" ? "#0F0D1F" : "#FFFFFF"} />
+                <span>{th.name}</span>
+              </button>
+            ))}
+          </div>
+          <div className="sec-title">Layout e ligações</div>
+          <div className="tiles four" role="radiogroup" aria-label="Layout do mapa">
+            {MAP_LAYOUTS.map((l) => (
+              <button key={l.id} role="radio" aria-checked={root.layout === l.id} className={root.layout === l.id ? "tile icon on" : "tile icon"} onClick={() => setMapLayout(l.id)} title={l.label}>
+                <Pic>{LAYOUT_ICON[l.id]}</Pic><span>{l.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="tiles three" role="radiogroup" aria-label="Estilo dos ramos">
+            {BRANCH_STYLES.map((b) => (
+              <button key={b.id} role="radio" aria-checked={root.branchStyle === b.id} className={root.branchStyle === b.id ? "tile icon on" : "tile icon"} onClick={() => setBranchStyle(b.id)} title={b.label}>
+                <Pic>{BRANCH_ICON[b.id]}</Pic><span>{b.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {nodes.length > 0 && (
         <>
-          <div className="row" role="radiogroup" aria-label="Forma do nó">
-            <span className="rowlabel">Forma</span>
-            {NODE_SHAPES.map((s) => <Chip key={s.id} on={same("shape") === s.id} onClick={() => styleSelection({ shape: s.id }, sub)}>{s.label}</Chip>)}
+          <div className="sec-title">Nó{nodes.length > 1 ? `s (${nodes.length})` : ""}</div>
+          <div className="tiles three" role="radiogroup" aria-label="Forma do nó">
+            {NODE_SHAPES.map((sh) => (
+              <button key={sh.id} role="radio" aria-checked={same("shape") === sh.id} className={same("shape") === sh.id ? "tile icon on" : "tile icon"} onClick={() => styleSelection({ shape: sh.id }, sub)} title={sh.label}>
+                <Pic>{SHAPE_ICON[sh.id]}</Pic><span>{sh.label}</span>
+              </button>
+            ))}
           </div>
-          <div className="row" aria-label="Códigos visuais">
-            <span className="rowlabel">Código</span>
+          <div className="row tight" aria-label="Códigos visuais">
             {NODE_PRESETS.map((p) => (
               <button key={p.id} className="chip sm" title={p.label} style={{ background: p.fill ?? "#fff", borderColor: p.stroke, color: p.color }} onClick={() => applyPreset(p.id, sub)}>
                 {p.label}
               </button>
             ))}
           </div>
-          <div className="row" aria-label="Cor do ramo">
+          <div className="swatch-grid" aria-label="Cor do ramo">
             <span className="rowlabel">Ramo</span>
             {BRANCH_PALETTE.map((c) => (
               <button key={c} className={same("branchColor") === c ? "swatch on" : "swatch"} aria-label={`Cor do ramo ${c}`} style={{ background: c }} onClick={() => styleSelection({ branchColor: c, ...(n0.stroke ? { stroke: c } : {}) }, sub)} />
             ))}
           </div>
-          <div className="row" aria-label="Marcador">
-            <span className="rowlabel">Marcar</span>
-            <Chip on={same("icon") === null} onClick={() => styleSelection({ icon: null })}>Nenhum</Chip>
+          <div className="row tight" aria-label="Marcador">
+            <Chip on={same("icon") === null} onClick={() => styleSelection({ icon: null })}>Sem marcador</Chip>
             {NODE_ICONS.map((i) => <Chip key={i} on={same("icon") === i} onClick={() => styleSelection({ icon: i })}>{i}</Chip>)}
-            <Chip on={!!same("done")} onClick={toggleDone} title="Riscar o texto">Concluído</Chip>
+            <Chip on={!!same("done")} onClick={toggleDone} title="Riscar o texto">✓ Concluído</Chip>
           </div>
-          <div className="row">
-            <label className="chip sm"><input type="checkbox" checked={sub} onChange={(e) => setSub(e.target.checked)} /> Aplicar ao ramo todo</label>
-          </div>
-          {root && (
-            <>
-              <div className="row" role="radiogroup" aria-label="Layout do mapa">
-                <span className="rowlabel">Layout</span>
-                {MAP_LAYOUTS.map((l) => <Chip key={l.id} on={root.layout === l.id} onClick={() => setMapLayout(l.id)}>{l.label}</Chip>)}
-              </div>
-              <div className="row" role="radiogroup" aria-label="Estilo dos ramos">
-                <span className="rowlabel">Linhas</span>
-                {BRANCH_STYLES.map((b) => <Chip key={b.id} on={root.branchStyle === b.id} onClick={() => setBranchStyle(b.id)}>{b.label}</Chip>)}
-              </div>
-            </>
-          )}
-          <div className="row">
-            <span className="rowlabel">Ramos</span>
+          <label className="check"><input type="checkbox" checked={sub} onChange={(e) => setSub(e.target.checked)} /> Aplicar ao ramo todo</label>
+
+          <div className="sec-title">Ramos</div>
+          <div className="row tight">
             <Chip onClick={toggleCollapseSelection} title="C">Recolher/expandir</Chip>
             <Chip onClick={() => collapseMap(true)} title="Shift+C">Recolher tudo</Chip>
             <Chip onClick={() => collapseMap(true, 2)}>Só 1º nível</Chip>
             <Chip onClick={() => collapseMap(false)}>Expandir tudo</Chip>
             <Chip onClick={focusSelection}>Foco neste ramo</Chip>
             <Chip onClick={detachSelection}>Separar do mapa</Chip>
+            {root && <Chip onClick={() => commitEls(sortChildren(els, n0.id))} title="Ordena os filhos do nó selecionado">Ordenar A–Z</Chip>}
+            {root && <Chip onClick={() => { const on = !(els.some((e) => e.type === "node" && e.parentId === root.id && e.icon === "1")); commitEls(numberBranches(els, root.id, on, measure)); }}>Numerar ramos</Chip>}
+            {root && root.layout === "both" && <Chip onClick={() => commitEls(balanceSides(els, root.id))}>Equilibrar lados</Chip>}
           </div>
-          <div className="row">
-            <span className="rowlabel">Lista</span>
+          <div className="row tight">
             <Chip onClick={() => {
               const o = exportOutlineOfSelection();
-              if (o) void navigator.clipboard?.writeText(o).then(() => useUI.getState().showToast("Mapa copiado como lista."), () => useUI.getState().showToast("Não consegui copiar."));
+              if (o) void navigator.clipboard?.writeText(o).then(() => toast("Mapa copiado como lista."), () => toast("Não consegui copiar."));
             }}>Copiar como lista</Chip>
+            {root && <Chip onClick={() => void navigator.clipboard?.writeText(toMarkdown(els, root.id)).then(() => toast("Mapa copiado em Markdown."), () => toast("Não consegui copiar."))}>Copiar Markdown</Chip>}
           </div>
         </>
       )}
 
       {frames.length > 0 && (
-        <div className="row">
-          <span className="rowlabel">Quadro</span>
-          {FRAME_COLORS.map((c) => <button key={c} className="swatch" aria-label={`Cor do quadro ${c}`} style={{ background: c }} onClick={() => recolorFrames(c)} />)}
-          <Chip onClick={fitFrameSelection}>Ajustar ao conteúdo</Chip>
-          <Chip onClick={ungroupSelection} title="Ctrl+Shift+G">Desfazer quadro</Chip>
-          <Chip onClick={() => fitToSelection(false)}>Ir até ele</Chip>
-        </div>
+        <>
+          <div className="sec-title">Quadro</div>
+          <div className="swatch-grid">
+            {FRAME_COLORS.map((c) => <button key={c} className="swatch" aria-label={`Cor do quadro ${c}`} style={{ background: c }} onClick={() => recolorFrames(c)} />)}
+          </div>
+          <div className="row tight">
+            <Chip onClick={fitFrameSelection}>Ajustar ao conteúdo</Chip>
+            <Chip onClick={ungroupSelection} title="Ctrl+Shift+G">Desfazer quadro</Chip>
+            <Chip onClick={() => fitToSelection(false)}>Ir até ele</Chip>
+          </div>
+        </>
       )}
 
-      <div className="row">
+      <div className="row tight">
         <span className="rowlabel">Vista</span>
         <Chip onClick={() => fitToSelection(true)} title="Shift+1">Ver tudo</Chip>
         <Chip onClick={() => fitToSelection(false)} title="Shift+2">Ver seleção</Chip>
       </div>
 
-      <label className="slider" style={{ display: "block" }}>
-        <span>Criar mapa de uma lista (recuo = nível)</span>
-        <textarea className="outline-in" rows={4} value={text} placeholder={"Tema\n  Ramo A\n    detalhe\n  Ramo B"} onChange={(e) => setText(e.target.value)} />
-      </label>
-      <div className="row"><Chip onClick={() => { if (importOutlineText(text)) setText(""); else useUI.getState().showToast("Escreva uma lista com recuo."); }}>Criar mapa</Chip></div>
-      <p className="hint">Tab = filho, Enter = irmão, Shift+Enter = irmão acima, F2 = editar, C = recolher, setas = navegar, K = ligar 2 nós com seta (arraste também uma seta de um nó a outro). Arraste um nó sobre outro para mudar de pai; o layout se reorganiza sozinho. Arraste a bolinha numerada para expandir.</p>
+      <details className="editor">
+        <summary>Criar mapa de uma lista (recuo = nível)</summary>
+        <div className="editor-body">
+          <textarea className="outline-in" rows={5} value={text} placeholder={"Tema\n  Ramo A\n    detalhe\n  Ramo B"} onChange={(e) => setText(e.target.value)} />
+          <Chip onClick={() => { if (importOutlineText(text)) setText(""); else toast("Escreva uma lista com recuo."); }}>Criar mapa</Chip>
+        </div>
+      </details>
+      <details className="editor">
+        <summary>Atalhos</summary>
+        <p className="hint">Tab = filho · Enter = irmão · Shift+Enter = irmão acima · F2 = editar · C = recolher · setas = navegar · K = ligar 2 nós com seta. Arraste um nó sobre outro para mudar de pai; o layout se reorganiza sozinho. Clique na bolinha numerada para expandir.</p>
+      </details>
     </div>
   );
 }

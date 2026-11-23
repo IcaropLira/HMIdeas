@@ -652,9 +652,11 @@ export function CanvasView() {
             const t = useTool.getState();
             if (t.tool === "eraser" || s.eraserTip) renderer.drawEraserCursor(s.x, s.y, t.eraserSize / 2);
             else renderer.hideEraserCursor();
+            if (t.tool === "select") selectCtl.hover(s);
           },
           hoverEnd() {
             renderer.hideEraserCursor();
+            selectCtl.hoverEnd();
           },
         },
         {

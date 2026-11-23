@@ -771,6 +771,11 @@ export class Renderer {
       g.poly(this.flat(ui.bindHint.map(this.w2s)), true).stroke({ width: 3, color: INDIGO, alpha: 0.5, join: "round" });
     }
 
+    for (const c of ui.connectors ?? []) {
+      g.circle(c.x, c.y, 9).fill({ color: INDIGO, alpha: 0.14 });
+      g.circle(c.x, c.y, 5.5).fill({ color: "#FFFFFF" }).stroke({ width: 2, color: INDIGO });
+    }
+
     if (ui.lineEdit) {
       const pts = ui.lineEdit.points.map(this.w2s);
       for (let i = 0; i < pts.length - 1; i++) {

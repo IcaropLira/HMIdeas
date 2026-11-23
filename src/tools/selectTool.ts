@@ -18,6 +18,9 @@ import { beginLabel, settleMoved } from "../core/mapActions";
 import { badgeCenter, childrenMap, rootOf, toggleCollapse, withDependents } from "../core/mindmap";
 import { settleFrames } from "../core/frames";
 import { interactiveElements } from "../core/layers";
+import { blockHitAt, blockTap } from "../core/blocks";
+import { useBlockEdit } from "../core/blockView";
+import { primsFor } from "../render/blockDraw";
 import { Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
 
@@ -187,6 +190,24 @@ export function createSelectController(renderer: Renderer) {
       if (!lasso) {
         const hit = topHit(P, hitTol);
         if (hit) {
+          // blocos: caixinha da lista de tarefas marca/desmarca com um toque; duplo toque abre o editor do bloco
+          if (hit.type === "attachment" && hit.kind === "block" && hit.block && !s.shift) {
+            const prims = primsFor(hit);
+            const tap = prims && blockHitAt(prims, P.x - hit.x, P.y - hit.y);
+            if (tap) {
+              lastTap = null;
+              useDoc.getState().updateElements([{ ...hit, block: blockTap(hit.block, tap) }]);
+              useSel.getState().set([hit.id]);
+              refresh();
+              return;
+            }
+            if (dbl) {
+              lastTap = null;
+              useSel.getState().set([hit.id]);
+              useBlockEdit.getState().open(hit.id);
+              return;
+            }
+          }
           if (dbl && (hit.type === "text" || hit.type === "node" || hit.type === "frame")) {
             lastTap = null;
             if (hit.type === "text") beginEditText(hit);

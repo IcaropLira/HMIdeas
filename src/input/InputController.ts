@@ -117,7 +117,10 @@ export class InputController {
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
-    if (e.code === "Space" && !(e.target instanceof HTMLInputElement)) {
+    // espaço = mão; nunca dentro de campos de texto (textarea do editor de bloco, notas do mapa…) nem em botões
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t instanceof HTMLButtonElement || t.isContentEditable);
+    if (e.code === "Space" && !typing) {
       this.spaceDown = true;
       e.preventDefault();
     }

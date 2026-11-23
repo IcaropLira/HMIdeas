@@ -12,6 +12,8 @@ import { NotebookManager } from "./components/NotebookManager";
 import { zSelection } from "./components/LayersPanel";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { AlgoPlayer } from "./components/AlgoPlayer";
+import { BlockEditor } from "./components/BlockEditor";
+import { editSelectedBlock } from "./core/blockView";
 import { useTheme } from "./core/theme";
 import { copyWithMark, initPaste } from "./components/clipboard";
 import {
@@ -107,7 +109,7 @@ export default function App() {
         const n = e.shiftKey ? 10 : 1;
         nudgeSelection(k === "arrowleft" ? -n : k === "arrowright" ? n : 0, k === "arrowup" ? -n : k === "arrowdown" ? n : 0);
       } else if (k === "enter") {
-        if (editSelectedText() || editSelectedLabel()) e.preventDefault(); // Enter edita o texto selecionado
+        if (editSelectedText() || editSelectedLabel() || editSelectedBlock()) e.preventDefault(); // Enter edita o texto selecionado
       } else if (TOOL_KEYS[k]) {
         useTool.getState().setTool(TOOL_KEYS[k]);
       }
@@ -126,6 +128,7 @@ export default function App() {
       <TemplateGallery />
       <FocusExit />
       <AlgoPlayer />
+      <BlockEditor />
       <TextEditor />
       <LabelEditor />
       <Toast />

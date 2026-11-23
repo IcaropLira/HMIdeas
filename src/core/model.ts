@@ -3,6 +3,7 @@
 
 import { parseYouTube } from "./embed";
 import { FigureSpec, cleanFigure } from "./figures";
+import { BlockSpec, cleanBlock } from "./blocks";
 
 export type ID = string;
 
@@ -271,7 +272,7 @@ export interface FrameElement {
   opacity: number;
 }
 
-export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figure"] as const;
+export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figure", "block"] as const;
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
@@ -295,6 +296,8 @@ export interface AttachmentElement {
   mode?: "carousel" | "scroll";
   /** "figure": sólido, gráfico de função, espaço 3D… (core/figures.ts). */
   figure?: FigureSpec;
+  /** "block": bloco nativo (post-it, tarefas, tabela, linha do tempo…; core/blocks.ts). */
+  block?: BlockSpec;
   opacity: number;
 }
 
@@ -434,6 +437,8 @@ const cleanAttachment = (e: any): AttachmentElement => {
   if (kind === "pdf" && typeof e.data !== "string") kind = "file"; // sem o conteúdo embutido, vira arquivo comum
   const figure = kind === "figure" ? cleanFigure(e.figure) : null;
   if (kind === "figure" && !figure) kind = "file";
+  const block = kind === "block" ? cleanBlock(e.block) : null;
+  if (kind === "block" && !block) kind = "file";
   return {
     ...e,
     frameId: typeof e.frameId === "string" ? e.frameId : null,
@@ -444,6 +449,7 @@ const cleanAttachment = (e: any): AttachmentElement => {
     ratio: kind === "pdf" ? Math.min(4, Math.max(0.25, num(e.ratio, 1.414))) : undefined,
     mode: kind === "pdf" ? (e.mode === "scroll" ? "scroll" : "carousel") : undefined,
     figure: figure ?? undefined,
+    block: block ?? undefined,
   };
 };
 

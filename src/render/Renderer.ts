@@ -16,6 +16,7 @@ import { clampPage, clampScroll, fitContain, parseYouTube, scrollLayout, visible
 import { useEmbedView } from "../core/embedView";
 import { clearImageTextures, loadImageTexture, peekImageTexture } from "./imageTexture";
 import { figurePrims } from "../core/figures";
+import { paintBlock } from "./blockDraw";
 import { AlgoOverlay } from "../core/algoView";
 import { arrowHead } from "./figureSvg";
 
@@ -332,6 +333,9 @@ export class Renderer {
       } else if (el.kind === "figure" && el.figure) {
         this.paintFigure(node, el);
         node.eventMode = "none";
+      } else if (el.kind === "block" && el.block) {
+        paintBlock(node, el, this.textRes());
+        node.eventMode = "none";
       } else if (el.kind === "pdf" && el.data) {
         this.paintPdf(node, el);
         node.eventMode = "none";
@@ -590,7 +594,7 @@ export class Renderer {
     this.resTimer = setTimeout(() => {
       const r = this.textRes();
       for (const n of this.nodes.values()) {
-        if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && n.el.kind === "figure") || (isLinear(n.el) && n.el.label)) {
+        if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && (n.el.kind === "figure" || n.el.kind === "block")) || (isLinear(n.el) && n.el.label)) {
           for (const c of n.g.children) if (c instanceof Text && Math.abs(c.resolution - r) / r > 0.12) c.resolution = r;
           continue;
         }

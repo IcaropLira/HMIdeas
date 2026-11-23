@@ -1,5 +1,5 @@
 // Geometria das formas. Pura. Elementos são imutáveis → o caminho é cacheado por referência.
-import { BoxElement, LineStyle, NodeElement, ShapeElement, ShapeType, TextElement } from "./model";
+import { AttachmentElement, BoxElement, LineStyle, NodeElement, ShapeElement, ShapeType, TextElement } from "./model";
 
 export interface Pt { x: number; y: number }
 
@@ -139,4 +139,5 @@ export function textBox(el: TextElement): Pt[] {
 }
 
 /** Contorno fechado de qualquer elemento "de caixa" (forma ou texto). */
-export const outlinePath = (el: BoxElement | TextElement): Pt[] => (el.type === "text" ? textBox(el) : shapePath(el));
+export const outlinePath = (el: BoxElement | TextElement | AttachmentElement): Pt[] =>
+  el.type === "text" ? textBox(el) : el.type === "attachment" ? [{ x: el.x, y: el.y }, { x: el.x + el.w, y: el.y }, { x: el.x + el.w, y: el.y + el.h }, { x: el.x, y: el.y + el.h }] : shapePath(el);

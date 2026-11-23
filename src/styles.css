@@ -935,3 +935,30 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .crash-card p { margin: 0; color: var(--ink-soft); line-height: 1.5; }
 .crash-card code { font: 12px ui-monospace, monospace; padding: 8px; border-radius: 8px; background: var(--surface-2); overflow-wrap: anywhere; }
 .crash-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---- editor de bloco ---- */
+.block-editor {
+  position: fixed; z-index: 10; right: calc(16px + var(--railR, 0px)); top: 64px;
+  width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 170px); display: flex; flex-direction: column;
+  background: var(--surface); backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow);
+}
+.be-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 6px 16px; }
+.be-head b { font-size: 15px; }
+.be-hint { font-size: 11px; color: var(--ink-soft); margin-right: auto; }
+.be-body { display: flex; flex-direction: column; gap: 10px; padding: 4px 16px 10px; overflow: auto; }
+.be-foot { display: flex; justify-content: flex-end; padding: 8px 14px 12px; border-top: 1px solid var(--line); }
+.be-area { width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; line-height: 1.4; }
+.be-area.hand { font-family: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Comic Neue", cursive; font-size: 16px; }
+.be-area.mono { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; font-size: 13px; tab-size: 4; }
+.be-area.serif { font-family: Georgia, "Noto Serif", serif; }
+.be-list { display: flex; flex-direction: column; gap: 6px; }
+.be-item { display: flex; align-items: center; gap: 6px; }
+.be-item input:not([type="checkbox"]) { flex: 1; min-width: 0; min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.be-item input.short { flex: 0 0 76px; }
+.be-item input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
+.be-table { display: grid; gap: 4px; overflow-x: auto; }
+.be-table input { min-width: 0; min-height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.be-table input.head { font-weight: 700; background: var(--accent-soft); }
+.be-cols { display: flex; flex-direction: column; gap: 10px; }
+.be-col { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: 12px; background: var(--surface-2); }
+@media (max-width: 700px) { .block-editor { left: 12px; right: 12px; width: auto; top: auto; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); max-height: 55vh; } }

@@ -2,24 +2,27 @@
 // Cada ponta de seta guarda a forma-alvo + um ponto de foco (u, v) normalizado dentro dela.
 // A posição real da ponta é CALCULADA: onde o raio "vizinho da seta → foco" cruza o contorno da forma.
 import { elementHit } from "./geometry";
-import { ArrowBinding, HirakuElement, ID, LinearElement, NodeElement, SHAPE_TYPES, ShapeElement, TextElement, newId } from "./model";
+import { ArrowBinding, AttachmentElement, HirakuElement, ID, LinearElement, NodeElement, SHAPE_TYPES, ShapeElement, TextElement, newId } from "./model";
 import { Pt, outlinePath, pointInPolygon } from "./shapes";
 
 /** Folga entre a ponta da seta e o contorno da forma (unidades do mundo). */
 const BIND_GAP = 4;
 
-export type Bindable = ShapeElement | TextElement | NodeElement;
-export const isBindable = (e: HirakuElement): e is Bindable => e.type === "text" || e.type === "node" || (SHAPE_TYPES as string[]).includes(e.type);
+export type Bindable = ShapeElement | TextElement | NodeElement | AttachmentElement;
+/** Formas, textos, nós e BLOCOS (post-it, cartão…) aceitam setas ligadas. */
+export const isBindable = (e: HirakuElement): e is Bindable =>
+  e.type === "text" || e.type === "node" || (SHAPE_TYPES as string[]).includes(e.type) || (e.type === "attachment" && e.kind === "block");
+const angleOf = (e: Bindable) => ("angle" in e ? e.angle : 0);
 
 function anchor(shape: Bindable, b: ArrowBinding): Pt {
-  const c = Math.cos(shape.angle), s = Math.sin(shape.angle);
+  const c = Math.cos(angleOf(shape)), s = Math.sin(angleOf(shape));
   const lx = (b.u * shape.w) / 2, ly = (b.v * shape.h) / 2;
   return { x: shape.x + shape.w / 2 + lx * c - ly * s, y: shape.y + shape.h / 2 + lx * s + ly * c };
 }
 
 /** Binding com o foco no ponto P (limitado a ±0.85 para ficar sempre dentro da forma). */
 export function makeBinding(shape: Bindable, P: Pt): ArrowBinding {
-  const c = Math.cos(shape.angle), s = Math.sin(shape.angle);
+  const c = Math.cos(angleOf(shape)), s = Math.sin(angleOf(shape));
   const dx = P.x - (shape.x + shape.w / 2), dy = P.y - (shape.y + shape.h / 2);
   const hw = shape.w / 2, hh = shape.h / 2;
   const clamp = (v: number) => Math.max(-0.85, Math.min(0.85, v));

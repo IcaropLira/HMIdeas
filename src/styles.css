@@ -35,6 +35,29 @@
   --danger: #ff7a98;
   color-scheme: dark;
 }
+:root[data-theme="sepia"] {
+  --paper: #f3ebdd; --ink: #3b2f22; --ink-soft: #7a6a55; --chrome: rgba(251, 245, 234, 0.97);
+  --surface: #fffaf1; --surface-2: #f1e6d2; --line: rgba(59, 47, 34, 0.15); --shadow: 0 8px 26px rgba(80, 55, 20, 0.14);
+}
+:root[data-theme="graphite"] {
+  --paper: #e9eaed; --ink: #1d1f23; --ink-soft: #5d636e; --chrome: rgba(250, 250, 251, 0.97);
+  --surface: #ffffff; --surface-2: #f1f2f4; --line: rgba(29, 31, 35, 0.13); --shadow: 0 8px 24px rgba(20, 22, 30, 0.13);
+}
+:root[data-theme="midnight"] {
+  --paper: #0b1020; --ink: #e6ecff; --ink-soft: #93a0c4; --chrome: rgba(18, 26, 48, 0.97);
+  --surface: #141c33; --surface-2: #1b2542; --line: rgba(230, 236, 255, 0.12); --shadow: 0 10px 32px rgba(0, 0, 0, 0.55); --danger: #ff7a98;
+  color-scheme: dark;
+}
+:root[data-theme="forest"] {
+  --paper: #0f1a14; --ink: #e5f2ea; --ink-soft: #9db8a8; --chrome: rgba(22, 37, 29, 0.97);
+  --surface: #18291f; --surface-2: #1f3428; --line: rgba(229, 242, 234, 0.12); --shadow: 0 10px 32px rgba(0, 0, 0, 0.55); --danger: #ff8a80;
+  color-scheme: dark;
+}
+:root[data-theme="contrast"] {
+  --paper: #ffffff; --ink: #000000; --ink-soft: #1f1f1f; --chrome: #ffffff;
+  --surface: #ffffff; --surface-2: #eeeeee; --line: rgba(0, 0, 0, 0.75); --shadow: 0 0 0 1.5px #000; --danger: #b00020;
+}
+:root[data-theme="contrast"] .btn.on { box-shadow: inset 0 0 0 2.5px var(--accent); }
 :root[data-density="compact"] { --btn: 38px; }
 :root[data-density="large"] { --btn: 52px; }
 
@@ -120,7 +143,7 @@ html, body, #root {
   font-size: 14px;
   cursor: pointer;
 }
-.chip.on { background: linear-gradient(135deg, var(--accent-2), #5b2fb8); border-color: transparent; color: #fff; }
+.chip.on { background: linear-gradient(135deg, var(--accent-2), var(--accent-strong, #5b2fb8)); border-color: transparent; color: #fff; }
 
 .slider {
   display: grid;
@@ -533,8 +556,8 @@ body.dragging-ui, body.dragging-ui * { cursor: grabbing !important; user-select:
 
 /* ================= remodelagem 0023 ================= */
 .vsep { width: 1px; align-self: stretch; margin: 6px 2px; background: var(--line); flex: none; }
-.btn.primary { background: linear-gradient(135deg, var(--accent-2), #5b2fb8); color: #fff; font-weight: 600; padding: 0 16px; }
-.btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: linear-gradient(135deg, var(--accent-2), #5b2fb8); }
+.btn.primary { background: linear-gradient(135deg, var(--accent-2), var(--accent-strong, #5b2fb8)); color: #fff; font-weight: 600; padding: 0 16px; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: linear-gradient(135deg, var(--accent-2), var(--accent-strong, #5b2fb8)); }
 .btn svg, .tab svg { flex: none; }
 .group { padding: 0 4px; }
 .toolbar { border-radius: 20px; }
@@ -599,7 +622,7 @@ body.dragging-ui, body.dragging-ui * { cursor: grabbing !important; user-select:
 .toggle-text small { color: var(--ink-soft); font-size: 12px; }
 .switch { flex: none; position: relative; width: 40px; height: 24px; border-radius: 999px; background: var(--line); transition: background .15s; }
 .switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
-.switch.on { background: linear-gradient(135deg, var(--accent-2), #5b2fb8); }
+.switch.on { background: linear-gradient(135deg, var(--accent-2), var(--accent-strong, #5b2fb8)); }
 .switch.on i { transform: translateX(16px); }
 .keys { display: grid; gap: 2px; margin: 0; }
 .keys > div { display: grid; grid-template-columns: 190px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -829,3 +852,34 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
   .home-body { padding: 4px 14px 30px; }
   .nb-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 16px 12px; }
 }
+
+/* ---- alças discretas: os 6 pontos ficam finos e só aparecem inteiros ao passar o mouse ---- */
+:root[data-grips="subtle"] .grip { width: 12px; gap: 2px; grid-template-columns: repeat(2, 3px); grid-auto-rows: 3px; }
+:root[data-grips="subtle"] .grip i { width: 3px; height: 3px; opacity: .35; }
+:root[data-grips="subtle"] .vbar .grip { width: 44px; min-height: 12px; }
+:root[data-grips="subtle"] .blk:hover .grip i { opacity: .9; }
+:root[data-grips="subtle"] .bargrip { width: 12px; }
+:root[data-grips="subtle"] .bargrip.v { width: auto; height: 12px; min-height: 12px; }
+@media (pointer: coarse) { :root[data-grips="subtle"] .grip { width: 18px; } :root[data-grips="subtle"] .grip i { opacity: .55; } }
+
+/* ---- modo foco: só o desenho (e o botão para sair) ---- */
+.focus-mode .topbar, .focus-mode .topleft, .focus-mode .rail, .focus-mode .dock, .focus-mode .float-layer, .focus-mode .sidebar, .focus-mode .panel-float { display: none !important; }
+.focus-exit {
+  position: fixed; z-index: 12; right: calc(14px + env(safe-area-inset-right, 0px)); top: calc(14px + env(safe-area-inset-top, 0px));
+  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--chrome); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; box-shadow: var(--shadow); cursor: pointer; opacity: .55;
+}
+.focus-exit:hover { opacity: 1; }
+
+/* ---- Configurações: miniaturas de tema ---- */
+.theme-tile { display: flex; flex-direction: column; gap: 6px; }
+.theme-art { display: grid; grid-template-columns: 22% 1fr; grid-template-rows: 12px 1fr 14px; gap: 4px; height: 70px; padding: 6px; border-radius: 9px; box-shadow: 0 0 0 1px var(--line); }
+.theme-art i { display: block; border-radius: 4px; }
+.theme-art .t-top { grid-column: 1 / -1; }
+.theme-art .t-side { grid-row: 2 / 4; }
+.theme-art .t-bar { grid-column: 2; justify-self: center; width: 70%; border-radius: 999px; }
+.accent-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.accent-dot { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.accent-dot.on { box-shadow: 0 0 0 2.5px var(--ink); }
+.tiles.five { grid-template-columns: repeat(5, 1fr); }
+.panel > div > .sec-title { display: block; margin-bottom: 6px; }

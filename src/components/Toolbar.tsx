@@ -20,6 +20,7 @@ import { isInsideAny } from "../core/outside";
 import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, floatLeaders, groupMembers, useLayout } from "../core/layout";
 import { BarHandle, BlockHandle } from "./BlockHandle";
 import { Settings } from "./Settings";
+import { useTheme } from "../core/theme";
 import { addAttachmentFile, pasteFromButton, worldPoint } from "./clipboard";
 
 const COLORS = ["#1B2233", "#2F4B8F", "#C8372D", "#2F7D5B", "#D98A1F"];
@@ -36,6 +37,18 @@ const LINE_STYLES: { id: LineStyle; label: string }[] = [
   { id: "dashed", label: "Tracejado" },
   { id: "dotted", label: "Pontilhado" },
 ];
+
+/** Desenho pequeno 44×28 para os painéis (opções com prévia, não só texto). */
+const Pic = ({ children }: { children: ReactNode }) => (
+  <svg viewBox="0 0 44 28" width="44" height="28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
+);
+const HEAD_ICON: Record<string, ReactNode> = {
+  none: <path d="M6 14h32" />,
+  arrow: <><path d="M6 14h32" /><path d="M30 8l8 6-8 6" /></>,
+  triangle: <><path d="M6 14h26" /><path d="M30 8l9 6-9 6z" fill="currentColor" /></>,
+  dot: <><path d="M6 14h28" /><circle cx="35" cy="14" r="3.5" fill="currentColor" /></>,
+  bar: <><path d="M6 14h32" /><path d="M38 7v14" /></>,
+};
 
 const SHAPE_META: Record<string, { label: string; key: string; icon: ReactNode }> = {
   rect: { label: "Retângulo", key: "R", icon: <rect x="4" y="6" width="16" height="12" rx="2" /> },
@@ -445,15 +458,17 @@ export function Toolbar() {
       )}
 
       {panel === "shape" && (
-        <div className="panel" role="dialog" aria-label="Estilo das formas">
-          <div className="row" role="radiogroup" aria-label="Estilo do contorno">
+        <div className="panel scroll" role="dialog" aria-label="Estilo das formas">
+          <div className="sec-title">Contorno</div>
+          <div className="tiles three" role="radiogroup" aria-label="Estilo do contorno">
             {LINE_STYLES.map((l) => (
-              <button key={l.id} role="radio" aria-checked={t.lineStyle === l.id} className={t.lineStyle === l.id ? "chip on" : "chip"} onClick={() => t.set({ lineStyle: l.id })}>
-                {l.label}
+              <button key={l.id} role="radio" aria-checked={t.lineStyle === l.id} className={t.lineStyle === l.id ? "tile icon on" : "tile icon"} onClick={() => t.set({ lineStyle: l.id })}>
+                <Pic><path d="M6 14h32" strokeWidth="2.4" strokeDasharray={l.id === "dashed" ? "7 5" : l.id === "dotted" ? "0.1 5" : undefined} /></Pic><span>{l.label}</span>
               </button>
             ))}
           </div>
-          <div className="row" role="radiogroup" aria-label="Preenchimento">
+          <div className="sec-title">Preenchimento</div>
+          <div className="swatch-grid" role="radiogroup" aria-label="Preenchimento">
             {FILLS.map((f) => (
               <button
                 key={f.label}
@@ -467,30 +482,34 @@ export function Toolbar() {
               />
             ))}
           </div>
-          <div className="row" role="radiogroup" aria-label="Cantos do retângulo">
-            <button role="radio" aria-checked={!t.rounded} className={!t.rounded ? "chip on" : "chip"} onClick={() => t.set({ rounded: false })}>Cantos retos</button>
-            <button role="radio" aria-checked={t.rounded} className={t.rounded ? "chip on" : "chip"} onClick={() => t.set({ rounded: true })}>Arredondados</button>
+          <div className="sec-title">Cantos do retângulo</div>
+          <div className="tiles" role="radiogroup" aria-label="Cantos do retângulo">
+            <button role="radio" aria-checked={!t.rounded} className={!t.rounded ? "tile icon on" : "tile icon"} onClick={() => t.set({ rounded: false })}><Pic><rect x="8" y="5" width="28" height="18" /></Pic><span>Retos</span></button>
+            <button role="radio" aria-checked={t.rounded} className={t.rounded ? "tile icon on" : "tile icon"} onClick={() => t.set({ rounded: true })}><Pic><rect x="8" y="5" width="28" height="18" rx="6" /></Pic><span>Arredondados</span></button>
           </div>
           {(["startHead", "endHead"] as const).map((key) => (
-            <div key={key} className="row" role="radiogroup" aria-label={key === "startHead" ? "Ponta inicial da seta" : "Ponta final da seta"}>
-              <span className="rowlabel">{key === "startHead" ? "Início" : "Fim"}</span>
-              {ARROW_HEADS.map((h) => (
-                <button
-                  key={h.id}
-                  role="radio"
-                  aria-checked={t[key] === h.id}
-                  className={t[key] === h.id ? "chip on" : "chip"}
-                  onClick={() => t.set(key === "startHead" ? { startHead: h.id } : { endHead: h.id })}
-                >
-                  {h.label}
-                </button>
-              ))}
+            <div key={key}>
+              <div className="sec-title">{key === "startHead" ? "Ponta inicial" : "Ponta final"}</div>
+              <div className="tiles five" role="radiogroup" aria-label={key === "startHead" ? "Ponta inicial da seta" : "Ponta final da seta"}>
+                {ARROW_HEADS.map((h) => (
+                  <button
+                    key={h.id}
+                    role="radio"
+                    aria-checked={t[key] === h.id}
+                    title={h.label}
+                    className={t[key] === h.id ? "tile icon on" : "tile icon"}
+                    onClick={() => t.set(key === "startHead" ? { startHead: h.id } : { endHead: h.id })}
+                  >
+                    <Pic><g transform={key === "startHead" ? "translate(44 0) scale(-1 1)" : undefined}>{HEAD_ICON[h.id]}</g></Pic>
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
-          <div className="row" role="radiogroup" aria-label="Forma da linha">
-            <span className="rowlabel">Linha</span>
-            <button role="radio" aria-checked={!t.curved} className={!t.curved ? "chip on" : "chip"} onClick={() => t.set({ curved: false })}>Reta</button>
-            <button role="radio" aria-checked={t.curved} className={t.curved ? "chip on" : "chip"} onClick={() => t.set({ curved: true })}>Curva</button>
+          <div className="sec-title">Linha</div>
+          <div className="tiles" role="radiogroup" aria-label="Forma da linha">
+            <button role="radio" aria-checked={!t.curved} className={!t.curved ? "tile icon on" : "tile icon"} onClick={() => t.set({ curved: false })}><Pic><path d="M6 22l12-12 8 8 12-12" /></Pic><span>Reta</span></button>
+            <button role="radio" aria-checked={t.curved} className={t.curved ? "tile icon on" : "tile icon"} onClick={() => t.set({ curved: true })}><Pic><path d="M6 22C12 4 20 6 24 14s12 8 14-8" /></Pic><span>Curva</span></button>
           </div>
           <p className="hint">Shift: quadrado, círculo ou ângulo de 15°. Alt: desenha a partir do centro. Solte a ponta de uma seta sobre uma forma para conectá-la. Selecione uma linha para arrastar os pontos; arraste a bolinha do meio para criar um ponto novo e use Alt+clique num ponto para remover.</p>
         </div>
@@ -498,16 +517,29 @@ export function Toolbar() {
 
       {panel === "insert" && (
         <div className="panel" role="dialog" aria-label="Inserir">
-          <div className="row" role="toolbar" aria-label="Inserir no quadro">
-            <button className="chip" onClick={() => { void pasteFromButton(); setPanel(null); }} title="Cola o que está na área de transferência (Ctrl+V também funciona)">Colar</button>
-            <button className="chip" onClick={() => { attachRef.current?.click(); setPanel(null); }}>Imagem ou arquivo…</button>
-            <button className="chip" onClick={() => { setPanel(null); useTool.getState().set({ tool: "text" }); }}>Texto</button>
-            <button className="chip" onClick={() => { setPanel(null); useUI.getState().setTemplatesOpen(true); }}>Modelo pronto…</button>
+          <div className="tiles three" role="toolbar" aria-label="Inserir no quadro">
+            <button className="tile icon" onClick={() => { void pasteFromButton(); setPanel(null); }} title="Cola o que está na área de transferência (Ctrl+V também funciona)">
+              <Pic><rect x="13" y="5" width="18" height="20" rx="2" /><path d="M18 5V3h8v2M17 13h10M17 18h7" /></Pic><span>Colar</span>
+            </button>
+            <button className="tile icon" onClick={() => { attachRef.current?.click(); setPanel(null); }} title="Imagem, PDF ou qualquer arquivo">
+              <Pic><rect x="9" y="4" width="26" height="20" rx="3" /><circle cx="17" cy="11" r="2.5" /><path d="M10 22l8-7 5 4 4-3 7 6" /></Pic><span>Imagem/arquivo</span>
+            </button>
+            <button className="tile icon" onClick={() => { setPanel(null); useTool.getState().set({ tool: "text" }); }} title="Ferramenta Texto (T)">
+              <Pic><path d="M12 6h20M22 6v17M18 23h8" /></Pic><span>Texto</span>
+            </button>
+            <button className="tile icon" onClick={() => { setPanel(null); useUI.getState().setTemplatesOpen(true); }} title="Kanban, SWOT, Cornell, fluxograma…">
+              <Pic><rect x="8" y="4" width="12" height="9" rx="2" /><rect x="24" y="4" width="12" height="9" rx="2" /><rect x="8" y="16" width="12" height="9" rx="2" /><rect x="24" y="16" width="12" height="9" rx="2" /></Pic><span>Modelo</span>
+            </button>
+            <button className="tile icon" onClick={() => { setPanel(null); useUI.getState().setTemplatesOpen(true, "mapas"); }} title="Mapa mental pronto">
+              <Pic><rect x="17" y="11" width="10" height="6" rx="3" /><path d="M17 14c-4 0-4-7-8-7M17 14c-4 0-4 7-8 7M27 14c4 0 4-7 8-7M27 14c4 0 4 7 8 7" /></Pic><span>Mapa mental</span>
+            </button>
+            <button className="tile icon" onClick={() => toggle("science")} title="Grafos, sólidos, gráficos, calculadora">
+              <Pic><circle cx="12" cy="8" r="3" /><circle cx="32" cy="9" r="3" /><circle cx="22" cy="22" r="3" /><path d="M15 8h14M14 11l6 9M30 12l-6 8" /></Pic><span>Grafo/figura</span>
+            </button>
           </div>
-          <p className="hint">Dica: tire um print e aperte <b>Ctrl+V</b> com o quadro em foco. Também dá para arrastar arquivos e links para o quadro.</p>
+          <p className="hint">Dica: tire um print e aperte <b>Ctrl+V</b> com o quadro em foco. Links do YouTube viram vídeo; PDFs viram objeto com páginas. Também dá para arrastar arquivos e links para o quadro.</p>
         </div>
       )}
-
     </>
   );
 
@@ -533,6 +565,8 @@ export function Toolbar() {
               {!isTauri() && <a role="menuitem" href={`${import.meta.env.BASE_URL}download.html`}>Baixar o app</a>}
               <button role="menuitem" onClick={() => void checkForUpdates(true)}>Verificar atualizações · v{APP_VERSION}</button>
               <button role="menuitem" onClick={() => useUI.getState().setNotebooksOpen(true)}>Tela inicial (cadernos)</button>
+              <button role="menuitem" onClick={() => useTheme.getState().setFocus(true)}>Modo foco (Ctrl+.)</button>
+              <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("aparencia")}>Tema e aparência…</button>
               <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("atalhos")}>Atalhos de teclado</button>
             </div>
           )}

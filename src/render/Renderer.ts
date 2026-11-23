@@ -68,6 +68,10 @@ export class Renderer {
   private liveInk = new InkNode();
   private selLayer = new Graphics();
   private overlay = new Graphics();
+  /** Ponteiro laser: rastro que some sozinho (tela), nunca vai para o documento. */
+  private laserLayer = new Graphics();
+  private laser: { x: number; y: number; t: number }[] = [];
+  private laserDown = false;
 
   private nodes = new Map<string, Node>();
   private ghosts = new Set<string>();
@@ -95,11 +99,12 @@ export class Renderer {
       powerPreference: "high-performance",
     });
     this.world.addChild(this.layerRoot, this.algoLayer, this.live, this.liveInk);
-    this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay);
+    this.app.stage.addChild(this.paperLayer, this.world, this.selLayer, this.overlay, this.laserLayer);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
       const { width, height } = this.app.screen;
       if (width !== this.paperSize.w || height !== this.paperSize.h) this.drawPaper();
+      if (this.laser.length) this.drawLaser();
       // Eventos de ponteiro podem chegar muito mais rápido que a tela. Agrupa-os por frame:
       // evita redesenhar o polígono completo dezenas/centenas de vezes entre dois frames.
       if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
@@ -222,7 +227,7 @@ export class Renderer {
 
   /** Cria/remove/ordena os contêineres das camadas e aplica visibilidade e opacidade. */
   private syncLayers(layers: Layer[]) {
-    const list = layers.length ? layers : [{ id: "", name: "", visible: true, locked: false, opacity: 1 }];
+    const list: Layer[] = layers.length ? layers : [{ id: "", name: "", visible: true, locked: false, opacity: 1 }];
     const keep = new Set(list.map((l) => l.id));
     for (const [id, b] of this.layerBox) {
       if (keep.has(id)) continue;
@@ -247,6 +252,8 @@ export class Renderer {
       if (this.layerRoot.getChildIndex(b.root) !== i) this.layerRoot.setChildIndex(b.root, i);
       b.root.visible = l.visible;
       b.root.alpha = l.opacity;
+      const blend = l.blend ?? "normal";
+      if (b.root.blendMode !== blend) b.root.blendMode = blend;
     });
     return this.layerBox;
   }
@@ -641,6 +648,27 @@ export class Renderer {
     this.liveStyle = null;
     this.pendingLivePoints = null;
     this.liveDirty = false;
+  }
+
+  // ---------------- ponteiro laser ----------------
+
+  laserPoint(x: number, y: number) { this.laserDown = true; this.laser.push({ x, y, t: performance.now() }); }
+  laserEnd() { this.laserDown = false; }
+
+  private drawLaser() {
+    const now = performance.now();
+    const life = this.laserDown ? 900 : 600;
+    this.laser = this.laser.filter((p) => now - p.t < life);
+    const g = this.laserLayer;
+    g.clear();
+    const pts = this.laser;
+    for (let i = 1; i < pts.length; i++) {
+      const a = 1 - (now - pts[i].t) / life;
+      g.moveTo(pts[i - 1].x, pts[i - 1].y).lineTo(pts[i].x, pts[i].y).stroke({ width: 10 * a + 2, color: 0xff3b30, alpha: 0.25 * a, cap: "round" });
+      g.moveTo(pts[i - 1].x, pts[i - 1].y).lineTo(pts[i].x, pts[i].y).stroke({ width: 3.5 * a + 1, color: 0xff3b30, alpha: 0.95 * a, cap: "round" });
+    }
+    const last = pts[pts.length - 1];
+    if (last && this.laserDown) g.circle(last.x, last.y, 6).fill({ color: 0xff3b30, alpha: 0.9 }).circle(last.x, last.y, 13).fill({ color: 0xff3b30, alpha: 0.2 });
   }
 
   // ---------------- execução de algoritmo ----------------

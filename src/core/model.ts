@@ -351,7 +351,17 @@ export interface Layer {
   /** Travada: aparece, mas não seleciona nem apaga. */
   locked: boolean;
   opacity: number;
+  /** Mistura com o que está embaixo (como no Photoshop). Ausente = normal. */
+  blend?: LayerBlend;
 }
+
+export type LayerBlend = "normal" | "multiply" | "screen" | "add";
+export const LAYER_BLENDS: { id: LayerBlend; label: string }[] = [
+  { id: "normal", label: "Normal" },
+  { id: "multiply", label: "Multiplicar" },
+  { id: "screen", label: "Tela" },
+  { id: "add", label: "Clarear (somar)" },
+];
 
 export const makeLayer = (name = "Camada 1", id: ID = newId()): Layer => ({ id, name, visible: true, locked: false, opacity: 1 });
 
@@ -503,6 +513,7 @@ function cleanLayers(raw: any): Layer[] {
         visible: l.visible !== false,
         locked: l.locked === true,
         opacity: Math.max(0.05, Math.min(1, num(l.opacity, 1))),
+        ...(["multiply", "screen", "add"].includes(l.blend) ? { blend: l.blend } : {}),
       });
     }
   }

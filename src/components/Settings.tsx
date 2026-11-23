@@ -110,6 +110,7 @@ export function Settings() {
         <Slider label="Estabilização do traço" value={t.smoothing} min={0} max={0.9} step={0.05} onChange={(v) => t.set({ smoothing: v })} fmt={(v) => `${Math.round((v / 0.9) * 100)}%`} />
         <Slider label="Afilamento das pontas" value={t.taper} min={0} max={1} step={0.05} onChange={(v) => t.set({ taper: v })} fmt={(v) => `${Math.round(v * 100)}%`} />
         <Toggle on={t.fingerDraws} onChange={(v) => t.set({ fingerDraws: v })} label="Desenhar com o dedo" hint="Desligado, o dedo só move a tela (estilo GoodNotes)." />
+        <Toggle on={t.recognize} onChange={(v) => t.set({ recognize: v })} label="Reconhecer formas" hint="O traço da caneta vira linha, retângulo, círculo, losango ou triângulo perfeitos." />
         <h3>Borracha</h3>
         <Chips label="Modo da borracha" value={t.eraserMode} options={[["stroke", "Traço inteiro"], ["pixel", "Pixel"]]} onChange={(v) => t.set({ eraserMode: v })} />
         <Toggle on={t.eraserPressure} onChange={(v) => t.set({ eraserPressure: v })} label="Pressão muda o tamanho da borracha" />

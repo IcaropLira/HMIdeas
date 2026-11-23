@@ -114,7 +114,7 @@ export function BlockLibrary() {
         onClose={close}
         search={q}
         onSearch={setQ}
-        footer={<span>Clique para inserir no centro ou <b>arraste</b> para o quadro. Duplo toque num bloco edita o texto ali mesmo; o menu ⋯ do bloco transforma em outro tipo sem perder o conteúdo.</span>}
+        footer={<span>Clique para inserir no centro ou <b>arraste</b> para o quadro. Duplo toque num texto do bloco edita ali mesmo; Enter (ou Editar) abre o editor, com “Transformar em…” para trocar o tipo sem perder o conteúdo.</span>}
       >
         {items.map((it) => (
           <div key={it.id} draggable onDragStart={(e) => { e.dataTransfer.setData(LIB_MIME, it.id); e.dataTransfer.effectAllowed = "copy"; requestAnimationFrame(() => setDragging(true)); }} onDragEnd={() => { setDragging(false); close(); }}>

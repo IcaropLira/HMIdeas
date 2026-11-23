@@ -142,6 +142,7 @@ export default function App() {
       } else if (k === "z" && !mod) {
         useTool.getState().setTool(e.shiftKey ? "laserpen" : "laser");
       } else if (k === "b" && !e.shiftKey) {
+        e.preventDefault(); // senão a letra cai na busca da biblioteca
         useUI.getState().setLibraryOpen(true);
       } else if (TOOL_KEYS[k]) {
         useTool.getState().setTool(TOOL_KEYS[k]);

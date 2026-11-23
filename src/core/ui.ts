@@ -32,6 +32,9 @@ interface UIState {
   requestPanel: (panel: string, x: number, y: number) => void;
   setSidebar: (open: boolean) => void;
   showToast: (msg: string) => void;
+  /** Um gesto de mover/redimensionar está em andamento (a barra contextual some para não atrapalhar). */
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,6 +63,8 @@ export const useUI = create<UIState>((set) => ({
   panelRequest: null,
   requestPanel: (panel, x, y) => set((s) => ({ panelRequest: { panel, x, y, n: (s.panelRequest?.n ?? 0) + 1 } })),
   setSidebar: (sidebarOpen) => set({ sidebarOpen }),
+  busy: false,
+  setBusy: (busy) => set((s) => (s.busy === busy ? s : { busy })),
   showToast: (msg) => {
     clearTimeout(toastTimer);
     set({ toast: { id: Date.now(), msg } });

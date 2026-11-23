@@ -1,0 +1,36 @@
+// Fontes embutidas (0.9): só o subconjunto "latin" (cobre o português), regular e negrito (+ itálico quando a fonte tem).
+// Vão no pacote do app: funcionam offline, no Tauri e no PWA. Licenças: SIL OFL (ver node_modules/@fontsource/*/LICENSE).
+import "@fontsource/inter/latin-400-italic.css";
+import "@fontsource/inter/latin-400.css";
+import "@fontsource/inter/latin-700-italic.css";
+import "@fontsource/inter/latin-700.css";
+import "@fontsource/nunito/latin-400-italic.css";
+import "@fontsource/nunito/latin-400.css";
+import "@fontsource/nunito/latin-700-italic.css";
+import "@fontsource/nunito/latin-700.css";
+import "@fontsource/roboto-slab/latin-400.css";
+import "@fontsource/roboto-slab/latin-700.css";
+import "@fontsource/lora/latin-400-italic.css";
+import "@fontsource/lora/latin-400.css";
+import "@fontsource/lora/latin-700-italic.css";
+import "@fontsource/lora/latin-700.css";
+import "@fontsource/playfair-display/latin-400-italic.css";
+import "@fontsource/playfair-display/latin-400.css";
+import "@fontsource/playfair-display/latin-700-italic.css";
+import "@fontsource/playfair-display/latin-700.css";
+import "@fontsource/merriweather/latin-400-italic.css";
+import "@fontsource/merriweather/latin-400.css";
+import "@fontsource/merriweather/latin-700-italic.css";
+import "@fontsource/merriweather/latin-700.css";
+import "@fontsource/caveat/latin-400.css";
+import "@fontsource/caveat/latin-700.css";
+import "@fontsource/patrick-hand/latin-400.css";
+import "@fontsource/kalam/latin-400.css";
+import "@fontsource/kalam/latin-700.css";
+import "@fontsource/indie-flower/latin-400.css";
+import "@fontsource/jetbrains-mono/latin-400-italic.css";
+import "@fontsource/jetbrains-mono/latin-400.css";
+import "@fontsource/jetbrains-mono/latin-700-italic.css";
+import "@fontsource/jetbrains-mono/latin-700.css";
+import "@fontsource/oswald/latin-400.css";
+import "@fontsource/oswald/latin-700.css";

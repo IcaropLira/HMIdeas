@@ -5,6 +5,7 @@ import { relayout } from "./mindmap";
 import { getBrush } from "./brushes";
 import { Camera, defaultCamera } from "./camera";
 import { activeLayerId } from "./layers";
+import type { TextFx } from "./text";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
 export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "laserpen" | "vertex" | "edge" | ShapeType | LinearType;
@@ -287,6 +288,8 @@ interface ToolState {
   fontFamily: FontFamily;
   fontSize: number;
   textAlign: TextAlign;
+  /** Texto: negrito, itálico, sublinhado, tachado, entrelinha, espaçamento e fundo dos textos novos. */
+  textFx: TextFx;
   /** Laço: "inside" = só o que está totalmente dentro; "touch" = tudo que o laço toca ou envolve. */
   lassoMode: "inside" | "touch";
   /** Se false, toque com o dedo só move a tela (estilo GoodNotes). */
@@ -297,6 +300,14 @@ interface ToolState {
   laserColor: string;
   laserTrail: number;
   laserHold: number;
+  /** Seleção por caixa: "auto" = da esquerda p/ direita pega só o que está dentro; da direita p/ esquerda, o que a caixa toca. */
+  boxMode: "auto" | "inside" | "touch";
+  /** Encaixe ao mover: na grade, em outros objetos (guias inteligentes) e tamanho da grade (mundo). */
+  snapGrid: boolean;
+  smartGuides: boolean;
+  gridSize: number;
+  /** Mostrar a grade de encaixe na tela (só quando o encaixe na grade está ligado). */
+  showGrid: boolean;
   setTool: (t: ToolId) => void;
   /** Troca o brush (e a cor, se o brush tiver cor própria ou já tiver sido usado com outra). */
   setBrush: (id: string) => void;
@@ -330,12 +341,18 @@ export const useTool = create<ToolState>()(
       fontFamily: "sans",
       fontSize: 20,
       textAlign: "left",
+      textFx: {},
       lassoMode: "inside",
       fingerDraws: false,
       recognize: false,
       laserColor: "#FF3B30",
       laserTrail: 450,
       laserHold: 1500,
+      boxMode: "auto",
+      snapGrid: false,
+      smartGuides: true,
+      gridSize: 20,
+      showGrid: true,
       setTool: (tool) => set({ tool, picking: false }),
       setBrush: (id) => {
         const s = get();
@@ -352,6 +369,11 @@ export const useTool = create<ToolState>()(
         laserColor: s.laserColor,
         laserTrail: s.laserTrail,
         laserHold: s.laserHold,
+        boxMode: s.boxMode,
+        snapGrid: s.snapGrid,
+        smartGuides: s.smartGuides,
+        gridSize: s.gridSize,
+        showGrid: s.showGrid,
         color: s.color,
         width: s.width,
         eraserSize: s.eraserSize,
@@ -373,6 +395,7 @@ export const useTool = create<ToolState>()(
         fontFamily: s.fontFamily,
         fontSize: s.fontSize,
         textAlign: s.textAlign,
+        textFx: s.textFx,
         lassoMode: s.lassoMode,
         fingerDraws: s.fingerDraws,
         recognize: s.recognize,

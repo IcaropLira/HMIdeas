@@ -1,6 +1,7 @@
 // Modelo de dados do HM Ideas. Puro: sem Pixi, sem React.
 // Tudo aqui é serializável em JSON e tratado como IMUTÁVEL.
 
+import { cleanGroups, prune } from "./groups";
 import { parseYouTube } from "./embed";
 import { FigureSpec, cleanFigure } from "./figures";
 import { BlockSpec, cleanBlock } from "./blocks";
@@ -38,7 +39,19 @@ export interface StrokeDyn {
   blend: "normal" | "multiply";
 }
 
-export interface StrokeElement {
+/**
+ * Campos comuns a todos os elementos (0.9, todos opcionais): grupo (hierarquia livre em `Page.groups`),
+ * travado (aparece mas não seleciona), invisível (oculto pelo usuário; `NodeElement.hidden` é outra coisa:
+ * nó escondido por ancestral recolhido) e nome dado no painel de objetos.
+ */
+export interface ElementMeta {
+  groupId?: ID | null;
+  locked?: boolean;
+  invisible?: boolean;
+  name?: string;
+}
+
+export interface StrokeElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -68,7 +81,7 @@ export type ShapeType = "rect" | "ellipse" | "diamond";
 export const SHAPE_TYPES: ShapeType[] = ["rect", "ellipse", "diamond"];
 export type LineStyle = "solid" | "dashed" | "dotted";
 
-export interface ShapeElement {
+export interface ShapeElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -111,7 +124,7 @@ export interface ArrowBinding {
 }
 
 /** Linha ou seta com 2+ pontos (retos ou suavizados). */
-export interface LinearElement {
+export interface LinearElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -134,12 +147,19 @@ export interface LinearElement {
   opacity: number;
 }
 
-export type FontFamily = "sans" | "serif" | "mono" | "hand";
-export const FONT_IDS: FontFamily[] = ["sans", "serif", "mono", "hand"];
+export type FontFamily =
+  | "sans" | "serif" | "mono" | "hand"
+  // fontes embutidas (0.9, src/fonts.ts)
+  | "inter" | "nunito" | "oswald" | "robotoslab" | "lora" | "merriweather" | "playfair"
+  | "caveat" | "patrick" | "kalam" | "indie" | "jetbrains";
+export const FONT_IDS: FontFamily[] = [
+  "sans", "serif", "mono", "hand", "inter", "nunito", "oswald", "robotoslab", "lora", "merriweather", "playfair",
+  "caveat", "patrick", "kalam", "indie", "jetbrains",
+];
 export type TextAlign = "left" | "center" | "right";
 
 /** Texto de bloco único (sem quebra automática): w/h são medidos ao confirmar a edição. */
-export interface TextElement {
+export interface TextElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -158,6 +178,15 @@ export interface TextElement {
   align: TextAlign;
   color: string;
   opacity: number;
+  /** Estilo (0.9, opcionais): negrito, itálico, sublinhado, tachado, entrelinha (× tamanho) e espaçamento entre letras (em). */
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  lineHeight?: number;
+  letterSpacing?: number;
+  /** Fundo do texto (marca-texto atrás das letras); ausente = sem fundo. */
+  bg?: string;
 }
 
 
@@ -194,7 +223,7 @@ export const BRANCH_STYLES: { id: BranchStyle; label: string }[] = [
  * miniaturas funcionam sem caso especial. A árvore vem de `parentId`; posições e `hidden` são DERIVADOS
  * por core/mindmap.ts (layout automático) e ficam gravados para o desenho ser rápido.
  */
-export interface NodeElement {
+export interface NodeElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -253,7 +282,7 @@ export interface NodeElement {
 }
 
 /** Quadro (como o do Figma/Miro): contém outros elementos — inclusive outros quadros. */
-export interface FrameElement {
+export interface FrameElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -279,7 +308,7 @@ export const ATTACHMENT_KINDS = ["image", "link", "file", "video", "pdf", "figur
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 
 /** Anexo embutido no caderno: imagem, link ou arquivo. Conteúdo local pode ser data URL. */
-export interface AttachmentElement {
+export interface AttachmentElement extends ElementMeta {
   id: ID;
   /** Camada (Page.layers) a que pertence; ausente/desconhecida = primeira camada. */
   layerId?: ID | null;
@@ -371,6 +400,15 @@ export const LAYER_BLENDS: { id: LayerBlend; label: string }[] = [
 
 export const makeLayer = (name = "Camada 1", id: ID = newId()): Layer => ({ id, name, visible: true, locked: false, opacity: 1 });
 
+/** Grupo (0.9): só estrutura — os elementos apontam para ele por `groupId`; grupos aninham por `parentId`. */
+export interface Group {
+  id: ID;
+  name: string;
+  parentId: ID | null;
+  locked?: boolean;
+  hidden?: boolean;
+}
+
 export interface Page {
   id: ID;
   name: string;
@@ -386,6 +424,8 @@ export interface Page {
   layers: Layer[];
   /** Ordem de empilhamento (último = por cima). Entre camadas, vale a ordem das camadas. */
   elements: HirakuElement[];
+  /** Grupos (hierarquia livre). Ausente = nenhum. */
+  groups?: Group[];
 }
 
 export interface HirakuDoc {
@@ -421,6 +461,13 @@ const cleanText = (e: any): TextElement => {
     angle: Number.isFinite(e.angle) ? e.angle : 0,
     w: Number.isFinite(e.w) && e.w > 0 ? e.w : Math.max(...lines.map((l) => l.length), 1) * size * 0.6,
     h: Number.isFinite(e.h) && e.h > 0 ? e.h : lines.length * size * 1.25,
+    bold: e.bold === true || undefined,
+    italic: e.italic === true || undefined,
+    underline: e.underline === true || undefined,
+    strike: e.strike === true || undefined,
+    lineHeight: Number.isFinite(e.lineHeight) ? Math.max(0.8, Math.min(3, e.lineHeight)) : undefined,
+    letterSpacing: Number.isFinite(e.letterSpacing) && e.letterSpacing !== 0 ? Math.max(-0.2, Math.min(1, e.letterSpacing)) : undefined,
+    bg: typeof e.bg === "string" && /^#[0-9a-fA-F]{6}$/.test(e.bg) ? e.bg : undefined,
   };
 };
 
@@ -543,7 +590,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
   return {
     version: 1,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pages: d.pages.map((p: any, i: number): Page => ({
+    pages: d.pages.map((p: any, i: number): Page => prune({
       id: typeof p.id === "string" ? p.id : newId(),
       name: typeof p.name === "string" ? p.name : `Página ${i + 1}`,
       paper: kinds.includes(p.paper) ? p.paper : "blank",
@@ -573,8 +620,21 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
                       : e.type === "attachment"
                         ? cleanAttachment(e)
                         : e,
-          )
+          ).map(cleanMeta)
         : [],
+      groups: cleanGroups(p.groups),
     })),
   };
 }
+
+/** Campos comuns (0.9): grupo, travado, invisível, nome. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cleanMeta = (e: any): HirakuElement => {
+  const out = { ...e };
+  if (typeof out.groupId !== "string" || !out.groupId) delete out.groupId;
+  if (out.locked !== true) delete out.locked;
+  if (out.invisible !== true) delete out.invisible;
+  if (typeof out.name === "string" && out.name.trim()) out.name = out.name.trim().slice(0, 80);
+  else delete out.name;
+  return out;
+};

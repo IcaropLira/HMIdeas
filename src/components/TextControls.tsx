@@ -41,7 +41,7 @@ export function applyText(patch: TextPatch) {
 const keep = (e: React.MouseEvent) => e.preventDefault(); // não tira o foco da caixa de texto
 
 export function FontPicker({ value, onChange }: { value: FontFamily; onChange: (f: FontFamily) => void }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<false | "down" | "up">(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -52,11 +52,19 @@ export function FontPicker({ value, onChange }: { value: FontFamily; onChange: (
   const cur = FONTS.find((f) => f.id === value) ?? FONTS[0];
   return (
     <div className="fontpick" ref={ref} data-text-ui>
-      <button className="fontpick-btn" onMouseDown={keep} onClick={() => setOpen(!open)} aria-haspopup="listbox" aria-expanded={open} title="Fonte" style={{ fontFamily: cur.css }}>
+      <button className="fontpick-btn" onMouseDown={keep} aria-haspopup="listbox" aria-expanded={!!open} title="Fonte" style={{ fontFamily: cur.css }}
+        onClick={(e) => {
+          if (open) { setOpen(false); return; }
+          // abre para onde houver espaço; sobre o texto em edição, prefere abrir para cima (não cobre o que se escreve)
+          const r = e.currentTarget.getBoundingClientRect();
+          const below = window.innerHeight - r.bottom, above = r.top;
+          const overText = !!e.currentTarget.closest(".text-format");
+          setOpen((overText && above > 260) || (below < 300 && above > below) ? "up" : "down");
+        }}>
         <span>{cur.label}</span><Icon size={14}><path d="M6 9l6 6 6-6" /></Icon>
       </button>
       {open && (
-        <div className="fontpick-list" role="listbox" aria-label="Fontes">
+        <div className={open === "up" ? "fontpick-list up" : "fontpick-list"} role="listbox" aria-label="Fontes">
           {FONT_GROUPS.map((g) => (
             <div key={g}>
               <div className="fontpick-group">{g}</div>

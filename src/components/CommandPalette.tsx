@@ -71,7 +71,7 @@ export function CommandPalette() {
             return (
               <button key={c.id} role="option" aria-selected={k === i} className={k === i ? "pal-item on" : "pal-item"} onMouseEnter={() => setI(k)} onClick={() => run(c.id)}>
                 <span className="pal-cat">{c.cat}</span>
-                <span className="pal-label">{on !== undefined && <span className="pal-check">{on ? "✓" : ""}</span>}{c.label}</span>
+                <span className="pal-label"><span className="pal-check">{on ? "✓" : ""}</span>{c.label}</span>
                 {key && <kbd>{key}</kbd>}
               </button>
             );

@@ -37,11 +37,11 @@ describe("grupos hierárquicos", () => {
     let p = pageWith("a", "b", "c");
     const g1 = groupUnits(p, ["a", "b"], null); p = g1.page;
     const g2 = groupUnits(p, ["a", "b", "c"], null); p = g2.page;
-    const u = ungroup(p, [g2.id]);
+    const u = ungroup(p, [g2.id!]);
     expect(u.groups!.map((g) => g.id)).toEqual([g1.id]);
     expect(u.groups![0].parentId).toBeNull();
     expect(u.elements.find((e) => e.id === "c")!.groupId).toBeNull();
-    const r = releaseUnits(p, ["a"], g1.id);
+    const r = releaseUnits(p, ["a"], g1.id!);
     expect(r.elements.find((e) => e.id === "a")!.groupId).toBe(g2.id);
     expect(r.elements.find((e) => e.id === "b")!.groupId).toBe(g1.id);
   });

@@ -22,7 +22,7 @@ import { BLOCKS, BlockId, DockSide, blocksOn, clampPosition, defaultFloat, float
 import { BarHandle, BlockHandle } from "./BlockHandle";
 import { Settings } from "./Settings";
 import { ToolGroupBtn, ToolItem } from "./ToolGroup";
-import { withKey } from "./commands";
+import { usePalette, withKey } from "./commands";
 import { TextPanelBody } from "./TextControls";
 import { listBrushes } from "../core/brushes";
 import { useTheme } from "../core/theme";
@@ -622,6 +622,8 @@ export function Toolbar() {
               <button role="menuitem" onClick={() => useTheme.getState().setFocus(true)}>Modo foco (Ctrl+.)</button>
               <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("aparencia")}>Tema e aparência…</button>
               <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("atalhos")}>Atalhos de teclado</button>
+              <button role="menuitem" onClick={() => useUI.getState().setSettingsTab("areas")}>Áreas de trabalho (menus e painéis)…</button>
+              <button role="menuitem" onClick={() => usePalette.getState().setOpen(true)}>{withKey("Procurar comando", "help.palette")}</button>
             </div>
           )}
         </div>

@@ -1164,7 +1164,7 @@ body[data-pills="off"] .sidebar { top: calc(12px + var(--insetT, 0px) + env(safe
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 260px; max-height: calc(100vh - 60px); overflow-y: auto;
   padding: 5px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
 }
-.mb-menu.sub { top: -6px; left: calc(100% + 2px); }
+.mb-menu.sub { z-index: 51; max-height: calc(100vh - 50px); }
 .mb-subwrap { position: relative; }
 .mb-item {
   width: 100%; display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px 0 6px;
@@ -1439,3 +1439,4 @@ body[data-pills="off"] .sidebar { top: calc(12px + var(--insetT, 0px) + env(safe
 .tg-item.opts { border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; margin-top: 4px; color: var(--ink-soft); }
 @media (pointer: coarse) { .tg-item { min-height: 44px; } }
 .tg-item kbd:empty, .mb-item kbd:empty, .pal-item kbd:empty, .tool-cell kbd:empty { visibility: hidden; }
+.fontpick-list.up { top: auto; bottom: calc(100% + 4px); }

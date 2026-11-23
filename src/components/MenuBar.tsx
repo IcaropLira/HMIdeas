@@ -39,10 +39,13 @@ const MENUS: { label: string; items: () => Item[] }[] = [
   { label: "Ajuda", items: () => ["help.palette", "help.shortcuts", "-", { label: "Sobre o HM Ideas", act: () => useUI.getState().setSettingsTab("sobre") }] },
 ];
 
-function MenuList({ items, onDone, sub = false }: { items: Item[]; onDone: () => void; sub?: boolean }) {
-  const [openSub, setOpenSub] = useState<number | null>(null);
+function MenuList({ items, onDone, at }: { items: Item[]; onDone: () => void; at?: { x: number; y: number } }) {
+  const [openSub, setOpenSub] = useState<{ i: number; x: number; y: number } | null>(null);
+  // submenus ficam em posição fixa (o menu de cima rola e cortaria um filho absoluto)
+  const style = at ? { position: "fixed" as const, left: Math.min(at.x, window.innerWidth - 270), top: Math.max(4, Math.min(at.y, window.innerHeight - 40 - Math.min(items.length * 30, window.innerHeight - 60))) } : undefined;
+  const subAt = (el: HTMLElement) => { const r = el.getBoundingClientRect(); return { x: r.right + 2, y: r.top - 6 }; };
   return (
-    <div className={sub ? "mb-menu sub" : "mb-menu"} role="menu">
+    <div className={at ? "mb-menu sub" : "mb-menu"} role="menu" style={style}>
       {items.map((it, i) => {
         if (it === "-") return <div key={i} className="mb-sep" role="separator" />;
         if (typeof it === "string") {
@@ -61,11 +64,11 @@ function MenuList({ items, onDone, sub = false }: { items: Item[]; onDone: () =>
         }
         if ("items" in it) {
           return (
-            <div key={i} className="mb-subwrap" onMouseEnter={() => setOpenSub(i)} onMouseLeave={() => setOpenSub((v) => (v === i ? null : v))}>
-              <button role="menuitem" aria-haspopup="menu" aria-expanded={openSub === i} className="mb-item" onClick={() => setOpenSub(openSub === i ? null : i)}>
+            <div key={i} className="mb-subwrap" onMouseEnter={(e) => setOpenSub({ i, ...subAt(e.currentTarget) })}>
+              <button role="menuitem" aria-haspopup="menu" aria-expanded={openSub?.i === i} className="mb-item" onClick={(e) => setOpenSub(openSub?.i === i ? null : { i, ...subAt(e.currentTarget) })}>
                 <span className="mb-check" /><span className="mb-label">{it.label}</span><span className="mb-arrow">›</span>
               </button>
-              {openSub === i && <MenuList items={it.items} onDone={onDone} sub />}
+              {openSub?.i === i && <MenuList items={it.items} onDone={onDone} at={openSub} />}
             </div>
           );
         }

@@ -621,8 +621,14 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 /* Incorporados (vídeo do YouTube, PDF): camada DOM sobre o canvas */
 .embed-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .embed-box { position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform; }
-/* o iframe tem sempre o tamanho do elemento no mundo; o zoom é um scale (sem relayout do player a cada passo) */
-.embed-frame { transform-origin: 0 0; contain: layout paint size; }
+/* o iframe tem o tamanho do vídeo NA TELA; muda só quando o zoom assenta (enquanto a câmera anda ele fica invisível) */
+.embed-frame { contain: layout paint size; }
+.embed-interact .embed-frame { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.embed-tip {
+  position: absolute; left: 50%; bottom: -30px; transform: translateX(-50%); white-space: nowrap; pointer-events: none;
+  padding: 4px 10px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px;
+}
+.embed-bar button.on { background: var(--accent); color: #fff; border-color: transparent; }
 .embed-box iframe { display: block; width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; }
 /* câmera em movimento / vídeo sendo arrastado: esconde o iframe (a miniatura do canvas fica no lugar) */
 .embed-hold iframe, .embed-hold .embed-bar { visibility: hidden; }

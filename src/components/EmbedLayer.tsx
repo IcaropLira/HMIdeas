@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { screenToWorld } from "../core/camera";
 import { AttachmentElement } from "../core/model";
 import { useEmbedView } from "../core/embedView";
-import { clampPage, clampScroll, maxScroll, pageAtScroll, parseYouTube, scrollLayout, youtubeEmbed, youtubeWatch } from "../core/embed";
+import { clampPage, clampScroll, maxScroll, pageAtScroll, parseYouTube, scrollLayout, youtubeCommand, youtubeEmbed, youtubeWatch } from "../core/embed";
 import { openExternal } from "../core/openExternal";
 import { selectActivePage, useDoc, useSel, useView } from "../core/store";
 
@@ -29,6 +29,46 @@ export function EmbedLayer() {
   const sel = useSel((s) => s.ids);
   const playing = useEmbedView((s) => s.playing);
   const play = useEmbedView((s) => s.play);
+
+  const interact = useEmbedView((s) => s.interact);
+  const paused = useEmbedView((s) => s.paused);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const activePage = useDoc((s) => s.activePageId);
+
+  // Trocar de página (ou apagar/desfazer o vídeo) encerra o player: antes ele "voltava a tocar" do começo ao retornar à página.
+  useEffect(() => { useEmbedView.getState().play(null); }, [activePage]);
+  useEffect(() => {
+    if (playing && !elements.some((e) => e.id === playing)) play(null);
+  }, [elements, playing, play]);
+
+  // Modo "controlar player": só nele o iframe recebe o mouse. Sair do retângulo do vídeo, clicar fora ou Esc volta ao quadro
+  // (antes, com o vídeo selecionado, a roda do mouse e a pinça ficavam presas dentro do YouTube e a tela não andava).
+  useEffect(() => {
+    if (!interact) return;
+    const inside = (x: number, y: number) => {
+      const el = selectActivePage(useDoc.getState()).elements.find((e) => e.id === interact);
+      if (!el || el.type !== "attachment") return false;
+      const c = useView.getState().camera;
+      const P = screenToWorld(c, x, y);
+      const m = 6 / c.zoom;
+      return P.x >= el.x - m && P.x <= el.x + el.w + m && P.y >= el.y - 40 / c.zoom && P.y <= el.y + el.h + m;
+    };
+    const leave = (ev: PointerEvent) => { if (!(ev.target as HTMLElement | null)?.closest?.(".embed-bar") && !inside(ev.clientX, ev.clientY)) useEmbedView.getState().setInteract(null); };
+    const esc = (ev: KeyboardEvent) => { if (ev.key === "Escape") useEmbedView.getState().setInteract(null); };
+    window.addEventListener("pointerdown", leave, true);
+    window.addEventListener("pointermove", leave, true);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("pointerdown", leave, true);
+      window.removeEventListener("pointermove", leave, true);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [interact]);
+
+  const command = (id: string, func: "pauseVideo" | "playVideo") => {
+    try { frameRef.current?.contentWindow?.postMessage(youtubeCommand(func), "*"); } catch { /* player ainda carregando */ }
+    useEmbedView.getState().setPaused(id, func === "pauseVideo");
+  };
 
   const pdfScroll = useEmbedView((s) => s.scroll);
   const pdfPage = useEmbedView((s) => s.page);
@@ -57,13 +97,17 @@ export function EmbedLayer() {
   // Pixi aparece no lugar, já na posição certa, com o aviso "Reproduzindo") enquanto a câmera se move e ~100 ms
   // depois, e enquanto o próprio vídeo é arrastado/redimensionado. O vídeo continua tocando (só fica invisível).
   const [moving, setMoving] = useState(false);
+  // Zoom "assentado": o iframe só é redimensionado quando a câmera para (relayout do player a cada passo de zoom pesava).
+  const [zoomSettled, setZoomSettled] = useState(cam.zoom);
   const [held, setHeld] = useState(false);
   useEffect(() => {
     setMoving(true);
-    const t = setTimeout(() => setMoving(false), 100);
+    const t = setTimeout(() => { setMoving(false); setZoomSettled(useView.getState().camera.zoom); }, 100);
     return () => clearTimeout(t);
     // Selecionar/desmarcar também conta: a barra "1 selecionado" some e a camada do iframe podia deixar um pedaço dela na tela.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cam, sel, playing]);
+  useEffect(() => { if (moving) useEmbedView.getState().setInteract(null); }, [moving]);
   useEffect(() => {
     let release: ReturnType<typeof setTimeout> | undefined;
     const down = (ev: PointerEvent) => {
@@ -137,20 +181,30 @@ export function EmbedLayer() {
         if (!yt) return null;
         if (playing === el.id) {
           return (
-            <div key={el.id} className={`embed-box${moving || held ? " embed-hold" : ""}${off ? " embed-off" : ""}`} style={box}>
-              <div className="embed-frame" style={{ width: el.w, height: el.h, transform: `scale(${cam.zoom})` }}>
+            <div key={el.id} className={`embed-box${moving || held ? " embed-hold" : ""}${off ? " embed-off" : ""}${interact === el.id ? " embed-interact" : ""}`} style={box}>
+              {/* O iframe tem o tamanho da TELA (não é mais um scale do tamanho do mundo): controles do YouTube legíveis em qualquer zoom
+                  e vídeo nítido. Ele só muda de tamanho quando o zoom termina, porque durante o movimento fica invisível. */}
+              <div className="embed-frame" style={{ width: el.w * zoomSettled, height: el.h * zoomSettled }}>
                 <iframe
+                  ref={frameRef}
                   src={youtubeEmbed(yt)}
                   title={el.title}
                   allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
                   allowFullScreen
                   referrerPolicy="strict-origin-when-cross-origin"
-                  style={{ pointerEvents: sel.includes(el.id) ? "auto" : "none" }}
+                  style={{ pointerEvents: interact === el.id ? "auto" : "none" }}
                 />
               </div>
               {(moving || held) && !off && <div className="embed-pill">● Reproduzindo…</div>}
+              {interact === el.id && !moving && !held && <div className="embed-tip">Controlando o player · saia do vídeo ou Esc para voltar ao quadro</div>}
               <div className="embed-bar">
-                <button onClick={() => void openExternal(youtubeWatch(yt))} title="Abrir no navegador">Abrir no navegador ↗</button>
+                <button onClick={() => command(el.id, paused[el.id] ? "playVideo" : "pauseVideo")} title={paused[el.id] ? "Continuar" : "Pausar"} aria-label={paused[el.id] ? "Continuar" : "Pausar"}>{paused[el.id] ? "▶" : "❚❚"}</button>
+                <button
+                  className={interact === el.id ? "on" : undefined}
+                  onClick={() => useEmbedView.getState().setInteract(interact === el.id ? null : el.id)}
+                  title="Deixa o mouse controlar o player do YouTube (barra de progresso, volume, legendas)"
+                >{interact === el.id ? "Pronto" : "Controlar player"}</button>
+                <button onClick={() => void openExternal(youtubeWatch(yt))} title="Abrir no navegador">Abrir ↗</button>
                 <button onClick={() => play(null)} title="Voltar à miniatura">Fechar</button>
               </div>
             </div>

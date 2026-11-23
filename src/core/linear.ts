@@ -83,3 +83,19 @@ export function makeLinear(id: string, type: LinearType, a: Pt, b: Pt, st: Linea
     opacity: 1,
   };
 }
+
+/** Ponto no meio do caminho (pelo comprimento). */
+export function pathMidpoint(pts: { x: number; y: number }[]) {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (acc + d >= total / 2 && d > 0) {
+      const t = (total / 2 - acc) / d;
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+    }
+    acc += d;
+  }
+  return pts[0] ?? { x: 0, y: 0 };
+}

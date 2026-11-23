@@ -223,7 +223,8 @@ export function settleMoved(next: HirakuElement[], draggedIds: ID[]): HirakuElem
     const target = nodesOf(all)
       .filter((n) => !sub.has(n.id) && !n.hidden && cx >= n.x && cx <= n.x + n.w && cy >= n.y && cy <= n.y + n.h)
       .pop();
-    if (target) all = reparent(all, cur.id, target.id);
+    if (target && !cur.vertex && !target.vertex) all = reparent(all, cur.id, target.id);
+    else if (cur.vertex) continue; // vértice de grafo: fica onde foi solto
     else if (cur.parentId) all = reorderByPosition(all, cur.id);
     else all = relayout(all);
   }

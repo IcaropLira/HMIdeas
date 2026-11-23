@@ -8,7 +8,7 @@ import { bindableAt, clearBindingsTo, makeBinding, solveArrow } from "../core/bi
 import { eraseStep } from "../core/erase";
 import { recognize } from "../core/recognize";
 import { makeLinear, snapAngle } from "../core/linear";
-import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
+import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, NodeElement, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
 import { Box, Pt, boxFromDrag, makeShape, outlinePath } from "../core/shapes";
 import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
@@ -25,9 +25,10 @@ import { clampScroll, scrollLayout } from "../core/embed";
 import { useEmbedView } from "../core/embedView";
 import { useAlgo } from "../core/algoView";
 import { interactiveElements, layerIdOf } from "../core/layers";
+import { makeEdge, makeVertex, nextVertexName, useEdgeLabel, useGraphTool, vertexAt } from "../core/graphEdit";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
-type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "laser";
+type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "laser" | "graph";
 
 const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
 const isLinearTool = (t: string): t is LinearType => t === "line" || t === "arrow";
@@ -111,6 +112,11 @@ export function CanvasView() {
     let linType: LinearType = "arrow";
     let linStart: Pt = { x: 0, y: 0 };
     let linEl: LinearElement | null = null;
+    // ferramentas de grafo: arraste a partir de um vértice
+    let graphFrom: NodeElement | null = null;
+    let graphStart = { x: 0, y: 0 };
+    let graphMoved = false;
+    let graphEnd: Pt = { x: 0, y: 0 };
     // setas: elementos da página no início do gesto, ligações das duas pontas e comprimento arrastado
     let linEls: HirakuElement[] = [];
     let linById = new Map<string, HirakuElement>();
@@ -349,6 +355,26 @@ export function CanvasView() {
               }
               if (hit) addChildTo(hit);
               else createRootAt(P);
+            } else if (t.tool === "vertex" || t.tool === "edge") {
+              // Vértice: toque no vazio cria; arrastar de um vértice liga. Aresta: arrastar de um vértice a outro (ou ao vazio).
+              mode = "graph";
+              const cam = useView.getState().camera;
+              const P = screenToWorld(cam, s.x, s.y);
+              const els = interactiveElements(selectActivePage(useDoc.getState()));
+              graphFrom = vertexAt(els, P, (s.pointerType === "mouse" ? 4 : 10) / cam.zoom);
+              graphStart = { x: s.x, y: s.y };
+              graphMoved = false;
+              graphEnd = P;
+              if (!graphFrom) {
+                mode = "text"; // nada a arrastar
+                if (t.tool === "vertex") {
+                  const v = makeVertex(nextVertexName(selectActivePage(useDoc.getState()).elements), P);
+                  useDoc.getState().addElement(v);
+                  useSel.getState().set([v.id]);
+                } else {
+                  useUI.getState().showToast("Arraste de um vértice até outro para ligar (soltar no vazio cria um vértice novo).");
+                }
+              }
             } else if (t.tool === "laser") {
               mode = "laser";
               renderer.laserPoint(s.x, s.y);
@@ -387,6 +413,20 @@ export function CanvasView() {
 
           drawMove(samples, predicted) {
             if (mode === "text") return;
+            if (mode === "graph" && graphFrom) {
+              const s = samples[samples.length - 1];
+              if (!graphMoved && Math.hypot(s.x - graphStart.x, s.y - graphStart.y) < 6) return;
+              graphMoved = true;
+              const cam = useView.getState().camera;
+              graphEnd = screenToWorld(cam, s.x, s.y);
+              const els = interactiveElements(selectActivePage(useDoc.getState()));
+              const target = vertexAt(els, graphEnd, 6 / cam.zoom);
+              const tip = target && target.id !== graphFrom.id ? target : makeVertex("", graphEnd, "ghost");
+              const preview = makeEdge(graphFrom, tip, { directed: useGraphTool.getState().directed });
+              renderer.previewElement(target && target.id !== graphFrom.id ? preview : { ...preview, endBinding: null, points: [preview.points[0], graphEnd] });
+              bindHintUI(target && target.id !== graphFrom.id ? outlinePath(target) : null);
+              return;
+            }
             if (mode === "laser") { samples.forEach((p) => renderer.laserPoint(p.x, p.y)); return; }
             if (mode === "select") {
               selectCtl.move(samples);
@@ -448,6 +488,33 @@ export function CanvasView() {
 
           drawEnd(endSample) {
             if (mode === "text") return;
+            if (mode === "graph") {
+              renderer.previewElement(null);
+              const from = graphFrom;
+              graphFrom = null;
+              selectCtl.refresh();
+              if (!from) return;
+              if (!graphMoved) { useSel.getState().set([from.id]); selectCtl.refresh(); return; }
+              const all = selectActivePage(useDoc.getState()).elements;
+              const cam = useView.getState().camera;
+              const target = vertexAt(interactiveElements(selectActivePage(useDoc.getState())), graphEnd, 6 / cam.zoom);
+              const g = useGraphTool.getState();
+              const src = from.vertex ? from : { ...from, vertex: true };
+              let added: HirakuElement[];
+              let edge: LinearElement;
+              if (target && target.id !== from.id) {
+                edge = makeEdge(src, target, { directed: g.directed, label: g.weighted ? "1" : undefined }, all);
+                added = [edge];
+              } else if (!target) {
+                const v = makeVertex(nextVertexName(all), graphEnd);
+                edge = makeEdge(src, v, { directed: g.directed, label: g.weighted ? "1" : undefined }, all);
+                added = [v, edge];
+              } else return; // soltou no próprio vértice
+              useDoc.getState().addElements(added);
+              useSel.getState().set([added[0].type === "node" ? added[0].id : from.id]);
+              if (g.weighted) useEdgeLabel.getState().open(edge.id);
+              return;
+            }
             if (mode === "laser") { renderer.laserEnd(); return; }
             if (mode === "select") {
               selectCtl.end();
@@ -527,6 +594,7 @@ export function CanvasView() {
 
           drawCancel() {
             if (mode === "text") return;
+            if (mode === "graph") { renderer.previewElement(null); graphFrom = null; selectCtl.refresh(); return; }
             if (mode === "laser") { renderer.laserEnd(); return; }
             if (mode === "select") {
               selectCtl.cancel();

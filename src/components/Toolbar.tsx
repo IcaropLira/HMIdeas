@@ -1,5 +1,6 @@
 import { editSelectedBlock } from "../core/blockView";
 import { BlockTiles } from "./BlockGallery";
+import { useGraphTool } from "../core/graphEdit";
 import { MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { defaultCamera } from "../core/camera";
@@ -66,6 +67,7 @@ export function Toolbar() {
   const canRedo = useDoc((s) => s.future.length > 0);
   const zoom = useView((s) => s.camera.zoom);
   const selCount = useSel((s) => s.ids.length);
+  const graph = useGraphTool();
   const oneSel = useSel((s) => (s.ids.length === 1 ? s.ids[0] : null));
   const selBlock = useDoc((s) => {
     if (!oneSel) return false;
@@ -307,6 +309,18 @@ export function Toolbar() {
         <button className={panel === "science" ? "btn on" : "btn"} onClick={() => toggle("science")} aria-expanded={panel === "science"} aria-label="Grafos e matemática" title="Grafos, sólidos, planos, gráficos e calculadora">
           <Icon><circle cx="6" cy="6" r="2.2" /><circle cx="18" cy="7" r="2.2" /><circle cx="11" cy="18" r="2.2" /><path d="M8 6.4l7.8.4M7 7.8l3 8.3M16.9 9l-4.6 7.2" /></Icon>
         </button>
+        {toolBtn("vertex", "Vértice", <><circle cx="12" cy="12" r="5.5" /><path d="M12 9.5v5M9.5 12h5" /></>, "Vértice (N): toque no vazio cria; arraste de um vértice para ligar. Tab no vértice selecionado cria um vizinho ligado")}
+        {toolBtn("edge", "Aresta", <><circle cx="5.5" cy="17.5" r="2.5" /><circle cx="18.5" cy="6.5" r="2.5" /><path d="M7.5 15.8l9-7.6" /></>, "Aresta (G): arraste de um vértice a outro; soltar no vazio cria um vértice novo")}
+        {(t.tool === "vertex" || t.tool === "edge") && (
+          <>
+            <button className={graph.directed ? "btn on" : "btn"} onClick={() => graph.set({ directed: !graph.directed })} aria-pressed={graph.directed} aria-label="Aresta direcionada" title={graph.directed ? "Direcionada (seta) — toque para não direcionada" : "Não direcionada — toque para direcionada (seta)"}>
+              <Icon>{graph.directed ? <><path d="M5 19L19 5" /><path d="M11 5h8v8" /></> : <path d="M5 19L19 5" />}</Icon>
+            </button>
+            <button className={graph.weighted ? "btn text on" : "btn text"} onClick={() => graph.set({ weighted: !graph.weighted })} aria-pressed={graph.weighted} aria-label="Aresta ponderada" title={graph.weighted ? "Ponderada: ao criar, digite o peso" : "Sem peso — toque para ponderada"}>
+              {graph.weighted ? "Peso ✓" : "Peso"}
+            </button>
+          </>
+        )}
       </div>
     ),
     page: (

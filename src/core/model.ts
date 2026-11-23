@@ -246,6 +246,8 @@ export interface NodeElement {
   /** Imagem pequena no topo do nó (data URL) e a proporção altura/largura dela. */
   image?: string;
   imageRatio?: number;
+  /** Vértice de grafo (ferramenta Vértice / grafos gerados): não vira filho de mapa ao ser solto sobre outro nó. */
+  vertex?: boolean;
   opacity: number;
 }
 
@@ -488,6 +490,7 @@ const cleanNode = (e: any): NodeElement => ({
   due: typeof e.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.due) ? e.due : undefined,
   image: typeof e.image === "string" && e.image.startsWith("data:image/") ? e.image : undefined,
   imageRatio: Number.isFinite(e.imageRatio) ? Math.max(0.1, Math.min(4, e.imageRatio)) : undefined,
+  vertex: e.vertex === true ? true : undefined,
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

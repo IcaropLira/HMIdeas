@@ -178,6 +178,12 @@ function GraphTab() {
 
   return (
     <>
+      <div className="sec-title">Desenhar à mão</div>
+      <div className="row tight">
+        <button className="chip sm" onClick={() => useTool.getState().setTool("vertex")} title="Toque no vazio cria um vértice; arraste de um vértice para ligar">◯ Vértice (N)</button>
+        <button className="chip sm" onClick={() => useTool.getState().setTool("edge")} title="Arraste de um vértice a outro">╱ Aresta (G)</button>
+      </div>
+      <p className="hint">Com um vértice selecionado, <b>Tab</b> cria um vizinho já ligado. Duplo toque numa aresta (ou Enter) edita o peso.</p>
       <div className="sec-title">Criar grafo</div>
       <div className="seg small">
         {([["gerar", "Gerar"], ["lista", "Lista de arestas"], ["matriz", "Matriz"]] as const).map(([v, l]) => <button key={v} className={mode === v ? "on" : ""} onClick={() => setMode(v)}>{l}</button>)}

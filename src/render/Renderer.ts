@@ -7,7 +7,7 @@ import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../cor
 import { Pt } from "../core/shapes";
 import { FONT_CSS, LINE_HEIGHT } from "../core/text";
 import { drawLinearElement, drawShapeElement } from "./shapeDraw";
-import { linearPath } from "../core/linear";
+import { linearPath, pathMidpoint } from "../core/linear";
 import { decimateForPreview } from "../core/ink";
 import { MARGIN_COLOR, PaperLayer, autoLineColor, drawPaperPattern, layerAlpha } from "../core/paper";
 import { paintFrame, paintNode } from "./mindDraw";
@@ -33,21 +33,6 @@ interface Node {
   dep?: unknown[];
 }
 
-/** Ponto no meio do caminho (pelo comprimento). */
-function pathMidpoint(pts: { x: number; y: number }[]) {
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-  let acc = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-    if (acc + d >= total / 2 && d > 0) {
-      const t = (total / 2 - acc) / d;
-      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
-    }
-    acc += d;
-  }
-  return pts[0] ?? { x: 0, y: 0 };
-}
 
 const sameDep = (a?: unknown[], b?: unknown[]) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
 

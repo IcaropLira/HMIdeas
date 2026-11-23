@@ -1,4 +1,5 @@
 // Ações de edição sobre a seleção. Usadas pelo teclado e pela barra de ações (toque).
+import { incidentEdges, isVertex } from "./graphEdit";
 import { detachForeign, reidentify } from "./binding";
 import { parseHex, pushRecent } from "./color";
 import { HirakuElement, TextElement, isLinear } from "./model";
@@ -38,6 +39,9 @@ export function deleteSelection() {
   const all = selectActivePage(useDoc.getState()).elements;
   const ids = new Set(sel);
   for (const e of all) if (e.type === "node" && ids.has(e.id)) subtreeIds(all, e.id).forEach((i) => ids.add(i));
+  // apagar um vértice de grafo apaga as arestas dele
+  const vs = new Set(all.filter((e) => ids.has(e.id) && isVertex(e, all)).map((e) => e.id));
+  if (vs.size) incidentEdges(all, vs).forEach((i) => ids.add(i));
   useDoc.getState().removeElements([...ids]);
   useSel.getState().clear();
 }

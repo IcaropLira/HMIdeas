@@ -122,8 +122,9 @@ export const plainText = (s: string) => s.replace(/<[^>]*>/g, "").replace(/\[\[(
 export const colName = (i: number) => String.fromCharCode(65 + i);
 export function sheetEval(R: string[][], r: number, c: number, depth = 0): string {
   const raw = String((R[r] ?? [])[c] ?? "").trim();
-  if (raw[0] !== "=" || depth > 20) return raw;
-  const toNum = (row: number, col: number) => { const v = parseFloat(sheetEval(R, row, col, depth + 1).replace(",", ".")); return Number.isFinite(v) ? v : 0; };
+  if (raw[0] !== "=") return raw;
+  if (depth > 20) return "#ERRO";
+  const toNum = (row: number, col: number) => { const s = sheetEval(R, row, col, depth + 1); if (s === "#ERRO") throw new Error("ref"); const v = parseFloat(s.replace(",", ".")); return Number.isFinite(v) ? v : 0; };
   const src = raw.slice(1).toUpperCase().replace(/MÉDIA|MEDIA/g, "AVG").replace(/SOMA/g, "SUM").replace(/CONT(AR)?\b|CONT\./g, "COUNT").replace(/,(?=\d)/g, ".").replace(/;/g, ",");
   let k = 0;
   const peek = () => src[k], skip = () => { while (src[k] === " ") k++; };

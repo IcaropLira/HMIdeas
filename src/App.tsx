@@ -14,6 +14,8 @@ import { TemplateGallery } from "./components/TemplateGallery";
 import { AlgoPlayer } from "./components/AlgoPlayer";
 import { BlockEditor } from "./components/BlockEditor";
 import { BlockInlineEditor } from "./components/BlockInlineEditor";
+import { PageEditor } from "./components/PageEditor";
+import { usePageEdit } from "./core/pageEdit";
 import { BlockLibrary } from "./components/BlockGallery";
 import { useUI } from "./core/ui";
 import { EdgeLabelEditor } from "./components/EdgeLabelEditor";
@@ -56,6 +58,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement || (e.target as HTMLElement)?.isContentEditable) return;
+      if (usePageEdit.getState().id) return; // o editor de página é modal: os atalhos do quadro ficam desligados
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
 
@@ -159,6 +162,7 @@ export default function App() {
       <AlgoPlayer />
       <BlockEditor />
       <BlockInlineEditor />
+      <PageEditor />
       <EdgeLabelEditor />
       <TextEditor />
       <LabelEditor />

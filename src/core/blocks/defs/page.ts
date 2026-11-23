@@ -3,6 +3,7 @@
 import { defineBlock } from "../def";
 import { BLOCK_COLORS, INK, LH, MUTED, SOFT, arr, linesFit, mix, para, str, wrap } from "../kit";
 import { PBlock, numberOf, parsePage, plainText, sheetEval } from "../../pageMd";
+import { prettyMath } from "./text";
 
 export const page = defineBlock({
   kind: "page", label: "Página", hint: "Documento com editor em blocos (/, tabelas, toggles, subpáginas) — igual ao Hiraku Comic Manager", behavior: "estruturado",
@@ -50,9 +51,9 @@ export const page = defineBlock({
           break;
         }
         case "code": case "eq": {
-          const lines = b.txt.split("\n").slice(0, Math.min(4, room)), hh = lines.length * 11 * LH + 12;
+          const lines = b.txt.split("\n").slice(0, Math.min(4, room)).map((l) => (b.t === "eq" ? prettyMath(l) : l)), hh = lines.length * 11 * LH + 12;
           p.rects.push({ x: ind, y, w: tw, h: hh, r: 6, fill: "#F2F4F8" });
-          para(p, lines, ind + 8, y + 6, 11, INK, { font: "mono" });
+          para(p, lines, ind + 8, y + 6, 11, INK, b.t === "eq" ? { font: "serif", italic: true } : { font: "mono" });
           y += hh + 6;
           break;
         }

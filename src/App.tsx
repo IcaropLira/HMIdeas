@@ -1,3 +1,4 @@
+import { AudioDock, ExamBar, PomodoroClock, Presenter, ReviewModal } from "./components/Study";
 import { ZoomWriter } from "./components/ZoomWriter";
 import { useEffect } from "react";
 import { CanvasView } from "./components/CanvasView";
@@ -66,6 +67,11 @@ export default function App() {
       <FocusExit />
       <AlgoPlayer />
       <ZoomWriter />
+      <PomodoroClock />
+      <ReviewModal />
+      <ExamBar />
+      <Presenter />
+      <AudioDock />
       <BlockEditor />
       <BlockInlineEditor />
       <PageEditor />

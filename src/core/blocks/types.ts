@@ -39,7 +39,7 @@ export type BlockSpec =
   | { kind: "gantt"; title: string; periods: string[]; tasks: GanttTask[]; color: string }
   | { kind: "proscons"; title: string; pros: string[]; cons: string[]; color: string }
   // ---- estudos ----
-  | { kind: "flashcard"; front: string; back: string; flipped: boolean; color: string }
+  | { kind: "flashcard"; front: string; back: string; flipped: boolean; color: string; srs?: Srs }
   | { kind: "tape"; revealed: boolean; label: string; pattern: "stripes" | "solid" | "dots"; color: string }
   | { kind: "quiz"; question: string; options: string[]; answer: number; picked: number; color: string }
   | { kind: "steps"; title: string; items: string[]; color: string }
@@ -62,6 +62,9 @@ export type BlockSpec =
   | { kind: "sticker"; style: "emoji" | "badge" | "stamp" | "tape"; emoji: string; text: string; color: string; tilt: number }
   // ---- página (editor do Hiraku Comic Manager) ----
   | { kind: "page"; title: string; icon: string; md: string; pages: SubPage[]; color: string };
+
+/** Repetição espaçada (SM-2) de um flashcard: facilidade, intervalo em dias, acertos seguidos e próxima revisão (ms). */
+export interface Srs { ease: number; interval: number; reps: number; due: number; lapses: number }
 
 export type BlockKind = BlockSpec["kind"];
 export type SpecOf<K extends BlockKind> = Extract<BlockSpec, { kind: K }>;

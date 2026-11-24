@@ -102,6 +102,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   segurar no fim do traço = forma, rabisco apaga, canetas favoritas
 - [x] 0.13 (Aparência): editor de temas com cores por região, 17 temas prontos, importar/exportar, cantos, opacidade, contraste,
   animações, textura do papel, cor da mesa, cursor do tamanho do pincel, cores de seleção e guias
+- [x] 0.14 (Estudos): revisão de flashcards com repetição espaçada (SM-2), modo prova, Pomodoro, estatísticas, apresentação pelos
+  quadros e gravação de áudio sincronizada com os traços
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -476,3 +478,16 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   `--chrome`), `contrast` (`html.hc`), `anim` (`html.no-anim`), `texture`/`textureStrength` (`html[data-texture]` → véu `::after` no
   `.canvas-host`, nunca no documento), `desk`, `brushCursor`, `selColor`/`guideColor` (Renderer `setLook`/`drawBrushCursor`).
 - UI: aba Aparência das Configurações (`ThemeEditor`, `saveText` para exportar).
+
+### Estudos (0.14)
+- `core/study.ts` (puro): `sm2` (notas 0–3 → q 1/3/4/5; errei = 10 min e zera; difícil encurta, fácil alonga), `collectCards`/`dueCards`/
+  `applySrs` (caderno inteiro), `resetForExam`/`examScore`, estatísticas por dia (`addStat`, `lastDays`, `streak`, `cleanStats`),
+  `slideOrder` (quadros de 1º nível em linhas de leitura; títulos "1.", "2." mandam), áudio (`Recording`, `notYetWritten`, `markOf`,
+  `cleanRecordings`, `withRecording`/`withoutRecording`).
+- Documento: flashcard ganhou `srs?` (saneado no `clean` do bloco); `Page.recordings?` (data URL `data:audio/…` + marcas `{id, at}`).
+  `.hiraku` segue `version: 1`. Store: `editDoc(fn)` = mudança em várias páginas num passo (revisão grava tudo ao fechar).
+- UI `components/Study.tsx`: `useStudy` (estatísticas e Pomodoro em `hm-ideas:study-v1`), `ReviewModal` (Espaço mostra, 1–4 dá a nota,
+  Esc fecha), `ExamBar`, `PomodoroClock` (pílula; soma minutos de foco), `Presenter` (modo foco + câmera voa até cada quadro; setas/
+  Espaço/PageDown, Home/End, Esc), gravação (`MediaRecorder`, ~24 kbps; enquanto grava, todo elemento novo da página ganha a marca de
+  tempo) e `AudioDock` (reprodução: o que ainda não foi escrito fica apagado via evento `hm-ghosts` → `Renderer.setGhosts`; "Ir ao
+  selecionado" pula para quando o item foi escrito). Painel `study` no dock; comandos `study.*`.

@@ -3,12 +3,17 @@
 import { defineBlock } from "../def";
 import { BField, BLOCK_COLORS, INK, LH, MUTED, SOFT, arr, bool, cardBg, contentBody, contentItems, cycle, linesFit, mix, num, para, str, strs, wrap, TextMeasure } from "../kit";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cleanSrs = (v: any) => (v && Number.isFinite(v.due) && Number.isFinite(v.interval)
+  ? { ease: num(v.ease, 2.5, 1.3, 3.5), interval: num(v.interval, 0, 0, 36500), reps: Math.round(num(v.reps, 0, 0, 9999)), due: v.due, lapses: Math.round(num(v.lapses, 0, 0, 9999)) }
+  : undefined);
+
 // ---------------- flashcard ----------------
 export const flashcard = defineBlock({
   kind: "flashcard", label: "Flashcard", hint: "Frente e verso: um toque vira o cartão", behavior: "livre",
   make: () => ({ kind: "flashcard", front: "Capital da Austrália?", back: "Camberra", flipped: false, color: BLOCK_COLORS[5] }),
   size: () => ({ w: 300, h: 190 }),
-  clean: (r, color) => ({ kind: "flashcard", front: str(r.front), back: str(r.back), flipped: bool(r.flipped), color }),
+  clean: (r, color) => ({ kind: "flashcard", front: str(r.front), back: str(r.back), flipped: bool(r.flipped), color, ...(cleanSrs(r.srs) ? { srs: cleanSrs(r.srs) } : {}) }),
   draw(s, w, h, m, p) {
     const back = s.flipped;
     p.rects.push({ x: 6, y: 9, w: w - 6, h: h - 6, r: 14, fill: mix(s.color, back ? 0.6 : 0.75) });

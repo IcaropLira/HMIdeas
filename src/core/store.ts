@@ -57,6 +57,8 @@ interface DocState {
   setPageMeta: (id: ID, patch: Partial<Pick<Page, "bookmark" | "starred">>) => void;
   /** Insere uma página pronta (modelo) depois da atual e vai para ela. */
   insertPage: (page: Page) => void;
+  /** Mudança no caderno inteiro (várias páginas) num passo de desfazer. Devolver o mesmo doc = nada muda. */
+  editDoc: (fn: (d: HirakuDoc) => HirakuDoc) => void;
   undo: () => void;
   redo: () => void;
   loadDoc: (doc: HirakuDoc) => void;
@@ -229,6 +231,12 @@ export const useDoc = create<DocState>((set, get) => {
         if (!next.starred) delete next.starred;
         return next;
       }) });
+    },
+
+    editDoc: (fn) => {
+      const { doc } = get();
+      const next = fn(doc);
+      if (next !== doc) commit(next);
     },
 
     insertPage: (page) => {

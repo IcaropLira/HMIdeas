@@ -5,6 +5,7 @@
 // ajustar ou apagar um brush aqui não reescreve o que já foi desenhado. Arquivos antigos (sem `brush`/`dyn`)
 // abrem como "pen" e usam os valores atuais do brush registrado.
 import { StrokeDyn } from "./model";
+import { DEFAULT_TIP, DabTip, EngineCfg, cleanTip } from "./engine";
 
 /** Brush de contorno: o traço vira uma malha de triângulos de largura variável (sem triangulação de polígono). */
 export interface OutlineBrush {
@@ -39,6 +40,12 @@ export interface OutlineBrush {
   taperStart?: number;
   /** Curva de pressão (p^gamma). Padrão 1. */
   pressureCurve?: number;
+  /** Ponta (0.17): "auto" segue o motor; "ribbon"/"dab" fixam (marca-texto é sempre fita, aerógrafo sempre carimbo). */
+  render?: "auto" | "ribbon" | "dab";
+  /** Ponta de carimbos própria do pincel (sem ela, uma ponta redonda e firme). */
+  tip?: Partial<DabTip>;
+  /** Pressão → opacidade (pincéis de pintura). */
+  pressureOpacity?: number;
 }
 
 export type Brush = OutlineBrush;
@@ -47,17 +54,31 @@ export const DEFAULT_MIN_SIZE = 0.35;
 export const DEFAULT_TAPER_START = 0.5;
 export const DEFAULT_PRESSURE_CURVE = 1;
 
-/** Dinâmica "congelada" de um brush, para gravar no traço. */
-export const brushDyn = (b: Brush): StrokeDyn => ({
-  thinning: b.thinning,
-  simThinning: b.simThinning,
-  minSize: b.minSize ?? DEFAULT_MIN_SIZE,
-  smoothing: b.smoothing,
-  round: b.round,
-  taperStart: b.taperStart ?? DEFAULT_TAPER_START,
-  gamma: b.pressureCurve ?? DEFAULT_PRESSURE_CURVE,
-  blend: b.blend,
-});
+/**
+ * Dinâmica "congelada" de um brush, para gravar no traço. Com o motor (`cfg`), entram a curva, a entrada, a
+ * velocidade, a pós-correção e a ponta (fita ou carimbos). Sem motor = comportamento antigo (fita).
+ */
+export const brushDyn = (b: Brush, cfg?: EngineCfg): StrokeDyn => {
+  const base: StrokeDyn = {
+    thinning: b.thinning,
+    simThinning: b.simThinning,
+    minSize: b.minSize ?? DEFAULT_MIN_SIZE,
+    smoothing: b.smoothing,
+    round: b.round,
+    taperStart: b.taperStart ?? DEFAULT_TAPER_START,
+    gamma: b.pressureCurve ?? DEFAULT_PRESSURE_CURVE,
+    blend: b.blend,
+  };
+  if (!cfg) return base;
+  const render = b.render === "ribbon" || b.render === "dab" ? b.render : cfg.render;
+  return {
+    ...base,
+    // o motor "fluido" mantém a pós-suavização do pincel; os outros usam a pós-correção do motor
+    smoothing: cfg.postSmooth >= 0.45 ? Math.max(b.smoothing, cfg.postSmooth) : cfg.postSmooth,
+    curve: cfg.curve, rampIn: cfg.rampIn, speedSize: cfg.speedSize, render,
+    ...(render === "dab" ? { tip: cleanTip(b.tip ?? {}, { ...DEFAULT_TIP, roundness: b.round ? 1 : 0.35, follow: !b.round }), pressureOpacity: Math.max(b.pressureOpacity ?? 0, cfg.pressureOpacity) } : {}),
+  };
+};
 
 export const DEFAULT_BRUSH_ID = "pen";
 
@@ -95,7 +116,7 @@ const OUTLINE: OutlineBrush[] = [
   {
     kind: "outline", id: "highlighter", label: "Marca-texto",
     size: 5, thinning: 0, simThinning: 0, smoothing: 0.6, streamline: 0.3, taper: 0,
-    round: false, opacity: 0.4, blend: "multiply", defaultColor: "#F2C14E",
+    round: false, opacity: 0.4, blend: "multiply", defaultColor: "#F2C14E", render: "ribbon",
     hint: "Translúcido e sem tapar o que está por baixo. Girar ou cruzar o próprio traço não escurece nem preenche.",
   },
   {
@@ -103,6 +124,34 @@ const OUTLINE: OutlineBrush[] = [
     size: 1.8, thinning: 0.9, simThinning: 0.6, smoothing: 0.6, streamline: 0.3, taper: 0.7,
     round: true, opacity: 1, blend: "normal", minSize: 0.2, taperStart: 0.6,
     hint: "Caneta-pincel: bem sensível à pressão, com final longo e fino.",
+  },
+  {
+    kind: "outline", id: "pencil", label: "Lápis",
+    size: 1, thinning: 0.5, simThinning: 0.2, smoothing: 0.3, streamline: 0.1, taper: 0.3,
+    round: true, opacity: 0.9, blend: "normal", minSize: 0.45, render: "dab", pressureOpacity: 0.6,
+    tip: { spacing: 0.12, hardness: 0.55, flow: 0.55, jitter: 0.35 },
+    hint: "Lápis granulado: carimbos macios que escurecem com a pressão e acumulam ao passar de novo.",
+  },
+  {
+    kind: "outline", id: "airbrush", label: "Aerógrafo",
+    size: 8, thinning: 0.4, simThinning: 0, smoothing: 0.4, streamline: 0.2, taper: 0,
+    round: true, opacity: 1, blend: "normal", minSize: 0.5, render: "dab", pressureOpacity: 0.8,
+    tip: { spacing: 0.06, hardness: 0, flow: 0.06 },
+    hint: "Spray de borda macia: o fluxo baixo vai acumulando cor, como o aerógrafo do Photoshop e do Krita.",
+  },
+  {
+    kind: "outline", id: "calligraphy", label: "Caligrafia",
+    size: 2.2, thinning: 0.35, simThinning: 0, smoothing: 0.5, streamline: 0.25, taper: 0.2,
+    round: true, opacity: 1, blend: "normal", minSize: 0.5, render: "dab",
+    tip: { spacing: 0.05, hardness: 0.95, flow: 1, roundness: 0.22, angle: -40 },
+    hint: "Pena chata a 40°: fina na diagonal e grossa na outra direção, como uma pena de caligrafia.",
+  },
+  {
+    kind: "outline", id: "paint", label: "Pincel redondo",
+    size: 3, thinning: 0.8, simThinning: 0.3, smoothing: 0.35, streamline: 0.15, taper: 0.4,
+    round: true, opacity: 1, blend: "normal", minSize: 0.25, render: "dab", pressureOpacity: 0.35,
+    tip: { spacing: 0.08, hardness: 0.7, flow: 0.8 },
+    hint: "Pincel redondo de pintura (Krita/Photoshop): tamanho e opacidade pela pressão, borda levemente macia.",
   },
 ];
 

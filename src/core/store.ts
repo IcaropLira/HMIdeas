@@ -1,4 +1,5 @@
 import type { ElCategory } from "./handwriting";
+import { DEFAULT_ENGINE, EngineCfg, EngineId, cleanEngineCfg, engineDef } from "./engine";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
@@ -365,6 +366,9 @@ interface ToolState {
   holdShape: boolean;
   /** Rabiscar em vai-e-vem por cima de algo apaga. */
   scribbleErase: boolean;
+  /** Motor do pincel (0.17): perfil pronto ou "custom" (usa `engineCfg`). */
+  engine: EngineId;
+  engineCfg: EngineCfg;
   /** Fita: cor e padrão das novas. */
   tapeColor: string;
   tapePattern: "stripes" | "solid" | "dots";
@@ -419,6 +423,8 @@ export const useTool = create<ToolState>()(
       scribbleErase: true,
       tapeColor: "#F2B33D",
       tapePattern: "stripes",
+      engine: DEFAULT_ENGINE,
+      engineCfg: engineDef(DEFAULT_ENGINE).cfg,
       setTool: (tool) => set({ tool, picking: false }),
       setBrush: (id) => {
         const s = get();
@@ -471,7 +477,15 @@ export const useTool = create<ToolState>()(
         scribbleErase: s.scribbleErase,
         tapeColor: s.tapeColor,
         tapePattern: s.tapePattern,
+        engine: s.engine,
+        engineCfg: s.engineCfg,
       }),
     },
   ),
 );
+
+/** Configuração do motor ativo (perfil pronto ou personalizado). */
+export function activeEngineCfg(): EngineCfg {
+  const t = useTool.getState();
+  return t.engine === "custom" ? cleanEngineCfg(t.engineCfg) : engineDef(t.engine).cfg;
+}

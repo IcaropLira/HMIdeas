@@ -1,5 +1,6 @@
 // Opções contextuais da ferramenta ativa e da seleção. A mesma lógica aparece em dois formatos: "bar" (barra de opções
 // embaixo do menu, uma linha) e "panel" (painel Propriedades, empilhado).
+import { EnginePicker } from "./EnginePicker";
 import { FavPens } from "./FavPens";
 import { CATEGORIES, ElCategory } from "../core/handwriting";
 import { ReactNode } from "react";
@@ -112,6 +113,7 @@ export function ToolOptions({ mode }: { mode: Mode }) {
             {listBrushes().map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
           </select>
         </Field>
+        <Field label="Motor" mode={mode}>{mode === "bar" ? <EnginePicker compact /> : <EnginePicker />}</Field>
         <Field label="Favoritas" mode={mode}><FavPens compact={mode === "bar"} /></Field>
         <Field label="Cor" mode={mode}><Swatches label="Cor" value={t.color} onPick={(c) => c && applyColor(c, { remember: false })} more /></Field>
         <Field label="Espessura" mode={mode}><Range label="Espessura" value={t.width} min={1} max={14} step={0.5} onChange={(v) => t.set({ width: v })} fmt={(v) => `${v}`} /></Field>

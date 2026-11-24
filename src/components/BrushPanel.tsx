@@ -4,9 +4,11 @@ import {
   customBrushes, deleteCustomBrush, duplicateBrush, importBrushes, parseBrushPack, saveCustomBrushes,
   serializeBrushPack, serializeBrushPreset,
 } from "../core/brushPresets";
-import { useTool } from "../core/store";
+import { activeEngineCfg, useTool } from "../core/store";
 import { useUI } from "../core/ui";
 import { BrushPreview } from "./BrushPreview";
+import { EnginePicker } from "./EnginePicker";
+import { DEFAULT_TIP, DabTip } from "../core/engine";
 
 function downloadPreset(filename: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: "application/json;charset=utf-8" }));
@@ -88,12 +90,16 @@ export function BrushPanel() {
     }
   };
 
+  const cfg = activeEngineCfg();
+  const tip = { ...DEFAULT_TIP, ...current.tip };
+  const patchTip = (p: Partial<DabTip>) => patch({ tip: { ...current.tip, ...p } });
   const minSize = current.minSize ?? DEFAULT_MIN_SIZE;
   const taperStart = current.taperStart ?? DEFAULT_TAPER_START;
   const curve = current.pressureCurve ?? DEFAULT_PRESSURE_CURVE;
 
   return (
     <div className="panel brushpanel" role="dialog" aria-label="Pincéis">
+      <EnginePicker />
       <div className="brushes" role="radiogroup" aria-label="Pincel">
         {brushes.map((b) => (
           <button
@@ -107,7 +113,7 @@ export function BrushPanel() {
               t.setTool("pen");
             }}
           >
-            <BrushPreview brush={b} color={t.color} width={t.width} sens={t.pressureSens} taper={t.taper} opacity={t.opacity} />
+            <BrushPreview brush={b} color={t.color} width={t.width} sens={t.pressureSens} taper={t.taper} opacity={t.opacity} cfg={cfg} />
             <span>{b.label}</span>
           </button>
         ))}
@@ -155,6 +161,24 @@ export function BrushPanel() {
               <button role="radio" aria-checked={current.round} className={current.round ? "chip on" : "chip"} onClick={() => patch({ round: true })}>Redondas</button>
               <button role="radio" aria-checked={!current.round} className={!current.round ? "chip on" : "chip"} onClick={() => patch({ round: false })}>Retas</button>
             </div>
+            <div className="row" role="radiogroup" aria-label="Ponta do pincel">
+              <span className="rowlabel">Ponta</span>
+              {([["auto", "Do motor"], ["ribbon", "Fita"], ["dab", "Carimbos"]] as const).map(([v, l]) => (
+                <button key={v} role="radio" aria-checked={(current.render ?? "auto") === v} className={(current.render ?? "auto") === v ? "chip on" : "chip"} onClick={() => patch({ render: v })}>{l}</button>
+              ))}
+            </div>
+            {(current.render === "dab" || ((current.render ?? "auto") === "auto" && cfg.render === "dab")) && (
+              <>
+                <Slider label="Espaçamento" value={tip.spacing} min={0.02} max={1} step={0.01} onChange={(v) => patchTip({ spacing: v })} hint="Distância entre carimbos (fração do diâmetro)" />
+                <Slider label="Dureza da borda" value={tip.hardness} min={0} max={1} step={0.05} onChange={(v) => patchTip({ hardness: v })} />
+                <Slider label="Fluxo" value={tip.flow} min={0.02} max={1} step={0.02} onChange={(v) => patchTip({ flow: v })} hint="Opacidade de cada carimbo: baixo acumula como aerógrafo" />
+                <Slider label="Arredondamento" value={tip.roundness} min={0.1} max={1} step={0.05} onChange={(v) => patchTip({ roundness: v })} hint="Menor = ponta achatada (caligrafia)" />
+                <Slider label="Ângulo da ponta" value={tip.angle} min={-90} max={90} step={5} fmt={(v) => `${v}°`} onChange={(v) => patchTip({ angle: v })} />
+                <Slider label="Variação de tamanho" value={tip.jitter} min={0} max={1} step={0.05} onChange={(v) => patchTip({ jitter: v })} />
+                <Slider label="Pressão → opacidade" value={current.pressureOpacity ?? 0} min={0} max={1} step={0.05} onChange={(v) => patch({ pressureOpacity: v })} />
+                <div className="row"><button className={tip.follow ? "chip on" : "chip"} aria-pressed={tip.follow} onClick={() => patchTip({ follow: !tip.follow })}>Ponta gira com o traço</button></div>
+              </>
+            )}
             <Slider label="Opacidade do pincel" value={current.opacity} min={0.05} max={1} step={0.05} onChange={(v) => patch({ opacity: v })} />
             <div className="row" role="radiogroup" aria-label="Mistura">
               <span className="rowlabel">Mistura</span>

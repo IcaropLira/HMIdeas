@@ -141,7 +141,7 @@ export class InputController {
     if (e.pointerType === "touch") {
       // Rejeição de palma: se a caneta acabou de ser usada, toque é ignorado.
       if (e.timeStamp - this.lastPenTime < PALM_REJECT_MS && this.mode !== "pinch") return;
-      this.el.setPointerCapture(e.pointerId);
+      try { this.el.setPointerCapture(e.pointerId); } catch { /* ponteiro já solto (toque muito rápido) */ }
       this.touches.set(e.pointerId, { x: s.x, y: s.y });
 
       if (this.touches.size >= 2) {
@@ -159,7 +159,7 @@ export class InputController {
     }
 
     // Mouse / caneta
-    this.el.setPointerCapture(e.pointerId);
+    try { this.el.setPointerCapture(e.pointerId); } catch { /* ponteiro já solto (toque muito rápido) */ }
     this.rightStart = e.button === 2 ? { x: e.clientX, y: e.clientY } : null;
     const wantsPan =
       e.button === 1 || e.button === 2 || this.spaceDown || this.cfg.getTool() === "hand";

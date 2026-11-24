@@ -32,7 +32,11 @@ export function isBrushPreset(value: unknown): value is Brush {
     // campos opcionais (presets v1 mais antigos não os têm; completam com os padrões)
     (value.minSize === undefined || isUnit(value.minSize)) &&
     (value.taperStart === undefined || isUnit(value.taperStart)) &&
-    (value.pressureCurve === undefined || (typeof value.pressureCurve === "number" && Number.isFinite(value.pressureCurve) && value.pressureCurve >= 0.2 && value.pressureCurve <= 5));
+    (value.pressureCurve === undefined || (typeof value.pressureCurve === "number" && Number.isFinite(value.pressureCurve) && value.pressureCurve >= 0.2 && value.pressureCurve <= 5)) &&
+    // 0.17: ponta (fita/carimbos) — a ponta é saneada de novo ao usar (cleanTip)
+    (value.render === undefined || value.render === "auto" || value.render === "ribbon" || value.render === "dab") &&
+    (value.tip === undefined || isRecord(value.tip)) &&
+    (value.pressureOpacity === undefined || isUnit(value.pressureOpacity));
 }
 
 /** Aceita um preset único ou um pacote JSON exportado pelo HMIdeas. */

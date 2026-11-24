@@ -38,6 +38,16 @@ export interface StrokeDyn {
   /** Curva da pressão: p^gamma (1 = linear; >1 exige mais força para engrossar). */
   gamma: number;
   blend: "normal" | "multiply";
+  /** 0.17 (motores): curva da pressão, entrada (rampa por distância), velocidade → espessura com caneta. */
+  curve?: "linear" | "soft" | "firm" | "s";
+  rampIn?: number;
+  speedSize?: number;
+  /** Ponta: fita vetorial (padrão) ou carimbos. */
+  render?: "ribbon" | "dab";
+  /** Carimbos: espaçamento, dureza, fluxo, arredondamento, ângulo, girar com o traço, variação de tamanho. */
+  tip?: { spacing: number; hardness: number; flow: number; roundness: number; angle: number; follow: boolean; jitter: number };
+  /** Pressão → opacidade dos carimbos (0..1). */
+  pressureOpacity?: number;
 }
 
 /**

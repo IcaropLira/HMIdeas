@@ -50,6 +50,8 @@ export interface ElementMeta {
   locked?: boolean;
   invisible?: boolean;
   name?: string;
+  /** Link interno (0.15): leva a outra página (e, se houver, a um elemento dela). */
+  linkTo?: { page: ID; el?: ID };
 }
 
 export interface StrokeElement extends ElementMeta {
@@ -436,6 +438,8 @@ export interface Page {
   starred?: boolean;
   /** Áudios gravados nesta página, com a marca de tempo de cada traço escrito durante a gravação (0.14). */
   recordings?: Recording[];
+  /** Página "mãe" quando esta é um quadro aninhado (0.15): mostra o caminho de volta. */
+  parentPage?: ID;
 }
 
 export interface HirakuDoc {
@@ -637,9 +641,15 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       bookmark: typeof p.bookmark === "string" && /^#[0-9a-fA-F]{6}$/.test(p.bookmark) ? p.bookmark : undefined,
       starred: p.starred === true ? true : undefined,
       recordings: cleanRecordings(p.recordings),
+      parentPage: typeof p.parentPage === "string" && p.parentPage ? p.parentPage : undefined,
     })),
   };
 }
+
+/** Link interno saneado (0.15). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const cleanLinkTo = (v: any): { page: ID; el?: ID } | undefined =>
+  v && typeof v.page === "string" && v.page ? { page: v.page, ...(typeof v.el === "string" && v.el ? { el: v.el } : {}) } : undefined;
 
 /** Campos comuns (0.9): grupo, travado, invisível, nome. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -650,5 +660,7 @@ const cleanMeta = (e: any): HirakuElement => {
   if (out.invisible !== true) delete out.invisible;
   if (typeof out.name === "string" && out.name.trim()) out.name = out.name.trim().slice(0, 80);
   else delete out.name;
+  const lt = cleanLinkTo(out.linkTo);
+  if (lt) out.linkTo = lt; else delete out.linkTo;
   return out;
 };

@@ -104,6 +104,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   animações, textura do papel, cor da mesa, cursor do tamanho do pincel, cores de seleção e guias
 - [x] 0.14 (Estudos): revisão de flashcards com repetição espaçada (SM-2), modo prova, Pomodoro, estatísticas, apresentação pelos
   quadros e gravação de áudio sincronizada com os traços
+- [x] 0.15 (Organização visual): quadros aninhados, modo tópicos do mapa, links internos e referências, grafo do caderno,
+  conversões (mapa ↔ lista/tarefas/kanban, textos → mapa), isolamento, organizar em grade por propriedade, selecionar parecidos
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -491,3 +493,17 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   Espaço/PageDown, Home/End, Esc), gravação (`MediaRecorder`, ~24 kbps; enquanto grava, todo elemento novo da página ganha a marca de
   tempo) e `AudioDock` (reprodução: o que ainda não foi escrito fica apagado via evento `hm-ghosts` → `Renderer.setGhosts`; "Ir ao
   selecionado" pula para quando o item foi escrito). Painel `study` no dock; comandos `study.*`.
+
+### Organização visual (0.15)
+- `core/organize.ts` (puro): `applyOutline` (reescreve um mapa a partir da lista REAPROVEITANDO os nós na ordem de leitura — estilos,
+  notas e setas ligadas ficam; sobras são apagadas e as setas soltam a ponta), links (`allLinks`, `backlinks`, `elementLabel`),
+  `notebookGraph` (força determinística), `sortUnits`/`gridSlots` (organizar), `selectByProperty` (`PROP_KEYS`).
+- Documento: `ElementMeta.linkTo?` ({page, el?}; `cleanLinkTo` em `model.ts` para não criar ciclo de import), `Page.parentPage?`,
+  bloco `board` (`defs/layouts.ts`: título, `pageId`, nota; toque em "Abrir" → `openBoard`, que cria a página se faltar).
+  `.hiraku` segue `version: 1`.
+- `core/organizeActions.ts`: quadros aninhados (`insertBoard`, `selectionToBoard`, `goUp`, `breadcrumb`), links (`copyLink`/`pasteLink`/
+  `linkToPage`/`removeLink`/`followLink`/`goTo`, área de transferência própria `useLinkClip`), isolamento (`toggleIsolate`: `setIsolation`
+  em `core/layers.ts` filtra `interactiveElements` e o resto fica apagado via `hm-ghosts`; trocar de página sai), conversões e `selectSame`.
+  `arrangeSelection` (em `alignActions.ts`, usa as unidades da seleção).
+- UI `components/Organize.tsx`: `OrgBar` (trilha, isolamento, ↗ seguir link), `OutlineModal` (Tab/Shift+Tab mudam o nível, Ctrl+Enter
+  aplica), `GraphView` e painel `organize`. `CanvasView` guarda os "fantasmas de fora" (`extGhosts`) e os devolve depois da borracha.

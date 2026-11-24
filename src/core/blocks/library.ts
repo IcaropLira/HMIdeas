@@ -87,6 +87,7 @@ export const LIBRARY: LibItem[] = [
 
   // ---- estudos ----
   { id: "flashcard", label: "Flashcard", cat: "estudos", kind: "flashcard", keys: "frente e verso cartão" },
+  { id: "board", label: "Quadro aninhado", cat: "layouts", kind: "board", keys: "subquadro sub-quadro dentro página link navegar" },
   { id: "tape", label: "Fita (esconder)", cat: "estudos", kind: "tape", keys: "esconder revelar ocultar memorizar prova" },
   { id: "quiz", label: "Múltipla escolha", cat: "estudos", kind: "quiz", keys: "questão teste" },
   { id: "exercise", label: "Exercício", cat: "estudos", kind: "exercise", keys: "questão discursiva resolução" },

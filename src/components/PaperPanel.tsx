@@ -17,7 +17,7 @@ export function PaperSwatch({ kind, bg, line, scale = 1, w = 96, h = 64, zoom = 
       <rect width={w} height={h} fill={bg} />
       {p.thin && <path d={p.thin} stroke={color} strokeOpacity={layerAlpha(0, dark) * 1.6} strokeWidth={0.8} fill="none" />}
       {p.bold && <path d={p.bold} stroke={color} strokeOpacity={layerAlpha(1, dark) * 1.4} strokeWidth={0.9} fill="none" />}
-      {p.accent && <path d={p.accent} stroke={kind === "margin" ? MARGIN_COLOR : color} strokeOpacity={0.8} strokeWidth={1.2} fill="none" />}
+      {p.accent && <path d={p.accent} stroke={kind === "margin" || kind === "header" || kind === "cornell" ? MARGIN_COLOR : color} strokeOpacity={0.8} strokeWidth={1.2} fill="none" />}
       {p.dots && <path d={p.dots} fill={color} fillOpacity={layerAlpha("dot", dark) * 1.5} />}
     </svg>
   );

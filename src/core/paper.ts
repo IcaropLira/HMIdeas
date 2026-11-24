@@ -15,7 +15,13 @@ export interface PaperSink {
 export interface PaperOpts {
   /** Multiplicador do espaçamento (0.5 = apertado, 2 = largo). */
   scale: number;
+  /** Altura da folha (caderno com páginas): o Cornell põe o resumo no rodapé. */
+  sheetH?: number;
 }
+
+/** Faixa de cabeçalho (Cornell / Cabeçalho e margem) e coluna de palavras-chave do Cornell, em unidades do mundo. */
+export const HEADER_Y = 108;
+export const CUE_X = 210;
 
 /** Cor das linhas: escura sobre papel claro, clara sobre papel escuro (lousa, preto, azul-marinho…). */
 export function autoLineColor(bg: string): string {
@@ -74,14 +80,35 @@ export function drawPaperPattern(kind: PaperKind, cam: Camera, W: number, H: num
   const s = Math.max(0.25, Math.min(4, opts.scale || 1));
   if (kind === "blank") return;
 
-  if (kind === "ruled" || kind === "margin") {
+  if (kind === "ruled" || kind === "margin" || kind === "header" || kind === "cornell") {
     const step = lod(36 * s, zoom, 9);
     const sp = step * zoom;
-    for (let sy = first(y, sp); sy < H + sp; sy += sp) sink.line(0, sy, W, sy, 0);
-    if (kind === "margin") {
-      const mx = MARGIN_X * zoom + x;
-      if (mx > -2 && mx < W + 2) sink.line(mx, 0, mx, H, 2);
+    const top = kind === "ruled" || kind === "margin" ? -Infinity : HEADER_Y * zoom + y; // sem pauta no cabeçalho
+    for (let sy = first(y, sp); sy < H + sp; sy += sp) if (sy > top + 1) sink.line(0, sy, W, sy, 0);
+    if (kind !== "ruled") {
+      const mx = (kind === "cornell" ? CUE_X : MARGIN_X) * zoom + x;
+      const y0 = Math.max(0, kind === "margin" ? 0 : top);
+      if (mx > -2 && mx < W + 2 && y0 < H) sink.line(mx, y0, mx, H, 2);
     }
+    if (kind === "header" || kind === "cornell") {
+      if (top > -2 && top < H + 2) sink.line(0, top, W, top, 2);
+      if (kind === "cornell" && opts.sheetH) {
+        const by = (opts.sheetH - 220) * zoom + y; // resumo: os últimos ~220 do mundo
+        if (by > -2 && by < H + 2) sink.line(0, by, W, by, 2);
+      }
+    }
+    return;
+  }
+
+  if (kind === "calligraphy") {
+    // blocos de 4 linhas (ascendente, altura-x, base, descendente) + guias inclinadas a ~65°
+    const block = 96 * s;
+    if (block * zoom < 10) return;
+    const sp = block * zoom;
+    const offs: [number, PaperLayer][] = [[0, 0], [0.3, 0], [0.62, 1], [0.86, 0]];
+    for (let sy = first(y, sp); sy < H + sp; sy += sp) for (const [o, l] of offs) sink.line(0, sy + o * sp, W, sy + o * sp, l);
+    const g = lod(48 * s, zoom, 16) * zoom;
+    family(cam, W, H, 0.44, g * Math.cos(0.44), sink, 0);
     return;
   }
 
@@ -175,12 +202,15 @@ export function drawPaperPattern(kind: PaperKind, cam: Camera, W: number, H: num
 export function paperSvgPaths(kind: PaperKind, W: number, H: number, scale: number, zoom = 0.55): { thin: string; bold: string; accent: string; dots: string } {
   const p = { thin: "", bold: "", accent: "", dots: "" };
   const f = (v: number) => v.toFixed(1);
-  drawPaperPattern(kind, { x: W / 2, y: H / 2, zoom }, W, H, {
+  // Cornell/cabeçalho: a prévia mostra o canto de cima da folha (cabeçalho, coluna e resumo), não o meio do mundo.
+  const top = kind === "cornell" || kind === "header";
+  const cam = top ? { x: kind === "cornell" ? W * 0.32 - CUE_X * zoom : W * 0.14 - MARGIN_X * zoom, y: H * 0.2 - HEADER_Y * zoom, zoom } : { x: W / 2, y: H / 2, zoom };
+  drawPaperPattern(kind, cam, W, H, {
     line(x1, y1, x2, y2, layer) {
       const d = `M${f(x1)} ${f(y1)}L${f(x2)} ${f(y2)}`;
       if (layer === 0) p.thin += d; else if (layer === 1) p.bold += d; else p.accent += d;
     },
     dot(x, y, r) { p.dots += `M${f(x - r)} ${f(y)}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`; },
-  }, { scale });
+  }, { scale, sheetH: top ? (H * 0.8 - cam.y) / zoom + 220 : undefined });
   return p;
 }

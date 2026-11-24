@@ -344,7 +344,7 @@ export const isShape = (el: HirakuElement): el is ShapeElement => (SHAPE_TYPES a
 export const isNode = (el: HirakuElement): el is NodeElement => el.type === "node";
 export const isFrame = (el: HirakuElement): el is FrameElement => el.type === "frame";
 
-export type PaperKind = "blank" | "ruled" | "margin" | "grid" | "mm" | "dots" | "iso" | "isodots" | "hex" | "music" | "cartesian";
+export type PaperKind = "blank" | "ruled" | "margin" | "grid" | "mm" | "dots" | "iso" | "isodots" | "hex" | "music" | "cartesian" | "cornell" | "header" | "calligraphy";
 
 export const PAPER_KINDS: { id: PaperKind; label: string; hint: string }[] = [
   { id: "blank", label: "Liso", hint: "Folha sem linhas" },
@@ -358,6 +358,9 @@ export const PAPER_KINDS: { id: PaperKind; label: string; hint: string }[] = [
   { id: "hex", label: "Hexagonal", hint: "Colmeia (química, jogos, mapas)" },
   { id: "music", label: "Pauta musical", hint: "Pentagramas de 5 linhas" },
   { id: "cartesian", label: "Plano cartesiano", hint: "Quadriculado com eixos x e y na origem" },
+  { id: "cornell", label: "Cornell", hint: "Cabeçalho, coluna de palavras-chave e resumo no rodapé" },
+  { id: "header", label: "Cabeçalho e margem", hint: "Pautado com faixa de título e margem" },
+  { id: "calligraphy", label: "Caligrafia", hint: "Linhas de ascendente, altura-x, base e descendente com guias inclinadas" },
 ];
 
 export const DEFAULT_BACKGROUND = "#EDF0F4";
@@ -426,6 +429,10 @@ export interface Page {
   elements: HirakuElement[];
   /** Grupos (hierarquia livre). Ausente = nenhum. */
   groups?: Group[];
+  /** Marcador colorido (fita na lateral da página; aparece no índice). Ausente = sem marcador. */
+  bookmark?: string;
+  /** Página favorita. */
+  starred?: boolean;
 }
 
 export interface HirakuDoc {
@@ -623,6 +630,8 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
           ).map(cleanMeta)
         : [],
       groups: cleanGroups(p.groups),
+      bookmark: typeof p.bookmark === "string" && /^#[0-9a-fA-F]{6}$/.test(p.bookmark) ? p.bookmark : undefined,
+      starred: p.starred === true ? true : undefined,
     })),
   };
 }

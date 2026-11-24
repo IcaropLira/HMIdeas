@@ -96,6 +96,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [ ] 0.9.1: validar no tablet arrastar bloquinhos com a caneta/dedo (limiar de 12 px) sem disparar a ferramenta
 - [x] 0.10 (Ferramentas): ferramentas temporárias (segurar tecla, Ctrl = Selecionar, Alt = conta-gotas), presets, favoritas,
   recentes, histórico de ajustes, macros/sequências, busca por intenção na paleta (com blocos e sugestões)
+- [x] 0.11 (Cadernos): pastas e capas (cor, degradê, padrão, título) na Home, papéis Cornell/cabeçalho/caligrafia (+ partitura),
+  modelos de página do usuário, arrastar páginas para reordenar, girar folha, índice automático, páginas favoritas e marcadores
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -430,3 +432,18 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - Busca: `core/search.ts` (sem acento, sem palavras vazias, plural→singular, metade das palavras basta) + `keywords` nos comandos
   (`KEYWORDS`). A paleta mostra recentes + sugestões pelo contexto quando vazia e blocos da biblioteca nos resultados.
 - UI: `components/QuickPanel.tsx` (painel "Acesso rápido" e item da barra).
+
+### Cadernos (0.11)
+- `core/notebook.ts` (puro): `reorderPages`, `rotatePage` (só folhas de tamanho fixo: troca w/h), índice (`pageHeadings`: textos com
+  fonte ≥ 22 ou negrito ≥ 18, quadros, raízes de mapa; `buildIndex`/`filterIndex`), modelos de página (`pageToTemplate`/`pageFromTemplate`
+  recriam ids de elementos, camadas e grupos), pastas/capas da Home (`Folder`, `Cover`, `coverCss`, `cleanCover`/`cleanFolders`).
+- `Page.bookmark` (#hex) e `Page.starred` são opcionais (saneados em `normalizeDoc`; `.hiraku` segue `version: 1`). Store: `reorderPage`,
+  `rotatePage`, `setPageMeta`, `insertPage` (todos desfazíveis).
+- Papéis novos: `cornell`, `header`, `calligraphy` (`HEADER_Y`, `CUE_X`; o resumo do Cornell usa `PaperOpts.sheetH`, passado pelo Renderer).
+  A prévia (`paperSvgPaths`) desses mostra o canto de cima da folha.
+- Modelos de página do usuário: `core/pageTemplateStore.ts` (localStorage `hm-ideas:page-templates-v1`, até 60; falta de espaço vira aviso).
+  Aparecem no menu ⋯ da barra de páginas e na linha "Novo caderno" da Home.
+- Barra lateral (`components/Pages.tsx`): abas Páginas/Índice; arrastar a miniatura reordena (mouse: 6 px; caneta/dedo: segurar 300 ms,
+  senão a lista rola); menu ⋯ (renomear, subir/descer, girar, favoritar, marcador, modelos); `goToElement` centraliza um título do índice.
+- Home: pastas em localStorage (`hm-ideas:folders-v1`); o caderno guarda `folder` e `cover` no registro do IndexedDB (não no documento).
+  Arrastar um cartão (HTML5 drag, mouse) para a pasta move; no toque use ⋯ → Mover para.

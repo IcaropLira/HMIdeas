@@ -1,3 +1,4 @@
+import { GraphView, OrgBar, OutlineModal } from "./components/Organize";
 import { AudioDock, ExamBar, PomodoroClock, Presenter, ReviewModal } from "./components/Study";
 import { ZoomWriter } from "./components/ZoomWriter";
 import { useEffect } from "react";
@@ -72,6 +73,9 @@ export default function App() {
       <ExamBar />
       <Presenter />
       <AudioDock />
+      <OrgBar />
+      <OutlineModal />
+      <GraphView />
       <BlockEditor />
       <BlockInlineEditor />
       <PageEditor />

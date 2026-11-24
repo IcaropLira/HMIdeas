@@ -78,7 +78,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
       toolbar: makeLayout({ bottom: [["select", "pen", "text", "eraser", "hand"], ["shape", "line", "options", "quick"], ["blocks", "insert"]] }),
       dock: dockOf({
         left: { size: 280, stacks: [{ panels: ["objects", "layers"], size: 1 }] },
-        right: { size: 290, stacks: [{ panels: ["align"], size: 1.2 }, { panels: ["transform", "props"], size: 1 }] },
+        right: { size: 290, stacks: [{ panels: ["organize", "align"], size: 1.2 }, { panels: ["transform", "props"], size: 1 }] },
       }),
     }),
   },

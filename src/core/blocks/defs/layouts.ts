@@ -251,4 +251,32 @@ export const sticker = defineBlock({
   fromContent: (c, color) => ({ kind: "sticker", style: "badge", emoji: "", text: (c.title || contentItems(c)[0] || "OK").slice(0, 30), color, tilt: -4 }),
 });
 
-export const LAYOUTS = [profile, media, project, section, brace, sheet, sticker];
+// ---------------- quadro aninhado (abre outra página do caderno) ----------------
+export const board = defineBlock({
+  kind: "board", label: "Quadro aninhado", hint: "Um quadro dentro do quadro: toque em Abrir para entrar", behavior: "relacional",
+  make: () => ({ kind: "board", title: "Novo quadro", pageId: "", note: "", color: BLOCK_COLORS[2] }),
+  size: () => ({ w: 260, h: 170 }),
+  clean: (r, color) => ({ kind: "board", title: str(r.title).slice(0, 80), pageId: str(r.pageId).slice(0, 80), note: str(r.note).slice(0, 400), color }),
+  draw(s, w, h, m, p) {
+    p.rects.push({ x: 8, y: 8, w: w - 8, h: h - 8, r: 14, fill: mix(s.color, 0.72) });
+    p.rects.push({ x: 4, y: 4, w: w - 8, h: h - 8, r: 14, fill: mix(s.color, 0.86) });
+    cardBg(p, w - 8, h - 8, 14);
+    // miniatura de "quadro": três cartõezinhos
+    const gx = 16, gy = 16;
+    p.rects.push({ x: gx, y: gy, w: 40, h: 28, r: 5, fill: mix(s.color, 0.6) });
+    p.rects.push({ x: gx + 46, y: gy + 10, w: 30, h: 22, r: 5, fill: mix(s.color, 0.78) });
+    p.lines.push({ pts: [{ x: gx + 40, y: gy + 14 }, { x: gx + 46, y: gy + 20 }], color: mix(s.color, -0.2), width: 1.5 });
+    para(p, wrap(s.title || "Quadro", w - 40, 17, m, "sans", true).slice(0, 2), 16, 58, 17, INK, { bold: true });
+    if (s.note && h > 130) para(p, wrap(s.note, w - 40, 12, m).slice(0, Math.max(0, linesFit(h - 130, 12))), 16, 102, 12, MUTED);
+    p.rects.push({ x: w - 98, y: h - 46, w: 80, h: 28, r: 14, fill: s.color });
+    p.texts.push({ x: w - 58, y: h - 40, text: s.pageId ? "Abrir ↗" : "Criar ↗", size: 13, color: onColor(s.color), bold: true, align: "center" });
+    p.hits.push({ action: "board", index: 0, x: w - 104, y: h - 52, w: 92, h: 40 });
+  },
+  fields: (_s, w) => [{ key: "title", x: 16, y: 56, w: w - 40, h: 44, size: 17, bold: true, color: INK, bg: "#FFFFFF", multiline: false }],
+  form: [{ t: "text", key: "title", label: "Nome do quadro" }, { t: "area", key: "note", label: "Descrição", rows: 3 }],
+  text: (s) => `${s.title}\n${s.note}`,
+  toContent: (s) => ({ title: s.title, text: s.note }),
+  fromContent: (c, color) => ({ kind: "board", title: c.title || "Quadro", pageId: "", note: c.text ?? "", color }),
+});
+
+export const LAYOUTS = [profile, media, project, section, brace, sheet, sticker, board];

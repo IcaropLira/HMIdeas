@@ -9,6 +9,7 @@ import { HirakuElement, Page } from "./model";
 import { Xform, applyXform, elementBounds, moveXform } from "./selection";
 import { selectActivePage, useDoc, useSel, useView } from "./store";
 import { useUI } from "./ui";
+import { SortKey, gridSlots, sortUnits } from "./organize";
 
 const page = (): Page => selectActivePage(useDoc.getState());
 
@@ -165,4 +166,17 @@ export function flipSelection(axis: Axis) {
     ? { m: { a: -1, b: 0, c: 0, d: 1, e: 2 * cx, f: 0 }, sx: -1, sy: 1, dAngle: 0 }
     : { m: { a: 1, b: 0, c: 0, d: -1, e: 0, f: 2 * cy }, sx: 1, sy: -1, dAngle: 0 };
   applyPer(p, [{ box: u, ids: list.flatMap((it) => it.ids) }], () => xf);
+}
+
+/** Organizar automaticamente (0.15): ordena as unidades pela propriedade e as põe em grade a partir do canto da seleção. */
+export function arrangeSelection(key: SortKey, cols?: number, gap = 24) {
+  const p = page();
+  const list = items(p);
+  if (!need(2, "Selecione dois ou mais objetos para organizar.", list)) return;
+  const byId = new Map(p.elements.map((e) => [e.id, e]));
+  const units = list.map((it, i) => ({ id: String(i), els: it.ids.map((id) => byId.get(id)!).filter(Boolean), it }));
+  const sorted = sortUnits(units, key).map((u) => u.it);
+  const u = unionBox(sorted.map((x) => x.box))!;
+  const slots = gridSlots(sorted.map((x) => ({ w: x.box.maxX - x.box.minX, h: x.box.maxY - x.box.minY })), u.minX, u.minY, gap, cols);
+  moves(p, sorted, sorted.map((x, i) => ({ dx: slots[i].x - x.box.minX, dy: slots[i].y - x.box.minY })));
 }

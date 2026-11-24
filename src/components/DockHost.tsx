@@ -2,6 +2,7 @@
 // divisórias redimensionáveis, recolher em ícones e indicadores de encaixe durante o arraste. O estado é o
 // DockLayout do workspace ativo (core/docking.ts, puro); aqui só se desenha e se traduzem gestos em operações.
 import { StudyPanel } from "./Study";
+import { OrganizePanel } from "./Organize";
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   DockLayout, DropTarget, ICON_STRIP, PanelId, SIDES, Side, areaExtent, closeContainer, closePanel, dropPanels, isVerticalSide,
@@ -27,6 +28,7 @@ import { OptionsBar } from "./ToolOptions";
 import { StatusBar } from "./StatusBar";
 
 export const PANEL_ICON: Record<PanelId, ReactNode> = {
+  organize: <><rect x="3.5" y="4" width="7" height="7" rx="1.5" /><rect x="13.5" y="13" width="7" height="7" rx="1.5" /><path d="M10.5 7.5h3a3 3 0 013 3V13" /></>,
   study: <><path d="M3 8l9-4 9 4-9 4-9-4z" /><path d="M7 10v5c0 1.5 2.2 3 5 3s5-1.5 5-3v-5" /></>,
   quick: <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />,
   tools: <path d="M5 3l14 7-6 2-2 6L5 3z" />,
@@ -52,6 +54,7 @@ function PanelView({ id }: { id: PanelId }) {
   switch (id) {
     case "quick": return <QuickPanel />;
     case "study": return <StudyPanel />;
+    case "organize": return <OrganizePanel />;
     case "tools": return <ToolsPanel />;
     case "props": return <PropsPanel />;
     case "transform": return <TransformPanel />;

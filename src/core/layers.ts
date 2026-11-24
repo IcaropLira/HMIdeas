@@ -12,7 +12,15 @@ export function layerIdOf(page: Pick<Page, "layers">, el: HirakuElement): ID {
   return layers[0]?.id ?? "";
 }
 
-const interactiveCache = new WeakMap<Page, HirakuElement[]>();
+let interactiveCache = new WeakMap<Page, HirakuElement[]>();
+
+/** Modo isolamento (0.15): só estes ids (e o que vier junto) podem ser tocados. null = desligado. UI, fora do desfazer. */
+let isolated: Set<ID> | null = null;
+export const isolation = () => isolated;
+export function setIsolation(ids: Iterable<ID> | null) {
+  isolated = ids ? new Set(ids) : null;
+  interactiveCache = new WeakMap(); // a lista "tocável" muda
+}
 /**
  * Elementos que o usuário pode tocar: em camadas visíveis e destravadas. Selecionar, laço, borracha e texto usam esta
  * lista; o desenho usa todas. Cacheado pela página (imutável).
@@ -23,9 +31,10 @@ export function interactiveElements(page: Page): HirakuElement[] {
   const off = new Set((page.layers ?? []).filter((l) => !l.visible || l.locked).map((l) => l.id));
   // também ficam de fora objetos travados/ocultos (por eles mesmos ou pelo grupo)
   const flagged = page.elements.some((e) => e.locked || e.invisible) || (page.groups ?? []).some((g) => g.locked || g.hidden);
-  const out = off.size || flagged
+  let out = off.size || flagged
     ? page.elements.filter((e) => !off.has(layerIdOf(page, e)) && !(flagged && (isLockedEl(page, e) || isHiddenEl(page, e))))
     : page.elements;
+  if (isolated) { const iso = isolated; out = out.filter((e) => iso.has(e.id)); }
   interactiveCache.set(page, out);
   return out;
 }

@@ -118,6 +118,8 @@ export function CanvasView() {
     let shapeType: ShapeType = "rect";
     let shapeStart: Pt = { x: 0, y: 0 };
     let shapeBox: Box | null = null;
+    // apagados "de fora" (isolamento, reprodução do áudio): voltam depois de um gesto da borracha
+    let extGhosts: Set<string> = new Set();
     // segurar no fim do traço = forma perfeita
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
     let holdAt: { x: number; y: number } | null = null;
@@ -272,7 +274,7 @@ export function CanvasView() {
             if (!erased.has(el.id) && elementHit(el, x, y, r)) erased.add(el.id);
           }
         }
-        renderer.setGhosts(erased);
+        renderer.setGhosts(extGhosts.size ? new Set([...extGhosts, ...erased]) : erased);
       }
       lastErase = to;
       renderer.drawEraserCursor(s.x, s.y, radiusPx);
@@ -329,7 +331,7 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
-        (() => { const g = (e: Event) => renderer.setGhosts((e as CustomEvent<Set<string>>).detail); window.addEventListener("hm-ghosts", g); return () => window.removeEventListener("hm-ghosts", g); })(),
+        (() => { const g = (e: Event) => { extGhosts = (e as CustomEvent<Set<string>>).detail; renderer.setGhosts(extGhosts); }; window.addEventListener("hm-ghosts", g); return () => window.removeEventListener("hm-ghosts", g); })(),
         useTheme.subscribe((s, prev) => { if (s.selColor !== prev.selColor || s.guideColor !== prev.guideColor || s.desk !== prev.desk) { look(); selectCtl.refresh(); } }),
         useGroupCtx.subscribe(() => selectCtl.refresh()),
         (() => { const t = useTool.getState(); renderer.laserConfig({ color: t.laserColor, trail: t.laserTrail, hold: t.laserHold }); return () => undefined; })(),
@@ -585,7 +587,7 @@ export function CanvasView() {
               lastErase = null;
               eraseBase = null;
               eraseEls = null;
-              renderer.setGhosts(erased);
+              renderer.setGhosts(extGhosts);
               return;
             }
             if (mode === "linear") {
@@ -686,7 +688,7 @@ export function CanvasView() {
               lastErase = null;
               eraseBase = null;
               eraseEls = null;
-              renderer.setGhosts(erased);
+              renderer.setGhosts(extGhosts);
             } else if (mode === "shape" || mode === "linear" || mode === "frame" || mode === "tape") {
               renderer.previewElement(null);
               shapeBox = null;

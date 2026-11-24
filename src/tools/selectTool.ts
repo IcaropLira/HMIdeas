@@ -2,6 +2,7 @@
 // e edição de pontos de linhas/setas.
 // Durante o gesto NADA é gravado no documento: só pré-visualização no renderer.
 // No fim, um único updateElements → um único passo de desfazer.
+import { openBoard } from "../core/organizeActions";
 import { passes } from "../core/handwriting";
 import { Bindable, bindableAt, detachForeign, isBindable, makeBinding, reidentify, solveAffected, solveArrow } from "../core/binding";
 import { exactGroup, expandToUnits, idsForHit, insideCtx, unitOf } from "../core/groups";
@@ -300,6 +301,7 @@ export function createSelectController(renderer: Renderer) {
             const prims = primsFor(hit);
             const tap = prims && blockHitAt(prims, lx, ly);
             if (tap && tap.action === "open") { lastTap = null; useSel.getState().set([hit.id]); usePageEdit.getState().open(hit.id); return; }
+            if (tap && tap.action === "board") { lastTap = null; openBoard(hit); return; }
             if (tap) {
               lastTap = null;
               useDoc.getState().updateElements([{ ...hit, block: blockTap(hit.block, tap) }]);

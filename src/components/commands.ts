@@ -1,6 +1,9 @@
 // Registro ÚNICO de comandos do app. Teclado, menus, paleta de comandos, barra contextual e o editor de atalhos
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
+import { openOutline, useOrgUI } from "./Organize";
+import { PROP_KEYS, SORT_KEYS } from "../core/organize";
+import { blockToMindMap, copyLink, followLink, goUp, insertBoard, mapToBlock, pasteLink, removeLink, selectSame, selectionToBoard, textsToMap, toggleIsolate } from "../core/organizeActions";
 import { pomoToggle, startExam, startPresentation, startRecording as startAudio, stopRecording as stopAudio, useStudy } from "./Study";
 import { setAllTapes, useZoomWriter } from "./ZoomWriter";
 import { BOOKMARK_COLORS } from "../core/notebook";
@@ -26,7 +29,7 @@ import {
   currentCtx, enterGroup, exitGroup, groupSelection, hideSelection, lockSelection, releaseSelection, selectAllInContext,
   selectSameType, selectedGroup, showAll, ungroupSelectionGroups, unlockAll,
 } from "../core/groupActions";
-import { alignSelection, arrangeGrid, centerOnScreen, distributeSelection, equalizeSelection, flipSelection, rotateSelection } from "../core/alignActions";
+import { alignSelection, arrangeGrid, arrangeSelection, centerOnScreen, distributeSelection, equalizeSelection, flipSelection, rotateSelection } from "../core/alignActions";
 import { listBrushes } from "../core/brushes";
 import { downloadDoc } from "../core/serialize";
 import { PANELS, PanelId, isShowing } from "../core/docking";
@@ -153,6 +156,24 @@ function buildCommands(): Command[] {
     { id: "tape.revealAll", cat: "Ferramentas", label: "Revelar todas as fitas", run: () => setAllTapes(true) },
     { id: "tape.hideAll", cat: "Ferramentas", label: "Esconder todas as fitas", run: () => setAllTapes(false) },
     { id: "view.zoomWriter", cat: "Exibir", label: "Janela de zoom para escrever", keys: ["Ctrl+Alt+W"], checked: () => useZoomWriter.getState().open, run: () => useZoomWriter.getState().toggle() },
+    { id: "org.panel", cat: "Organizar", label: "Painel Organizar", run: () => showPanel("organize") },
+    { id: "org.board", cat: "Inserir", label: "Quadro aninhado (quadro dentro do quadro)", keys: ["Ctrl+Alt+B"], run: () => insertBoard() },
+    { id: "org.selToBoard", cat: "Organizar", label: "Levar a seleção para um quadro aninhado", scope: "selection", run: selectionToBoard },
+    { id: "org.up", cat: "Exibir", label: "Voltar ao quadro de cima", keys: ["Alt+Backspace"], when: () => !!selectActivePage(useDoc.getState()).parentPage, run: goUp },
+    { id: "link.copy", cat: "Organizar", label: "Copiar link para a seleção/página", run: copyLink },
+    { id: "link.paste", cat: "Organizar", label: "Ligar a seleção ao link copiado", scope: "selection", run: pasteLink },
+    { id: "link.remove", cat: "Organizar", label: "Tirar link da seleção", scope: "selection", run: removeLink },
+    { id: "link.follow", cat: "Organizar", label: "Seguir link / abrir quadro", keys: ["Alt+Enter"], scope: "selection", run: () => { followLink(); } },
+    { id: "view.graph", cat: "Exibir", label: "Grafo do caderno", keys: ["Ctrl+Alt+L"], run: () => useOrgUI.getState().set({ graph: true }) },
+    { id: "view.isolate", cat: "Exibir", label: "Isolar seleção / sair do isolamento", keys: ["Ctrl+Alt+I"], run: toggleIsolate },
+    { id: "map.outline", cat: "Mapa mental", label: "Modo tópicos (editar o mapa como lista)", keys: ["Ctrl+Alt+O"], run: () => { if (!openOutline()) useUI.getState().showToast("Selecione um nó do mapa."); } },
+    { id: "map.toList", cat: "Mapa mental", label: "Mapa → lista", run: () => mapToBlock("list") },
+    { id: "map.toTodo", cat: "Mapa mental", label: "Mapa → tarefas", run: () => mapToBlock("todo") },
+    { id: "map.toKanban", cat: "Mapa mental", label: "Mapa → kanban", run: () => mapToBlock("kanban") },
+    { id: "block.toMap", cat: "Organizar", label: "Bloco → mapa mental", run: blockToMindMap },
+    { id: "text.toMap", cat: "Organizar", label: "Textos selecionados → mapa mental", run: textsToMap },
+    ...SORT_KEYS.map((k): Command => ({ id: `arrange.${k.id}`, cat: "Organizar", label: `Organizar em grade por ${k.label.toLowerCase()}`, scope: "selection", run: () => arrangeSelection(k.id) })),
+    ...PROP_KEYS.map((k): Command => ({ id: `select.${k.id}`, cat: "Editar", label: `Selecionar: ${k.label.toLowerCase()}`, scope: "selection", run: () => selectSame(k.id) })),
     { id: "study.panel", cat: "Ferramentas", label: "Painel Estudos", run: () => showPanel("study") },
     { id: "study.review", cat: "Ferramentas", label: "Revisar flashcards (repetição espaçada)", run: () => useStudy.getState().set({ reviewOpen: true }) },
     { id: "study.pomodoro", cat: "Ferramentas", label: "Pomodoro: começar/pausar", run: pomoToggle },

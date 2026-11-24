@@ -21,7 +21,7 @@ import { AlgoOverlay } from "../core/algoView";
 import { arrowHead } from "./figureSvg";
 
 const LINE = "#1B2233";
-const INDIGO = "#2F4B8F";
+const INDIGO = "#2F4B8F"; // padrão; o usuário troca em Aparência (setLook)
 
 /** Graphics para traços/formas/linhas; Container (com um Text dentro) para textos. */
 interface Node {
@@ -49,6 +49,8 @@ export class Renderer {
   private paperMask = new Graphics();
   private elementsMask = new Graphics();
   private sheet: { w: number; h: number } | null = null;
+  /** Cores da interface no quadro (0.13): seleção, guias e mesa (null = automática). */
+  private look: { sel: string; guide: string; desk: string | null } = { sel: INDIGO, guide: "#E0197D", desk: null };
   private world = new Container();
   /** Uma pilha por camada da página: [quadros (sempre abaixo), resto]. Ordem dos filhos = ordem das camadas. */
   private layerRoot = new Container();
@@ -157,7 +159,7 @@ export class Renderer {
     } else {
       // mesa ao redor: um tom abaixo do papel (escura com papel escuro)
       const dark = autoLineColor(bg) !== "#1B2233";
-      this.app.renderer.background.color = dark ? "#0E1016" : "#D5DAE3";
+      this.app.renderer.background.color = this.look.desk ?? (dark ? "#0E1016" : "#D5DAE3");
       for (const [d, a] of [[18, 0.05], [10, 0.07], [4, 0.1]] as const) g.roundRect(-d / 2 + 2, -d / 2 + 6, s.w + d, s.h + d, 6).fill({ color: "#0B1020", alpha: a });
       g.rect(0, 0, s.w, s.h).fill({ color: bg });
       this.elementsMask.rect(0, 0, s.w, s.h).fill({ color: 0xffffff });
@@ -859,8 +861,8 @@ export class Renderer {
 
     if (ui.context && ui.context.length > 2) {
       const pts = ui.context.map(this.w2s);
-      g.poly(this.flat(pts), true).fill({ color: INDIGO, alpha: 0.025 });
-      dashed(pts, true, 1.2, INDIGO, 0.75, 6, 4);
+      g.poly(this.flat(pts), true).fill({ color: this.look.sel, alpha: 0.025 });
+      dashed(pts, true, 1.2, this.look.sel, 0.75, 6, 4);
     }
 
     const m = ui.marquee;
@@ -868,38 +870,38 @@ export class Renderer {
       const a = this.w2s(m.a), b = this.w2s(m.b);
       const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y), x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
       // da direita para a esquerda (pega o que a caixa toca): tracejado e verde, como no AutoCAD/Clip Studio
-      const col = m.cross ? 0x1f9d6b : INDIGO;
+      const col = m.cross ? 0x1f9d6b : this.look.sel;
       g.rect(x0, y0, x1 - x0, y1 - y0).fill({ color: col, alpha: 0.08 });
       if (m.cross) dashed([{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }], true, 1.2, col, 0.9);
       else g.rect(x0, y0, x1 - x0, y1 - y0).stroke({ width: 1, color: col, alpha: 0.7 });
     } else if (m?.kind === "lasso" && m.pts.length > 1) {
       const pts = m.pts.map(this.w2s);
-      g.poly(this.flat(pts), true).fill({ color: INDIGO, alpha: 0.06 });
-      g.poly(this.flat(pts), false).stroke({ width: 1.5, color: INDIGO, alpha: 0.85, cap: "round", join: "round" });
+      g.poly(this.flat(pts), true).fill({ color: this.look.sel, alpha: 0.06 });
+      g.poly(this.flat(pts), false).stroke({ width: 1.5, color: this.look.sel, alpha: 0.85, cap: "round", join: "round" });
     }
 
     for (const gd of ui.guides ?? []) {
       const a = this.w2s(gd.a), b = this.w2s(gd.b);
       if (gd.kind === "gap") {
-        g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: 1, color: 0xE0197D, alpha: 0.9 });
+        g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: 1, color: this.look.guide, alpha: 0.9 });
         const nx = -(b.y - a.y), ny = b.x - a.x, l = Math.hypot(nx, ny) || 1;
-        for (const p of [a, b]) g.moveTo(p.x + (nx / l) * 4, p.y + (ny / l) * 4).lineTo(p.x - (nx / l) * 4, p.y - (ny / l) * 4).stroke({ width: 1, color: 0xE0197D, alpha: 0.9 });
+        for (const p of [a, b]) g.moveTo(p.x + (nx / l) * 4, p.y + (ny / l) * 4).lineTo(p.x - (nx / l) * 4, p.y - (ny / l) * 4).stroke({ width: 1, color: this.look.guide, alpha: 0.9 });
       } else {
-        dashed([a, b], false, 1, 0xE0197D, 0.85, 3, 3);
+        dashed([a, b], false, 1, this.look.guide, 0.85, 3, 3);
       }
     }
 
     for (const o of ui.outlines) {
-      g.poly(this.flat(o.map(this.w2s)), true).stroke({ width: 1, color: INDIGO, alpha: 0.45 });
+      g.poly(this.flat(o.map(this.w2s)), true).stroke({ width: 1, color: this.look.sel, alpha: 0.45 });
     }
 
     if (ui.bindHint && ui.bindHint.length > 2) {
-      g.poly(this.flat(ui.bindHint.map(this.w2s)), true).stroke({ width: 3, color: INDIGO, alpha: 0.5, join: "round" });
+      g.poly(this.flat(ui.bindHint.map(this.w2s)), true).stroke({ width: 3, color: this.look.sel, alpha: 0.5, join: "round" });
     }
 
     for (const c of ui.connectors ?? []) {
-      g.circle(c.x, c.y, 9).fill({ color: INDIGO, alpha: 0.14 });
-      g.circle(c.x, c.y, 5.5).fill({ color: "#FFFFFF" }).stroke({ width: 2, color: INDIGO });
+      g.circle(c.x, c.y, 9).fill({ color: this.look.sel, alpha: 0.14 });
+      g.circle(c.x, c.y, 5.5).fill({ color: "#FFFFFF" }).stroke({ width: 2, color: this.look.sel });
     }
 
     if (ui.lineEdit) {
@@ -907,22 +909,22 @@ export class Renderer {
       for (let i = 0; i < pts.length - 1; i++) {
         g.circle((pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2, 4.5)
           .fill({ color: "#FFFFFF", alpha: 0.9 })
-          .stroke({ width: 1.2, color: INDIGO, alpha: 0.8 });
+          .stroke({ width: 1.2, color: this.look.sel, alpha: 0.8 });
       }
-      for (const p of pts) g.rect(p.x - 5, p.y - 5, 10, 10).fill({ color: "#FFFFFF" }).stroke({ width: 1.5, color: INDIGO });
+      for (const p of pts) g.rect(p.x - 5, p.y - 5, 10, 10).fill({ color: "#FFFFFF" }).stroke({ width: 1.5, color: this.look.sel });
     }
 
     if (ui.frame) {
       const corners = frameCornersScreen(ui.frame, this.cam);
-      g.poly(this.flat(corners), true).stroke({ width: 1.5, color: INDIGO, alpha: 0.9 });
+      g.poly(this.flat(corners), true).stroke({ width: 1.5, color: this.look.sel, alpha: 0.9 });
       const hs = handlePositions(ui.frame, this.cam);
       const rot = hs.find((h) => h.id === "rot")!;
       const top = hs.find((h) => h.id === "n")!;
-      g.moveTo(top.x, top.y).lineTo(rot.x, rot.y).stroke({ width: 1.5, color: INDIGO, alpha: 0.9 });
+      g.moveTo(top.x, top.y).lineTo(rot.x, rot.y).stroke({ width: 1.5, color: this.look.sel, alpha: 0.9 });
       for (const h of hs) {
         if (h.id === "rot") g.circle(h.x, h.y, 6.5);
         else g.rect(h.x - 5, h.y - 5, 10, 10);
-        g.fill({ color: "#FFFFFF" }).stroke({ width: 1.5, color: INDIGO });
+        g.fill({ color: "#FFFFFF" }).stroke({ width: 1.5, color: this.look.sel });
       }
     }
   }
@@ -954,6 +956,19 @@ export class Renderer {
       .fill({ color: "#FFFFFF", alpha: 0.28 })
       .circle(sx, sy, radius)
       .stroke({ width: 1.5, color: LINE, alpha: 0.65 });
+  }
+
+  /** Cores de seleção/guias e da mesa (Aparência). */
+  setLook(look: { sel: string; guide: string; desk: string | null }) {
+    const changed = look.desk !== this.look.desk;
+    this.look = { ...look };
+    if (changed && this.ready) this.applySheet();
+  }
+
+  /** Cursor do pincel: círculo do tamanho do traço (tela), na cor da caneta. */
+  drawBrushCursor(sx: number, sy: number, radius: number, color: string) {
+    const r = Math.max(1.5, radius);
+    this.overlay.clear().circle(sx, sy, r).stroke({ width: 1, color, alpha: 0.9 }).circle(sx, sy, r + 1).stroke({ width: 1, color: "#FFFFFF", alpha: 0.6 });
   }
 
   hideEraserCursor() {

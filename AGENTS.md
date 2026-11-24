@@ -115,6 +115,11 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [x] 0.18 (Novo documento): diálogo no estilo do Photoshop (categorias, predefinições, recentes, salvas), tamanho em px/pol/cm/mm/pt/paica,
   resolução (ppi ou px/cm), orientação, pranchetas, modo de cor RGB/cinza, profundidade, fundo branco/preto/transparente/personalizado
 - [ ] 0.18: "Tamanho da tela/imagem" para documentos já criados (âncora pronta em `anchorOffset`), miniatura com xadrez na folha transparente
+- [x] 0.19 (Camadas profissionais): os 27 modos de mesclagem do Photoshop, máscara de recorte, opacidade 0–100%, cores de etiqueta,
+  solo (Alt+clique no olho), camada via cópia/recorte, mesclar visíveis, achatar, busca/filtro de camadas, menu Camada e atalhos
+- [ ] 0.19: medir no Android o custo do `useBackBuffer` (modos avançados) e, se pesar, ligar só quando alguma camada usar um modo avançado
+- [ ] Próximos da lista Photoshop/CSP: grupos de camadas (pastas), máscaras de camada, travas parciais (posição/transparência), estilos de camada,
+  camadas de ajuste/preenchimento, liquify/deformar, seleções avançadas, filtros, réguas/simetria/perspectiva, ferramentas vetoriais, retoque
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -567,3 +572,17 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - UI `components/NewDocumentDialog.tsx` (`useNewDoc`/`openNewDocument`; Ctrl+N, menu Arquivo, botão "Novo documento…" na Home).
   Recentes (`hm-ideas:doc-recent-v1`, 8) e predefinições salvas (`hm-ideas:doc-presets-v1`, 40). Criar chama `createNotebookFromDoc`
   (ponte registrada pela Home → caderno novo no IndexedDB com o nome do documento; sem a Home, só carrega). `fitActivePage` enquadra a folha.
+
+### Camadas profissionais (0.19)
+- `Layer.blend` aceita os 27 modos do Photoshop (`BLEND_GROUPS`/`LAYER_BLENDS` em `model.ts`, na ordem e nos grupos do Photoshop; o id antigo
+  `add` = Subexposição linear). `Layer.clip?` (máscara de recorte) e `Layer.color?` (etiqueta). Opacidade 0–1. `.hiraku` segue `version: 1`.
+- `core/layerPro.ts` (puro): `clipBase`/`clipUnits` (base + recortadas logo acima), `soloLayer`, `mergeVisible` (ordena pelas camadas ORIGINAIS
+  e leva a opacidade da camada para os elementos), `flatten` (descarta o oculto), `layerViaCopy`/`layerViaCut`, `cycleBlend`, `cssBlend`
+  (equivalente CSS para o SVG), `filterLayers`.
+- Render: `render/blendModes.ts` importa `pixi.js/advanced-blend-modes` e registra os que o Pixi não tem (Dissolver, Cor mais escura/clara, Matiz)
+  e o `hm-clip` (source-atop). **`pixiBlend` nunca pode devolver `undefined`** (o Pixi quebra em `popBlendMode`). O app inicia com
+  `useBackBuffer: true` (modos avançados leem o que está embaixo). Recorte: base + recortadas num contêiner com `AlphaFilter` (desenhado à parte,
+  então o "back" do `hm-clip` é só a base); o modo/visibilidade da base valem para o conjunto; recortadas usam "normal" sobre a base.
+- Exportar SVG/PNG/PDF: `exportSvg(..., { layers })` agrupa por camada (ocultas saem, `opacity`, `mix-blend-mode`, recorte por `<mask style="mask-type:alpha">`).
+- UI: `LayersPanel` (ferramentas extras, busca/filtro, modos em `<optgroup>`, cores, ↳ nas recortadas), `components/layerActions.ts`, comandos
+  `layer.*` (categoria e menu "Camada": Ctrl+Shift+N, Ctrl+J, Ctrl+Shift+J, Ctrl+E, Ctrl+Alt+Shift+E, Ctrl+Alt+C, Shift+= / Shift+-, Alt+] / Alt+[).

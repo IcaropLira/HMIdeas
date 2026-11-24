@@ -1,6 +1,8 @@
 // Renderização com PixiJS (WebGL). Só DESENHA o modelo; nunca altera o documento.
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
-import { Application, Container, Graphics, Matrix, Text, Sprite, Texture, TilingSprite } from "pixi.js";
+import { AlphaFilter, Application, Container, Graphics, Matrix, Text, Sprite, Texture, TilingSprite } from "pixi.js";
+import { CLIP_BLEND, pixiBlend } from "./blendModes";
+import { clipUnits } from "../core/layerPro";
 import { Camera, defaultCamera } from "../core/camera";
 import { DEFAULT_BACKGROUND, Layer, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
@@ -58,6 +60,8 @@ export class Renderer {
   /** Uma pilha por camada da página: [quadros (sempre abaixo), resto]. Ordem dos filhos = ordem das camadas. */
   private layerRoot = new Container();
   private layerBox = new Map<string, { root: Container; frames: Container; committed: Container }>();
+  /** Máscara de recorte (0.19): um contêiner por base com camadas recortadas (base + recortadas, desenhado à parte). */
+  private clipBox = new Map<string, Container>();
   private live = new Graphics();
   /** Execução de algoritmo: anéis, arestas e etiquetas por cima dos elementos (mundo), fora do documento. */
   private algoLayer = new Container();
@@ -95,6 +99,8 @@ export class Renderer {
       resizeTo: host,
       background: DEFAULT_BACKGROUND,
       preference: "webgl",
+      // modos de mesclagem avançados das camadas (0.19) leem o que já está desenhado embaixo
+      useBackBuffer: true,
       antialias: true,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
@@ -306,7 +312,7 @@ export class Renderer {
       b.root.destroy({ children: true });
       this.layerBox.delete(id);
     }
-    list.forEach((l, i) => {
+    const boxOf = (l: Layer) => {
       let b = this.layerBox.get(l.id);
       if (!b) {
         const root = new Container();
@@ -317,13 +323,55 @@ export class Renderer {
         root.addChild(frames, committed);
         b = { root, frames, committed };
         this.layerBox.set(l.id, b);
-        this.layerRoot.addChild(root);
       }
-      if (this.layerRoot.getChildIndex(b.root) !== i) this.layerRoot.setChildIndex(b.root, i);
-      b.root.visible = l.visible;
-      b.root.alpha = l.opacity;
-      const blend = l.blend ?? "normal";
-      if (b.root.blendMode !== blend) b.root.blendMode = blend;
+      return b;
+    };
+    const place = (c: Container, parent: Container, i: number) => {
+      if (c.parent !== parent) parent.addChildAt(c, Math.min(i, parent.children.length));
+      else if (parent.getChildIndex(c) !== i) parent.setChildIndex(c, Math.min(i, parent.children.length - 1));
+    };
+    const usedClips = new Set<string>();
+    clipUnits(list).forEach((u, i) => {
+      const base = boxOf(u.base);
+      if (!u.clipped.length) {
+        place(base.root, this.layerRoot, i);
+        base.root.visible = u.base.visible;
+        base.root.alpha = u.base.opacity;
+        const blend = pixiBlend(u.base.blend);
+        if (base.root.blendMode !== blend) base.root.blendMode = blend;
+        return;
+      }
+      // base + recortadas desenhadas num contêiner próprio (filtro = textura à parte): o "recorte" só enxerga a base.
+      // O modo de mesclagem e a visibilidade da base valem para o conjunto, como no Photoshop.
+      usedClips.add(u.base.id);
+      let g = this.clipBox.get(u.base.id);
+      if (!g) { g = new Container(); g.filters = [new AlphaFilter({ alpha: 1 })]; this.clipBox.set(u.base.id, g); }
+      place(g, this.layerRoot, i);
+      g.visible = u.base.visible;
+      const gb = pixiBlend(u.base.blend);
+      if (g.blendMode !== gb) g.blendMode = gb;
+      place(base.root, g, 0);
+      base.root.visible = true;
+      base.root.alpha = u.base.opacity;
+      if (base.root.blendMode !== "normal") base.root.blendMode = "normal";
+      u.clipped.forEach((l, k) => {
+        const b = boxOf(l);
+        place(b.root, g!, k + 1);
+        b.root.visible = l.visible;
+        b.root.alpha = l.opacity;
+        if (b.root.blendMode !== CLIP_BLEND) b.root.blendMode = CLIP_BLEND;
+      });
+    });
+    for (const [id, g] of this.clipBox) {
+      if (usedClips.has(id)) continue;
+      for (const c of [...g.children]) if (c.parent === g) this.layerRoot.addChild(c);
+      g.destroy();
+      this.clipBox.delete(id);
+    }
+    // reordena: o laço acima pode ter deixado índices fora de ordem quando unidades mudaram de tamanho
+    clipUnits(list).forEach((u, i) => {
+      const c = this.clipBox.get(u.base.id) && u.clipped.length ? this.clipBox.get(u.base.id)! : this.layerBox.get(u.base.id)!.root;
+      if (c.parent === this.layerRoot && this.layerRoot.getChildIndex(c) !== i) this.layerRoot.setChildIndex(c, i);
     });
     return this.layerBox;
   }

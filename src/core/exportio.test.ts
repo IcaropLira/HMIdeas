@@ -48,3 +48,17 @@ describe("exportar/importar (0.16)", () => {
     expect(parseSettings(JSON.stringify({ ...b, data: { outro: "z" } }))).toBeNull();
   });
 });
+
+describe("camadas na exportação (0.19)", () => {
+  it("tira as ocultas, aplica opacidade/mesclagem e recorta pela base", async () => {
+    const { exportSvg } = await import("../render/exportSvg");
+    const { makeLayer } = await import("./model");
+    const r = (id: string, layerId: string) => ({ id, type: "rectangle", x: 0, y: 0, w: 10, h: 10, angle: 0, stroke: "#112233", fill: "transparent", strokeWidth: 2, strokeStyle: "solid", opacity: 1, layerId }) as never;
+    const layers = [makeLayer("A", "a"), { ...makeLayer("B", "b"), clip: true, opacity: 0.55 }, { ...makeLayer("C", "c"), blend: "multiply" as const }, { ...makeLayer("H", "h"), visible: false }];
+    const svg = exportSvg([r("1", "a"), r("2", "b"), r("3", "c"), r("4", "h")], { box: { minX: 0, minY: 0, maxX: 20, maxY: 20 }, background: null, layers });
+    expect(svg).toContain('mask="url(#hm-clip-0)"');
+    expect(svg).toContain('opacity="0.55"');
+    expect(svg).toContain("mix-blend-mode:multiply");
+    expect((svg.match(/<path|<rect/g) ?? []).length).toBe(4); // base duas vezes (máscara + desenho) + recortada + multiplicação; oculta fora
+  });
+});

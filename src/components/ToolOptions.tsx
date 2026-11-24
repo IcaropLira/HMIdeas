@@ -1,5 +1,7 @@
 // Opções contextuais da ferramenta ativa e da seleção. A mesma lógica aparece em dois formatos: "bar" (barra de opções
 // embaixo do menu, uma linha) e "panel" (painel Propriedades, empilhado).
+import { FavPens } from "./FavPens";
+import { CATEGORIES, ElCategory } from "../core/handwriting";
 import { ReactNode } from "react";
 import { ARROW_HEADS, ArrowHead, HirakuElement, LineStyle, isLinear } from "../core/model";
 import { selectActivePage, useDoc, useSel, useTool } from "../core/store";
@@ -81,6 +83,19 @@ const headSel = (value: ArrowHead, onChange: (h: ArrowHead) => void, label: stri
 );
 
 /** Opções da FERRAMENTA (sem seleção). */
+/** Filtro por tipo (laço/caixa/borracha): nenhum marcado = tudo. */
+function CatFilter({ value, onChange, label }: { value: ElCategory[]; onChange: (v: ElCategory[]) => void; label: string }) {
+  return (
+    <div className="cat-filter" role="group" aria-label={label}>
+      <button className={!value.length ? "chip on" : "chip"} aria-pressed={!value.length} onClick={() => onChange([])}>Tudo</button>
+      {CATEGORIES.map((c) => {
+        const on = value.includes(c.id);
+        return <button key={c.id} className={on ? "chip on" : "chip"} aria-pressed={on} title={c.hint} onClick={() => onChange(on ? value.filter((x) => x !== c.id) : [...value, c.id])}>{c.label}</button>;
+      })}
+    </div>
+  );
+}
+
 export function ToolOptions({ mode }: { mode: Mode }) {
   const t = useTool();
   const graph = useGraphTool();
@@ -97,11 +112,15 @@ export function ToolOptions({ mode }: { mode: Mode }) {
             {listBrushes().map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
           </select>
         </Field>
+        <Field label="Favoritas" mode={mode}><FavPens compact={mode === "bar"} /></Field>
         <Field label="Cor" mode={mode}><Swatches label="Cor" value={t.color} onPick={(c) => c && applyColor(c, { remember: false })} more /></Field>
         <Field label="Espessura" mode={mode}><Range label="Espessura" value={t.width} min={1} max={14} step={0.5} onChange={(v) => t.set({ width: v })} fmt={(v) => `${v}`} /></Field>
         <Field label="Opacidade" mode={mode}><Range label="Opacidade" value={t.opacity} min={0.05} max={1} step={0.05} onChange={(v) => t.set({ opacity: v })} fmt={(v) => `${Math.round(v * 100)}%`} /></Field>
         <Field label="Estabilizar" mode={mode}><Range label="Estabilização" value={t.smoothing} min={0} max={0.9} step={0.05} onChange={(v) => t.set({ smoothing: v })} fmt={(v) => `${Math.round((v / 0.9) * 100)}%`} /></Field>
         <button className={t.recognize ? "chip on" : "chip"} aria-pressed={t.recognize} onClick={() => t.set({ recognize: !t.recognize })} title={withKey("Reconhecer formas", "tool.recognize")}>Reconhecer formas</button>
+        <button className={t.holdShape ? "chip on" : "chip"} aria-pressed={t.holdShape} onClick={() => t.set({ holdShape: !t.holdShape })} title="Pare a caneta no fim do traço por meio segundo: vira linha, círculo, retângulo…">Segurar = forma</button>
+        <button className={t.scribbleErase ? "chip on" : "chip"} aria-pressed={t.scribbleErase} onClick={() => t.set({ scribbleErase: !t.scribbleErase })} title="Rabisque em vai-e-vem por cima de algo para apagar">Rabisco apaga</button>
+        <button className="chip" onClick={() => runCommand("view.zoomWriter")} title={withKey("Janela de zoom para escrever", "view.zoomWriter")}>Janela de zoom</button>
         {mode === "panel" && <button className="chip" onClick={() => showPanel("brushes")}>Personalizar pincéis…</button>}
       </>
     );
@@ -112,6 +131,7 @@ export function ToolOptions({ mode }: { mode: Mode }) {
         <Field label="Modo" mode={mode}><Seg label="Modo da borracha" value={t.eraserMode} onChange={(v) => t.set({ eraserMode: v })} options={[["stroke", "Traço inteiro"], ["pixel", "Pixel"]]} /></Field>
         <Field label="Tamanho" mode={mode}><Range label="Tamanho" value={t.eraserSize} min={10} max={80} step={2} onChange={(v) => t.set({ eraserSize: v })} fmt={(v) => `${v}px`} /></Field>
         <button className={t.eraserPressure ? "chip on" : "chip"} aria-pressed={t.eraserPressure} onClick={() => t.set({ eraserPressure: !t.eraserPressure })}>Pressão muda o tamanho</button>
+        <Field label="Apaga" mode={mode}><CatFilter label="O que a borracha apaga" value={t.eraserFilter} onChange={(v) => t.set({ eraserFilter: v })} /></Field>
       </>
     );
   }
@@ -166,6 +186,17 @@ export function ToolOptions({ mode }: { mode: Mode }) {
       </>
     );
   }
+  if (tool === "tape") {
+    return (
+      <>
+        <Field label="Cor" mode={mode}><Swatches label="Cor da fita" value={t.tapeColor} list={["#F2B33D", "#F07A8C", "#6CB6F0", "#7CCB8A", "#B49CF0", "#8A93A6", "#1B2233"]} onPick={(c) => c && t.set({ tapeColor: c })} /></Field>
+        <Field label="Padrão" mode={mode}><Seg label="Padrão da fita" value={t.tapePattern} onChange={(v) => t.set({ tapePattern: v })} options={[["stripes", "Listras"], ["solid", "Lisa"], ["dots", "Bolinhas"]]} /></Field>
+        <button className="chip" onClick={() => runCommand("tape.revealAll")}>Revelar todas</button>
+        <button className="chip" onClick={() => runCommand("tape.hideAll")}>Esconder todas</button>
+        <span className="ob-hint">Arraste por cima do que quer esconder. Com Selecionar, um toque na fita revela/esconde.</span>
+      </>
+    );
+  }
   if (tool === "hand") {
     return <span className="ob-hint">Arraste para mover a tela. Roda do mouse + Ctrl ou pinça para zoom. Espaço segurado faz o mesmo em qualquer ferramenta.</span>;
   }
@@ -175,6 +206,7 @@ export function ToolOptions({ mode }: { mode: Mode }) {
       {tool === "lasso"
         ? <Field label="Laço" mode={mode}><Seg label="O que o laço pega" value={t.lassoMode} onChange={(v) => t.set({ lassoMode: v })} options={[["inside", "Só dentro"], ["touch", "Tocando"]]} /></Field>
         : <Field label="Caixa" mode={mode}><Seg label="O que a caixa pega" value={t.boxMode} onChange={(v) => t.set({ boxMode: v })} options={[["auto", "Pela direção", "→ só o que está dentro · ← tudo que a caixa toca"], ["inside", "Só dentro"], ["touch", "Tocando"]]} /></Field>}
+      <Field label="Pega" mode={mode}><CatFilter label="O que o laço e a caixa pegam" value={t.selectFilter} onChange={(v) => t.set({ selectFilter: v })} /></Field>
       <button className={t.smartGuides ? "chip on" : "chip"} aria-pressed={t.smartGuides} onClick={() => t.set({ smartGuides: !t.smartGuides })} title={withKey("Guias inteligentes", "view.smartGuides")}>Guias inteligentes</button>
       <button className={t.snapGrid ? "chip on" : "chip"} aria-pressed={t.snapGrid} onClick={() => t.set({ snapGrid: !t.snapGrid })} title={withKey("Encaixar na grade", "view.snapGrid")}>Grade {t.gridSize}</button>
       {mode === "bar" && <span className="ob-hint">Shift soma à seleção · Shift+arrastar de um vértice cria aresta · Alt+arrastar duplica · duplo clique entra no grupo</span>}
@@ -274,7 +306,7 @@ export function OptionsBar() {
   const hasSel = useSel((s) => s.ids.length > 0);
   const tool = useTool((s) => s.tool);
   const editing = useEdit((s) => !!s.session);
-  const name = hasSel && !editing ? "Seleção" : ({ select: "Selecionar", lasso: "Laço", pen: "Caneta", eraser: "Borracha", hand: "Mão", text: "Texto", rect: "Retângulo", ellipse: "Elipse", diamond: "Losango", arrow: "Seta", line: "Linha", mindmap: "Mapa mental", frame: "Quadro", laser: "Laser", laserpen: "Caneta laser", vertex: "Vértice", edge: "Aresta" } as Record<string, string>)[tool] ?? tool;
+  const name = hasSel && !editing ? "Seleção" : ({ select: "Selecionar", lasso: "Laço", pen: "Caneta", eraser: "Borracha", hand: "Mão", text: "Texto", rect: "Retângulo", ellipse: "Elipse", diamond: "Losango", arrow: "Seta", line: "Linha", mindmap: "Mapa mental", frame: "Quadro", laser: "Laser", laserpen: "Caneta laser", tape: "Fita", vertex: "Vértice", edge: "Aresta" } as Record<string, string>)[tool] ?? tool;
   return (
     <div className="optionsbar" role="toolbar" aria-label={`Opções: ${name}`} data-text-ui={editing ? "" : undefined}>
       <button className="ob-name" onClick={() => showPanel("props")} title="Abrir o painel Propriedades">{name}</button>

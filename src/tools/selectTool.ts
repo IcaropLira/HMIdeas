@@ -2,6 +2,7 @@
 // e edição de pontos de linhas/setas.
 // Durante o gesto NADA é gravado no documento: só pré-visualização no renderer.
 // No fim, um único updateElements → um único passo de desfazer.
+import { passes } from "../core/handwriting";
 import { Bindable, bindableAt, detachForeign, isBindable, makeBinding, reidentify, solveAffected, solveArrow } from "../core/binding";
 import { exactGroup, expandToUnits, idsForHit, insideCtx, unitOf } from "../core/groups";
 import { contextOutline, currentCtx, enterGroup, useGroupCtx } from "../core/groupActions";
@@ -448,7 +449,8 @@ export function createSelectController(renderer: Renderer) {
           const cross = mode === "touch" || (mode === "auto" && P.x < g.startP.x);
           const pg = page();
           const ctx = currentCtx(pg);
-          const pool = interactiveElements(pg).filter((e) => insideCtx(pg, e, ctx));
+          const sf = useTool.getState().selectFilter;
+          const pool = interactiveElements(pg).filter((e) => insideCtx(pg, e, ctx) && passes(e, sf));
           const a = g.startP;
           const raw = cross
             ? lassoSelect(pool, [{ x: a.x, y: a.y }, { x: P.x, y: a.y }, { x: P.x, y: P.y }, { x: a.x, y: P.y }], "touch", c.zoom)
@@ -587,7 +589,8 @@ export function createSelectController(renderer: Renderer) {
         const pg = page();
         const ctx = currentCtx(pg);
         const mode = useTool.getState().lassoMode;
-        const ids = lassoSelect(interactiveElements(pg).filter((e) => insideCtx(pg, e, ctx)), done.pts, mode, cam().zoom);
+        const sf = useTool.getState().selectFilter;
+        const ids = lassoSelect(interactiveElements(pg).filter((e) => insideCtx(pg, e, ctx) && passes(e, sf)), done.pts, mode, cam().zoom);
         useSel.getState().set([...done.base, ...expandToUnits(pg, ids, ctx, mode === "inside")]);
       }
       refresh();

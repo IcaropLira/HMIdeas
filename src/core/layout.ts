@@ -8,7 +8,7 @@ import { create } from "zustand";
 export type ItemId =
   | "select" | "pen" | "text" | "eraser" | "laser" | "hand" | "shape" | "line" | "mindmap" | "frame" | "vertex" | "edge"
   | "undo" | "redo" | "options" | "colors" | "size" | "brushes" | "blocks" | "insert" | "templates" | "science" | "mapPanel"
-  | "layers" | "paper" | "finger" | "quick";
+  | "layers" | "paper" | "finger" | "quick" | "tape" | "pens";
 
 export const ITEMS: { id: ItemId; label: string; hint: string; kind: "tool" | "action" | "widget" }[] = [
   { id: "select", label: "Selecionar / laço", hint: "Selecionar e laço", kind: "tool" },
@@ -16,6 +16,7 @@ export const ITEMS: { id: ItemId; label: string; hint: string; kind: "tool" | "a
   { id: "text", label: "Texto", hint: "Ferramenta Texto", kind: "tool" },
   { id: "eraser", label: "Borracha", hint: "Traço inteiro ou pixel", kind: "tool" },
   { id: "laser", label: "Laser", hint: "Ponteiro e caneta laser", kind: "tool" },
+  { id: "tape", label: "Fita", hint: "Esconder trechos (toque revela)", kind: "tool" },
   { id: "hand", label: "Mover tela", hint: "Mão", kind: "tool" },
   { id: "shape", label: "Formas", hint: "Retângulo, elipse, losango", kind: "tool" },
   { id: "line", label: "Setas e linhas", hint: "Seta e linha", kind: "tool" },
@@ -27,6 +28,7 @@ export const ITEMS: { id: ItemId; label: string; hint: string; kind: "tool" | "a
   { id: "redo", label: "Refazer", hint: "Refazer", kind: "action" },
   { id: "options", label: "Opções da ferramenta", hint: "Ajustes da ferramenta ativa", kind: "action" },
   { id: "quick", label: "Acesso rápido", hint: "Favoritas, recentes, presets e macros", kind: "action" },
+  { id: "pens", label: "Canetas favoritas", hint: "Pincel + cor + espessura num toque", kind: "widget" },
   { id: "colors", label: "Cores", hint: "Cores rápidas e seletor", kind: "widget" },
   { id: "size", label: "Espessura", hint: "Espessura do traço/borracha", kind: "widget" },
   { id: "brushes", label: "Pincéis", hint: "Painel de pincéis", kind: "action" },

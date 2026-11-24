@@ -1,3 +1,4 @@
+import { FavPens } from "./FavPens";
 import { BlockTiles } from "./BlockGallery";
 import { Fragment, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
@@ -213,6 +214,8 @@ export function Toolbar() {
       { id: "pixel", label: "Borracha de pixel (só o trecho)", icon: ICON.eraserPx, cmd: "tool.eraserMode", active: t.tool === "eraser" && t.eraserMode === "pixel", run: () => { t.setTool("eraser"); t.set({ eraserMode: "pixel" }); } },
     ]} />,
     laser: <ToolGroupBtn group="laser" label="Laser" items={[ti("laser", "Ponteiro laser", ICON.laser), ti("laserpen", "Caneta laser", ICON.laserpen)]} />,
+    pens: <FavPens compact />,
+    tape: toolBtn("tape", "Fita", <><path d="M3 9l15-5 3 9-15 5z" /><path d="M7 10.5l2.5 6.5M11 9.2l2.5 6.5M15 7.8l2.5 6.5" /></>, "Fita (U): arraste por cima para esconder; um toque revela"),
     hand: <ToolGroupBtn group="hand" label="Navegar" items={[ti("hand", "Mover tela", ICON.hand)]} />,
     shape: <ToolGroupBtn group="shape" label="Formas" items={SHAPE_TYPES.map((sh) => ti(sh, SHAPE_META[sh].label, SHAPE_META[sh].icon))} />,
     line: <ToolGroupBtn group="line" label="Linhas e setas" items={[ti("arrow", "Seta", ICON.arrow), ti("line", "Linha", ICON.line)]} />,

@@ -40,6 +40,7 @@ export type BlockSpec =
   | { kind: "proscons"; title: string; pros: string[]; cons: string[]; color: string }
   // ---- estudos ----
   | { kind: "flashcard"; front: string; back: string; flipped: boolean; color: string }
+  | { kind: "tape"; revealed: boolean; label: string; pattern: "stripes" | "solid" | "dots"; color: string }
   | { kind: "quiz"; question: string; options: string[]; answer: number; picked: number; color: string }
   | { kind: "steps"; title: string; items: string[]; color: string }
   | { kind: "exercise"; label: string; statement: string; solution: string; shown: boolean; color: string }

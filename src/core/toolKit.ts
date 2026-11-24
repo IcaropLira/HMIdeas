@@ -61,6 +61,8 @@ export interface Preset { id: string; name: string; tool: ToolId; settings: Tool
 export interface Macro { id: string; name: string; steps: string[] }
 export interface SettingsStep { tool: ToolId; before: ToolSettings; after: ToolSettings; at: number }
 
+export interface FavPen { id: string; brush: string; color: string; width: number; opacity: number }
+
 interface KitState {
   presets: Preset[];
   favorites: string[];
@@ -76,11 +78,13 @@ interface KitState {
   tempTools: boolean;
   ctrlSelect: boolean;
   altPick: boolean;
+  /** Canetas favoritas (0.12): pincel + cor + espessura + opacidade, num toque. */
+  pens: FavPen[];
   set: (p: Partial<KitState>) => void;
 }
 
 const KEY = "hm-ideas:toolkit-v1";
-const PERSIST: (keyof KitState)[] = ["presets", "favorites", "recent", "commandLog", "macros", "tempTools", "ctrlSelect", "altPick"];
+const PERSIST: (keyof KitState)[] = ["presets", "favorites", "recent", "commandLog", "macros", "tempTools", "ctrlSelect", "altPick", "pens"];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function cleanKit(raw: any): Partial<KitState> {
@@ -99,6 +103,10 @@ export function cleanKit(raw: any): Partial<KitState> {
     tempTools: r.tempTools !== false,
     ctrlSelect: r.ctrlSelect !== false,
     altPick: r.altPick !== false,
+    pens: (Array.isArray(r.pens) ? r.pens : [])
+      .filter((p: FavPen) => p && typeof p.id === "string" && typeof p.brush === "string" && /^#[0-9a-fA-F]{6}$/.test(p.color) && Number.isFinite(p.width))
+      .slice(0, 24)
+      .map((p: FavPen) => ({ id: p.id, brush: p.brush, color: p.color, width: Math.max(0.5, Math.min(40, p.width)), opacity: Number.isFinite(p.opacity) ? Math.max(0.05, Math.min(1, p.opacity)) : 1 })),
   };
 }
 
@@ -108,7 +116,7 @@ const load = (): Partial<KitState> => {
 
 export const useToolKit = create<KitState>((set, get) => ({
   presets: [], favorites: [], recent: [], commandLog: [], history: [], macros: [], recording: null,
-  tempTools: true, ctrlSelect: true, altPick: true,
+  tempTools: true, ctrlSelect: true, altPick: true, pens: [],
   ...(typeof localStorage !== "undefined" ? load() : {}),
   set: (p) => {
     set(p);
@@ -236,4 +244,28 @@ export function restoreSettings(step: SettingsStep, which: "before" | "after" = 
   const t = useTool.getState();
   if (t.tool !== step.tool) t.setTool(step.tool);
   t.set(step[which]);
+}
+
+// ---------- canetas favoritas (0.12) ----------
+export function addFavPen(): FavPen | null {
+  const t = useTool.getState(), k = useToolKit.getState();
+  const pen: FavPen = { id: uid("pen"), brush: t.brush, color: t.color, width: t.width, opacity: t.opacity };
+  if (k.pens.some((p) => p.brush === pen.brush && p.color.toLowerCase() === pen.color.toLowerCase() && p.width === pen.width && p.opacity === pen.opacity)) return null;
+  k.set({ pens: [...k.pens, pen].slice(-24) });
+  return pen;
+}
+export function applyFavPen(id: string) {
+  const p = useToolKit.getState().pens.find((x) => x.id === id);
+  if (!p) return;
+  const t = useTool.getState();
+  t.setTool("pen");
+  t.setBrush(p.brush);
+  t.set({ color: p.color, width: p.width, opacity: p.opacity });
+}
+export const removeFavPen = (id: string) => useToolKit.getState().set({ pens: useToolKit.getState().pens.filter((p) => p.id !== id) });
+/** A caneta favorita que bate com o ajuste atual (para marcar como ativa). */
+export function activeFavPen(): string | null {
+  const t = useTool.getState();
+  if (t.tool !== "pen") return null;
+  return useToolKit.getState().pens.find((p) => p.brush === t.brush && p.color.toLowerCase() === t.color.toLowerCase() && p.width === t.width && p.opacity === t.opacity)?.id ?? null;
 }

@@ -232,4 +232,33 @@ export const compare = defineBlock({
 });
 const LINEc = "#DDE3EE";
 
-export const STUDY = [flashcard, quiz, steps, exercise, reference, compare];
+// ---------------- fita (esconde o que está embaixo; toque revela) ----------------
+export const tape = defineBlock({
+  kind: "tape", label: "Fita", hint: "Esconde o que está embaixo: um toque revela, outro esconde", behavior: "livre",
+  make: () => ({ kind: "tape", revealed: false, label: "", pattern: "stripes", color: "#F2B33D" }),
+  size: () => ({ w: 220, h: 44 }),
+  clean: (r, color) => ({ kind: "tape", revealed: bool(r.revealed), label: str(r.label).slice(0, 60), pattern: r.pattern === "solid" || r.pattern === "dots" ? r.pattern : "stripes", color }),
+  draw(s, w, h, _m, p) {
+    if (s.revealed) {
+      p.rects.push({ x: 0, y: 0, w, h, r: 6, fill: s.color, alpha: 0.1, stroke: s.color, sw: 1.5, dash: true });
+      p.texts.push({ x: w - 6, y: 3, text: "👁", size: 11, color: MUTED, align: "right", alpha: 0.8 });
+    } else {
+      p.rects.push({ x: 0, y: 0, w, h, r: 6, fill: s.color });
+      const ink = mix(s.color, -0.18);
+      if (s.pattern === "stripes") for (let x = -h; x < w; x += 16) {
+        const x0 = Math.max(0, x), x1 = Math.min(w, x + h); // reta y = h - (px - x), recortada à fita
+        if (x1 > x0) p.lines.push({ pts: [{ x: x0, y: h - (x0 - x) }, { x: x1, y: h - (x1 - x) }], color: ink, width: 5, alpha: 0.35 });
+      }
+      else if (s.pattern === "dots") for (let y = 8; y < h; y += 12) for (let x = 8 + ((y / 12) % 2) * 6; x < w; x += 12) p.circles.push({ x, y, r: 1.8, fill: ink, alpha: 0.45 });
+      if (s.label && h >= 18) p.texts.push({ x: w / 2, y: h / 2 - Math.min(14, h * 0.4) * 0.62, text: s.label, size: Math.min(14, h * 0.4), color: mix(s.color, -0.6), bold: true, align: "center" });
+    }
+    p.hits.push({ action: "toggle", index: 0, x: 0, y: 0, w, h });
+  },
+  tap: (s, hit) => (hit.action === "toggle" ? { ...s, revealed: !s.revealed } : s),
+  form: [{ t: "text", key: "label", label: "Texto na fita (dica)", ph: "opcional" }, { t: "select", key: "pattern", label: "Padrão", options: [["stripes", "Listras"], ["solid", "Lisa"], ["dots", "Bolinhas"]] }, { t: "bool", key: "revealed", label: "Revelada" }],
+  text: (s) => s.label,
+  toContent: (s) => ({ title: s.label, text: "" }),
+  fromContent: (c, color) => ({ kind: "tape", revealed: false, label: (c.title || "").slice(0, 60), pattern: "stripes", color }),
+});
+
+export const STUDY = [flashcard, tape, quiz, steps, exercise, reference, compare];

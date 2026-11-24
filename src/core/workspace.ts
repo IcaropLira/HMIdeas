@@ -68,7 +68,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     make: () => ({
       chrome: FULL,
       toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "tape", "laser", "hand"], ["shape", "line", "options", "quick"]], bottom: [["vertex", "edge", "science", "mindmap"], ["blocks", "insert", "templates"], ["colors", "size"]] }),
-      dock: dockOf({ right: { size: 330, stacks: [{ panels: ["library", "materials"], size: 1.3 }, { panels: ["science", "props"], size: 1 }] } }),
+      dock: dockOf({ right: { size: 330, stacks: [{ panels: ["study", "library", "materials"], size: 1.3 }, { panels: ["science", "props"], size: 1 }] } }),
     }),
   },
   {

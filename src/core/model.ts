@@ -1,6 +1,7 @@
 // Modelo de dados do HM Ideas. Puro: sem Pixi, sem React.
 // Tudo aqui é serializável em JSON e tratado como IMUTÁVEL.
 
+import { Recording, cleanRecordings } from "./study";
 import { cleanGroups, prune } from "./groups";
 import { parseYouTube } from "./embed";
 import { FigureSpec, cleanFigure } from "./figures";
@@ -433,6 +434,8 @@ export interface Page {
   bookmark?: string;
   /** Página favorita. */
   starred?: boolean;
+  /** Áudios gravados nesta página, com a marca de tempo de cada traço escrito durante a gravação (0.14). */
+  recordings?: Recording[];
 }
 
 export interface HirakuDoc {
@@ -633,6 +636,7 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       groups: cleanGroups(p.groups),
       bookmark: typeof p.bookmark === "string" && /^#[0-9a-fA-F]{6}$/.test(p.bookmark) ? p.bookmark : undefined,
       starred: p.starred === true ? true : undefined,
+      recordings: cleanRecordings(p.recordings),
     })),
   };
 }

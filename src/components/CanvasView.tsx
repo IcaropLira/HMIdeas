@@ -329,6 +329,7 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
+        (() => { const g = (e: Event) => renderer.setGhosts((e as CustomEvent<Set<string>>).detail); window.addEventListener("hm-ghosts", g); return () => window.removeEventListener("hm-ghosts", g); })(),
         useTheme.subscribe((s, prev) => { if (s.selColor !== prev.selColor || s.guideColor !== prev.guideColor || s.desk !== prev.desk) { look(); selectCtl.refresh(); } }),
         useGroupCtx.subscribe(() => selectCtl.refresh()),
         (() => { const t = useTool.getState(); renderer.laserConfig({ color: t.laserColor, trail: t.laserTrail, hold: t.laserHold }); return () => undefined; })(),

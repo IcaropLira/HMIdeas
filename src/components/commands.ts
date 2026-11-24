@@ -1,6 +1,7 @@
 // Registro ÚNICO de comandos do app. Teclado, menus, paleta de comandos, barra contextual e o editor de atalhos
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
+import { pomoToggle, startExam, startPresentation, startRecording as startAudio, stopRecording as stopAudio, useStudy } from "./Study";
 import { setAllTapes, useZoomWriter } from "./ZoomWriter";
 import { BOOKMARK_COLORS } from "../core/notebook";
 import { usePageTemplates } from "../core/pageTemplateStore";
@@ -29,7 +30,7 @@ import { alignSelection, arrangeGrid, centerOnScreen, distributeSelection, equal
 import { listBrushes } from "../core/brushes";
 import { downloadDoc } from "../core/serialize";
 import { PANELS, PanelId, isShowing } from "../core/docking";
-import { PRESETS, togglePanelCmd, useWorkspace } from "../core/workspace";
+import { PRESETS, showPanel, togglePanelCmd, useWorkspace } from "../core/workspace";
 import { useLayout } from "../core/layout";
 import { applyPreset, currentToolCmd, noteCommand, savePreset, startRecording, stopRecording, toggleFavorite, useToolKit } from "../core/toolKit";
 import { zSelection } from "./LayersPanel";
@@ -152,6 +153,12 @@ function buildCommands(): Command[] {
     { id: "tape.revealAll", cat: "Ferramentas", label: "Revelar todas as fitas", run: () => setAllTapes(true) },
     { id: "tape.hideAll", cat: "Ferramentas", label: "Esconder todas as fitas", run: () => setAllTapes(false) },
     { id: "view.zoomWriter", cat: "Exibir", label: "Janela de zoom para escrever", keys: ["Ctrl+Alt+W"], checked: () => useZoomWriter.getState().open, run: () => useZoomWriter.getState().toggle() },
+    { id: "study.panel", cat: "Ferramentas", label: "Painel Estudos", run: () => showPanel("study") },
+    { id: "study.review", cat: "Ferramentas", label: "Revisar flashcards (repetição espaçada)", run: () => useStudy.getState().set({ reviewOpen: true }) },
+    { id: "study.pomodoro", cat: "Ferramentas", label: "Pomodoro: começar/pausar", run: pomoToggle },
+    { id: "study.exam", cat: "Ferramentas", label: "Modo prova", run: startExam },
+    { id: "study.present", cat: "Exibir", label: "Apresentar pelos quadros", run: startPresentation },
+    { id: "study.record", cat: "Ferramentas", label: "Gravar áudio / parar", checked: () => !!useStudy.getState().rec, run: () => (useStudy.getState().rec ? stopAudio() : void startAudio()) },
     { id: "page.prev", cat: "Arquivo", label: "Página anterior", keys: ["PageUp"], run: () => goPage(-1) },
     { id: "page.next", cat: "Arquivo", label: "Próxima página", keys: ["PageDown"], run: () => goPage(1) },
 

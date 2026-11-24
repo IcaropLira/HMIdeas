@@ -5,7 +5,7 @@
 
 export type PanelId =
   | "props" | "transform" | "align" | "objects" | "layers" | "colors" | "brushes" | "history" | "navigator"
-  | "library" | "materials" | "shortcuts" | "text" | "tools" | "paper" | "map" | "science" | "quick";
+  | "library" | "materials" | "shortcuts" | "text" | "tools" | "paper" | "map" | "science" | "quick" | "study";
 
 export interface PanelInfo { id: PanelId; label: string; hint: string }
 
@@ -27,6 +27,7 @@ export const PANELS: PanelInfo[] = [
   { id: "materials", label: "Materiais", hint: "Modelos prontos (Kanban, SWOT, Cornell…)" },
   { id: "paper", label: "Papel", hint: "Padrão, cor e formato da folha" },
   { id: "map", label: "Mapa & quadros", hint: "Layout, formas e cores de mapas mentais" },
+  { id: "study", label: "Estudos", hint: "Revisão espaçada, Pomodoro, prova, apresentação, áudio e estatísticas" },
   { id: "science", label: "Grafos e matemática", hint: "Grafos, figuras, gráficos e calculadora" },
   { id: "shortcuts", label: "Atalhos", hint: "Ver e trocar atalhos de teclado" },
 ];

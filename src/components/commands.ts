@@ -28,13 +28,14 @@ import { downloadDoc } from "../core/serialize";
 import { PANELS, PanelId, isShowing } from "../core/docking";
 import { PRESETS, togglePanelCmd, useWorkspace } from "../core/workspace";
 import { useLayout } from "../core/layout";
+import { applyPreset, currentToolCmd, noteCommand, savePreset, startRecording, stopRecording, toggleFavorite, useToolKit } from "../core/toolKit";
 import { zSelection } from "./LayersPanel";
 import { copyWithMark, pasteFromButton } from "./clipboard";
 import { insertBlock } from "./BlockGallery";
 
 export type CmdCat =
-  | "Arquivo" | "Editar" | "Exibir" | "Inserir" | "Objeto" | "Organizar" | "Ferramentas" | "Pincéis" | "Mapa mental" | "Janela" | "Ajuda";
-export const CATEGORIES: CmdCat[] = ["Arquivo", "Editar", "Exibir", "Inserir", "Objeto", "Organizar", "Ferramentas", "Pincéis", "Mapa mental", "Janela", "Ajuda"];
+  | "Arquivo" | "Editar" | "Exibir" | "Inserir" | "Objeto" | "Organizar" | "Ferramentas" | "Pincéis" | "Presets" | "Macros" | "Mapa mental" | "Janela" | "Ajuda";
+export const CATEGORIES: CmdCat[] = ["Arquivo", "Editar", "Exibir", "Inserir", "Objeto", "Organizar", "Ferramentas", "Pincéis", "Presets", "Macros", "Mapa mental", "Janela", "Ajuda"];
 
 export interface Command extends KeyedCommand {
   cat: CmdCat;
@@ -49,6 +50,8 @@ export interface Command extends KeyedCommand {
   /** Tecla que o sistema trata (Ctrl+V): aparece na lista, mas não é trocável. */
   fixed?: string;
   hint?: string;
+  /** Palavras que a busca da paleta também entende ("mesmo espaço" acha Distribuir). */
+  keywords?: string;
 }
 
 // ---------- contexto ----------
@@ -267,6 +270,28 @@ function buildCommands(): Command[] {
     { id: "help.palette", cat: "Ajuda", label: "Procurar comando…", keys: ["Ctrl+K", "Ctrl+Shift+P"], run: () => usePalette.getState().setOpen(true) },
     { id: "help.shortcuts", cat: "Ajuda", label: "Atalhos de teclado…", keys: ["F1", "Ctrl+/"], run: () => useUI.getState().setSettingsTab("atalhos") },
   ];
+  // kit de ferramentas: presets, macros, favoritas, ferramenta anterior
+  const kit = useToolKit.getState();
+  c.push(
+    { id: "preset.save", cat: "Presets", label: "Salvar ajustes da ferramenta como preset", keys: ["Ctrl+Alt+P"], keywords: "guardar configuração pincel favorito", run: () => { const p = savePreset(); useUI.getState().showToast(`Preset “${p.name}” salvo.`); } },
+    { id: "tool.previous", cat: "Ferramentas", label: "Voltar para a ferramenta anterior", keys: ["Q"], keywords: "última recente trocar", run: () => { const r = useToolKit.getState().recent[1]; return r ? runCommand(r) : false; } },
+    { id: "tool.favorite", cat: "Ferramentas", label: "Favoritar/desfavoritar a ferramenta atual", keys: ["Ctrl+Alt+F"], keywords: "estrela acesso rápido", run: () => toggleFavorite(currentToolCmd()) },
+    { id: "macro.record", cat: "Macros", label: "Gravar macro (começar/parar)", keys: ["Ctrl+Alt+R"], keywords: "gravar sequência automatizar ações repetir",
+      checked: () => !!useToolKit.getState().recording,
+      run: () => {
+        if (useToolKit.getState().recording) {
+          const m = stopRecording();
+          useUI.getState().showToast(m ? `Macro “${m.name}” salva com ${m.steps.length} passos.` : "Nenhuma ação gravada.");
+        } else { startRecording(); useUI.getState().showToast("Gravando: use comandos (teclado, menus, paleta). Ctrl+Alt+R para parar."); }
+      } },
+  );
+  for (const p of kit.presets) {
+    c.push({ id: `preset.${p.id}`, cat: "Presets", label: `Preset: ${p.name}`, keywords: "ajustes ferramenta", run: () => applyPreset(p.id), checked: () => false });
+  }
+  for (const m of kit.macros) {
+    c.push({ id: `macro.${m.id}`, cat: "Macros", label: `Macro: ${m.name}`, hint: `${m.steps.length} passos`, keywords: "sequência automática", run: () => runMacro(m.id) });
+  }
+  for (const x of c) if (!x.keywords && KEYWORDS[x.id]) x.keywords = KEYWORDS[x.id];
   // pincéis: cada um vira um comando (sem tecla padrão; o usuário escolhe)
   for (const b of listBrushes()) {
     c.push({
@@ -293,10 +318,36 @@ function toggleAllPanels() {
 
 const exitGroupsAll = () => { while (currentCtx()) exitGroup(); };
 
+/** Sinônimos/intenções para a busca da paleta (por id). */
+const KEYWORDS: Record<string, string> = {
+  "dist.h": "mesmo espaço espaçamento igual distância cartões lado a lado horizontal espalhar",
+  "dist.v": "mesmo espaço espaçamento igual distância cartões um embaixo do outro vertical espalhar",
+  "dist.hc": "centros espaçados iguais horizontal", "dist.vc": "centros espaçados iguais vertical",
+  "align.left": "esquerda encostar alinhar margem", "align.right": "direita encostar alinhar", "align.top": "topo cima alinhar",
+  "align.bottom": "baixo base alinhar", "align.hcenter": "meio centro horizontal", "align.vcenter": "meio centro vertical",
+  "arr.grid": "grade organizar arrumar mosaico tabela linhas colunas", "arr.center": "meio tela centralizar",
+  "eq.w": "mesma largura igual tamanho", "eq.h": "mesma altura igual tamanho", "eq.both": "mesmo tamanho igualar",
+  "obj.group": "juntar unir agrupar conjunto", "obj.ungroup": "separar desfazer grupo soltar", "obj.release": "tirar remover do grupo",
+  "obj.lock": "trancar bloquear fixar prender", "obj.hide": "esconder sumir invisível", "obj.showAll": "mostrar reaparecer",
+  "obj.unlockAll": "liberar soltar travados", "obj.frame": "moldura quadro envolver",
+  "edit.delete": "apagar excluir deletar remover lixo", "edit.duplicate": "copiar clonar repetir duplicar",
+  "edit.undo": "voltar desfazer erro", "edit.redo": "refazer avançar", "edit.selectSame": "mesmo tipo parecidos iguais selecionar",
+  "edit.eyedropper": "pegar cor conta gotas amostra", "arr.flipH": "espelhar inverter horizontal", "arr.flipV": "espelhar inverter vertical",
+  "arr.rotCW": "girar rodar virar", "arr.rotCCW": "girar rodar virar", "arr.front": "frente cima sobrepor", "arr.back": "fundo trás atrás",
+  "insert.sticky": "post-it nota adesiva lembrete", "insert.todo": "tarefas checklist lista afazeres", "insert.table": "tabela planilha linhas colunas",
+  "insert.library": "blocos biblioteca adesivos cartões", "insert.templates": "modelos prontos kanban swot cornell",
+  "view.fitAll": "ver tudo enquadrar zoom", "view.fitSel": "zoom seleção aproximar objeto", "view.focus": "foco esconder interface distrações",
+  "file.save": "salvar exportar baixar arquivo", "file.open": "abrir carregar arquivo", "file.home": "cadernos início inicial",
+  "tool.pen": "desenhar escrever lápis caneta", "tool.eraser": "apagar borracha", "tool.text": "escrever digitar texto",
+  "tool.hand": "mover tela arrastar navegar", "tool.select": "selecionar mover cursor seta",
+  "panel.layers": "camadas", "panel.objects": "objetos árvore grupos lista", "help.shortcuts": "teclas atalhos teclado",
+};
+
 let cache: { sig: string; list: Command[] } | null = null;
-/** Todos os comandos (refeito quando a lista de pincéis muda). */
+/** Todos os comandos (refeito quando a lista de pincéis, presets ou macros muda). */
 export function allCommands(): Command[] {
-  const sig = listBrushes().map((b) => `${b.id}:${b.label}`).join("|");
+  const k = useToolKit.getState();
+  const sig = listBrushes().map((b) => `${b.id}:${b.label}`).join("|") + "#" + k.presets.map((p) => `${p.id}:${p.name}`).join("|") + "#" + k.macros.map((m) => `${m.id}:${m.name}`).join("|");
   if (!cache || cache.sig !== sig) cache = { sig, list: buildCommands() };
   return cache.list;
 }
@@ -307,7 +358,25 @@ export function runCommand(id: string): boolean {
   const c = commandById(id);
   if (!c) return false;
   if (c.when && !c.when()) return false;
-  return c.run() !== false;
+  const ok = c.run() !== false;
+  if (ok) noteCommand(id);
+  return ok;
+}
+
+/** Executa os passos de uma macro em ordem (passo que não se aplica agora é pulado). */
+export function runMacro(id: string): boolean {
+  const m = useToolKit.getState().macros.find((x) => x.id === id);
+  if (!m) return false;
+  if (useToolKit.getState().recording) { useUI.getState().showToast("Pare a gravação antes de rodar uma macro."); return false; }
+  let ran = 0;
+  for (const step of m.steps) {
+    if (step === `macro.${id}`) continue;
+    const c = commandById(step);
+    if (!c || !inScope(c.scope) || (c.when && !c.when())) continue;
+    if (c.run() !== false) ran++;
+  }
+  if (!ran) useUI.getState().showToast(`A macro “${m.name}” não tinha o que fazer agora.`);
+  return true;
 }
 
 /** Tecla atual do comando (a primeira), para mostrar em menus e dicas. */
@@ -339,15 +408,69 @@ export function handleKey(e: KeyboardEvent): boolean {
   if (!combo || combo === "Ctrl+V") return false; // Ctrl+V fica com o evento `paste` (components/clipboard.ts)
   const list = index().get(combo);
   if (!list) return false;
+  cancelModHold();
   for (const c of list) {
     if (e.repeat && !c.repeat) { e.preventDefault(); return true; }
     if (!inScope(c.scope)) continue;
     if (c.when && !c.when()) continue;
+    // ferramenta temporária: segurar a tecla da ferramenta usa ela só enquanto a tecla está apertada
+    const isTool = (c.id.startsWith("tool.") && !NOT_TOOL.includes(c.id)) || c.id.startsWith("brush.") || c.id.startsWith("preset.");
+    const before = isTool && useToolKit.getState().tempTools ? { tool: useTool.getState().tool, brush: useTool.getState().brush, at: performance.now(), code: e.code } : null;
     if (c.run() === false) continue;
+    if (before) hold = before;
+    noteCommand(c.id);
     e.preventDefault();
     return true;
   }
   return false;
+}
+
+const NOT_TOOL = ["tool.sizeUp", "tool.sizeDown", "tool.eraserMode", "tool.recognize", "tool.fingerDraws", "tool.previous", "tool.favorite"];
+
+/** Tecla de ferramenta segurada (para voltar ao soltar) e Ctrl/Alt segurados sozinhos. */
+let hold: { tool: ToolId; brush: string; at: number; code: string } | null = null;
+let mod: { key: "Control" | "Alt"; timer: ReturnType<typeof setTimeout> | null; prev: ToolId | null; active: boolean } | null = null;
+const HOLD_MS = 350;
+const DRAWING: ToolId[] = ["pen", "eraser", "rect", "ellipse", "diamond", "arrow", "line", "text", "laser", "laserpen", "mindmap", "frame", "vertex", "edge"];
+
+function cancelModHold() {
+  if (mod && !mod.active && mod.timer) { clearTimeout(mod.timer); mod = null; }
+}
+
+/** Ctrl segurado sozinho (com ferramenta de desenho) = Selecionar; Alt segurado = conta-gotas. Soltar volta. */
+export function handleModifierDown(e: KeyboardEvent) {
+  if (e.repeat || mod) return;
+  const t = e.target as HTMLElement | null;
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t?.isContentEditable) return;
+  const kit = useToolKit.getState();
+  const tool = useTool.getState().tool;
+  if (e.key === "Control" && kit.ctrlSelect && DRAWING.includes(tool)) {
+    mod = { key: "Control", prev: tool, active: false, timer: setTimeout(() => { if (mod) { mod.active = true; useTool.getState().setTool("select"); } }, 220) };
+  } else if (e.key === "Alt" && kit.altPick && (tool === "pen" || tool === "rect" || tool === "ellipse" || tool === "diamond" || tool === "text")) {
+    e.preventDefault(); // não abre o menu da janela no Linux/Windows
+    mod = { key: "Alt", prev: null, active: false, timer: setTimeout(() => { if (mod) { mod.active = true; useTool.getState().set({ picking: true }); } }, 220) };
+  }
+}
+
+/** Soltar teclas: desfaz as ferramentas temporárias. */
+export function handleKeyUp(e: KeyboardEvent) {
+  if (mod && e.key === mod.key) {
+    if (mod.timer) clearTimeout(mod.timer);
+    if (mod.active) {
+      if (mod.key === "Control" && mod.prev && useTool.getState().tool === "select") useTool.getState().setTool(mod.prev);
+      if (mod.key === "Alt") useTool.getState().set({ picking: false });
+    }
+    mod = null;
+  }
+  if (hold && e.code === hold.code) {
+    const h = hold;
+    hold = null;
+    if (performance.now() - h.at >= HOLD_MS) {
+      const t = useTool.getState();
+      t.setTool(h.tool);
+      if (h.tool === "pen") t.setBrush(h.brush);
+    }
+  }
 }
 
 // ---------- estado da paleta e da captura de teclas ----------

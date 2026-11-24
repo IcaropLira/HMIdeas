@@ -94,6 +94,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [x] 0.9.1: barras de bloquinhos sem alças, Inserir separado de Blocos, painéis mais limpos, vértices numerados e redondos,
   Shift+arrastar cria aresta
 - [ ] 0.9.1: validar no tablet arrastar bloquinhos com a caneta/dedo (limiar de 12 px) sem disparar a ferramenta
+- [x] 0.10 (Ferramentas): ferramentas temporárias (segurar tecla, Ctrl = Selecionar, Alt = conta-gotas), presets, favoritas,
+  recentes, histórico de ajustes, macros/sequências, busca por intenção na paleta (com blocos e sugestões)
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -416,3 +418,15 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - Grafos: vértices nomeados 1, 2, 3… (`nextVertexName`, geradores e matriz); `nodeLayout` mantém vértice redondo/cápsula;
   `LabelEditor` redondo e centralizado; Selecionar + Shift+arrastar de um vértice = aresta dirigida, Ctrl+Shift = não dirigida
   (gesto `gedge` em `selectTool`; Shift+clique sem arrastar continua somando à seleção).
+
+### Ferramentas (0.10)
+- `core/toolKit.ts` (localStorage `hm-ideas:toolkit-v1`): presets (`snapshot` guarda só as chaves da FAMÍLIA da ferramenta — `KEYS`),
+  favoritas e recentes como **ids de comando** (`tool.pen`, `brush.marker`, `preset.<id>`, `macro.<id>`), registro de comandos
+  (`noteCommand`, chamado por `runCommand` e `handleKey`), histórico de AJUSTES (`initToolKit` observa o `useTool`; rajadas de mudança
+  viram um passo após 900 ms) e macros (gravar = registrar comandos; `runMacro` repete pulando o que não se aplica).
+  Presets e macros viram comandos dinâmicos (o cache de `allCommands` usa a assinatura de pincéis + presets + macros).
+- Ferramenta temporária (`commands.ts`): segurar a tecla de uma ferramenta ≥ 350 ms e soltar volta à anterior (`hold`); Ctrl
+  segurado sozinho 220 ms com ferramenta de desenho = Selecionar; Alt = conta-gotas (`handleModifierDown`/`handleKeyUp`; `blur` solta).
+- Busca: `core/search.ts` (sem acento, sem palavras vazias, plural→singular, metade das palavras basta) + `keywords` nos comandos
+  (`KEYWORDS`). A paleta mostra recentes + sugestões pelo contexto quando vazia e blocos da biblioteca nos resultados.
+- UI: `components/QuickPanel.tsx` (painel "Acesso rápido" e item da barra).

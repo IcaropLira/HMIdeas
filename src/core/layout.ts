@@ -8,7 +8,7 @@ import { create } from "zustand";
 export type ItemId =
   | "select" | "pen" | "text" | "eraser" | "laser" | "hand" | "shape" | "line" | "mindmap" | "frame" | "vertex" | "edge"
   | "undo" | "redo" | "options" | "colors" | "size" | "brushes" | "blocks" | "insert" | "templates" | "science" | "mapPanel"
-  | "layers" | "paper" | "finger";
+  | "layers" | "paper" | "finger" | "quick";
 
 export const ITEMS: { id: ItemId; label: string; hint: string; kind: "tool" | "action" | "widget" }[] = [
   { id: "select", label: "Selecionar / laço", hint: "Selecionar e laço", kind: "tool" },
@@ -26,6 +26,7 @@ export const ITEMS: { id: ItemId; label: string; hint: string; kind: "tool" | "a
   { id: "undo", label: "Desfazer", hint: "Desfazer", kind: "action" },
   { id: "redo", label: "Refazer", hint: "Refazer", kind: "action" },
   { id: "options", label: "Opções da ferramenta", hint: "Ajustes da ferramenta ativa", kind: "action" },
+  { id: "quick", label: "Acesso rápido", hint: "Favoritas, recentes, presets e macros", kind: "action" },
   { id: "colors", label: "Cores", hint: "Cores rápidas e seletor", kind: "widget" },
   { id: "size", label: "Espessura", hint: "Espessura do traço/borracha", kind: "widget" },
   { id: "brushes", label: "Pincéis", hint: "Painel de pincéis", kind: "action" },
@@ -82,7 +83,7 @@ export function makeLayout(spec: Partial<Record<Side, ItemId[][]>>, floats: { it
 
 /** Padrão (visual clássico): ferramentas embaixo; criar à esquerda; cor e espessura à direita. */
 export const DEFAULT_LAYOUT: Layout = makeLayout({
-  bottom: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options"], ["undo", "redo"]],
+  bottom: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options", "quick"], ["undo", "redo"]],
   left: [["blocks", "insert", "templates"], ["mindmap", "frame", "mapPanel"], ["science", "vertex", "edge"], ["paper"]],
   right: [["brushes", "colors", "size"], ["layers"]],
 });

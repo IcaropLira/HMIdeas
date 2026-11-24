@@ -35,7 +35,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "geral", name: "Geral", hint: "Menus, opções da ferramenta, propriedades e objetos à direita",
     make: () => ({
       chrome: FULL,
-      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options"], ["blocks", "insert", "templates"]], bottom: [["mindmap", "frame", "vertex", "edge"], ["colors", "size"]] }),
+      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options", "quick"], ["blocks", "insert", "templates"]], bottom: [["mindmap", "frame", "vertex", "edge"], ["colors", "size"]] }),
       dock: dockOf({ right: { size: 300, stacks: [{ panels: ["props", "transform", "align"], size: 1.1 }, { panels: ["objects", "layers", "history"], size: 1 }] } }),
     }),
   },
@@ -67,7 +67,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "estudos", name: "Estudos", hint: "Biblioteca de blocos, grafos, matemática e modelos",
     make: () => ({
       chrome: FULL,
-      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options"]], bottom: [["vertex", "edge", "science", "mindmap"], ["blocks", "insert", "templates"], ["colors", "size"]] }),
+      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options", "quick"]], bottom: [["vertex", "edge", "science", "mindmap"], ["blocks", "insert", "templates"], ["colors", "size"]] }),
       dock: dockOf({ right: { size: 330, stacks: [{ panels: ["library", "materials"], size: 1.3 }, { panels: ["science", "props"], size: 1 }] } }),
     }),
   },
@@ -75,7 +75,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "organizacao", name: "Organização", hint: "Objetos e camadas à esquerda; alinhar e transformar à direita",
     make: () => ({
       chrome: FULL,
-      toolbar: makeLayout({ bottom: [["select", "pen", "text", "eraser", "hand"], ["shape", "line", "options"], ["blocks", "insert"]] }),
+      toolbar: makeLayout({ bottom: [["select", "pen", "text", "eraser", "hand"], ["shape", "line", "options", "quick"], ["blocks", "insert"]] }),
       dock: dockOf({
         left: { size: 280, stacks: [{ panels: ["objects", "layers"], size: 1 }] },
         right: { size: 290, stacks: [{ panels: ["align"], size: 1.2 }, { panels: ["transform", "props"], size: 1 }] },

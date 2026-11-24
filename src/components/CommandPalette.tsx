@@ -1,9 +1,12 @@
 // Paleta de comandos (Ctrl+K): procura qualquer ação pelo nome e mostra o atalho dela.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { allCommands, inScope, runCommand, shortcutOf, usePalette } from "./commands";
+import { scoreText } from "../core/search";
+import { useToolKit } from "../core/toolKit";
+import { useSel } from "../core/store";
+import { searchLibrary } from "../core/blocks/library";
+import { insertLibItemById } from "./BlockGallery";
 
-const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-const RECENT_KEY = "hm-ideas:palette-recent";
 
 export function CommandPalette() {
   const open = usePalette((s) => s.open);
@@ -12,39 +15,51 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (open) { setQ(""); setI(0); } }, [open]);
 
-  const results = useMemo(() => {
+  type Row = { id: string; label: string; cat: string; key: string; on?: boolean; run: () => void; section?: string };
+  const results = useMemo((): Row[] => {
     if (!open) return [];
-    const recent: string[] = (() => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"); } catch { return []; } })();
-    const words = fold(q).split(/\s+/).filter(Boolean);
+    const recentIds = useToolKit.getState().commandLog.map((c) => c.id);
     const all = allCommands().filter((c) => !c.when || c.when());
+    const row = (c: (typeof all)[number], section?: string): Row => ({ id: c.id, label: c.label, cat: c.cat, key: shortcutOf(c.id), on: c.checked?.(), run: () => runCommand(c.id), section });
+    if (!q.trim()) {
+      // vazio: recentes + sugestões para o que está acontecendo agora
+      const sel = useSel.getState().ids.length;
+      const sug = sel > 1 ? ["obj.group", "dist.h", "align.left", "edit.duplicate", "arr.grid", "eq.both"]
+        : sel === 1 ? ["edit.duplicate", "obj.lock", "arr.front", "panel.props", "edit.selectSame"]
+        : ["insert.sticky", "insert.library", "insert.templates", "panel.quick", "macro.record", "preset.save"];
+      const byId = (id: string) => all.find((c) => c.id === id);
+      const rec = recentIds.map(byId).filter((c): c is (typeof all)[number] => !!c && inScope(c.scope)).slice(0, 6);
+      const out = [...rec.map((c) => row(c, "Recentes")), ...sug.map(byId).filter((c): c is (typeof all)[number] => !!c && !rec.includes(c)).map((c) => row(c, "Sugestões"))];
+      return out;
+    }
     const scored = all
       .map((c) => {
-        const hay = fold(`${c.label} ${c.cat} ${c.hint ?? ""}`);
-        if (!words.every((w) => hay.includes(w))) return null;
-        let score = 0;
-        if (words.length && fold(c.label).startsWith(words[0])) score += 3;
-        const r = recent.indexOf(c.id);
-        if (r >= 0) score += 2 - r * 0.1;
-        if (!inScope(c.scope)) score -= 5;
+        let score = scoreText(q, c.label, `${c.cat} ${c.hint ?? ""} ${c.keywords ?? ""}`);
+        if (!score) return null;
+        const r = recentIds.indexOf(c.id);
+        if (r >= 0) score += 0.6 - r * 0.02;
+        if (!inScope(c.scope)) score -= 1.5;
         return { c, score };
       })
       .filter((x): x is { c: (typeof all)[number]; score: number } => !!x)
-      .sort((a, b) => b.score - a.score);
-    return scored.slice(0, 60).map((x) => x.c);
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 40)
+      .map((x) => row(x.c));
+    // blocos da biblioteca também aparecem ("Bloco: Post-it amarelo")
+    const blocks = q.trim().length >= 2
+      ? searchLibrary(q).slice(0, 5).map((it): Row => ({ id: `lib.${it.id}`, label: `Bloco: ${it.label}`, cat: "Biblioteca", key: "", run: () => { insertLibItemById(it.id); } }))
+      : [];
+    return [...scored.slice(0, 30), ...blocks, ...scored.slice(30)];
   }, [open, q]);
 
   useEffect(() => { listRef.current?.querySelector(".pal-item.on")?.scrollIntoView({ block: "nearest" }); }, [i]);
 
   if (!open) return null;
   const close = () => usePalette.getState().setOpen(false);
-  const run = (id: string) => {
+  const run = (r: Row) => {
     close();
-    try {
-      const recent: string[] = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
-      localStorage.setItem(RECENT_KEY, JSON.stringify([id, ...recent.filter((x) => x !== id)].slice(0, 8)));
-    } catch { /* sem armazenamento */ }
     // deixa a paleta sumir antes (comandos que abrem janelas ou pedem foco)
-    requestAnimationFrame(() => runCommand(id));
+    requestAnimationFrame(() => r.run());
   };
 
   return (
@@ -53,29 +68,28 @@ export function CommandPalette() {
         <input
           autoFocus
           className="pal-input"
-          placeholder="O que você quer fazer? (ex.: agrupar, alinhar, caneta, painel)"
+          placeholder="O que você quer fazer? (ex.: agrupar, mesmo espaço, post-it, caneta azul)"
           value={q}
           onChange={(e) => { setQ(e.target.value); setI(0); }}
           onKeyDown={(e) => {
             if (e.key === "Escape") { e.preventDefault(); close(); }
             else if (e.key === "ArrowDown") { e.preventDefault(); setI((v) => Math.min(results.length - 1, v + 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setI((v) => Math.max(0, v - 1)); }
-            else if (e.key === "Enter" && results[i]) { e.preventDefault(); run(results[i].id); }
+            else if (e.key === "Enter" && results[i]) { e.preventDefault(); run(results[i]); }
           }}
           aria-label="Procurar comando"
         />
         <div className="pal-list" role="listbox" ref={listRef}>
-          {results.map((c, k) => {
-            const key = shortcutOf(c.id);
-            const on = c.checked?.();
-            return (
-              <button key={c.id} role="option" aria-selected={k === i} className={k === i ? "pal-item on" : "pal-item"} onMouseEnter={() => setI(k)} onClick={() => run(c.id)}>
+          {results.map((c, k) => (
+            <div key={c.id + k}>
+              {c.section && c.section !== results[k - 1]?.section && <div className="pal-section">{c.section}</div>}
+              <button role="option" aria-selected={k === i} className={k === i ? "pal-item on" : "pal-item"} onMouseEnter={() => setI(k)} onClick={() => run(c)}>
                 <span className="pal-cat">{c.cat}</span>
-                <span className="pal-label"><span className="pal-check">{on ? "✓" : ""}</span>{c.label}</span>
-                {key && <kbd>{key}</kbd>}
+                <span className="pal-label"><span className="pal-check">{c.on ? "✓" : ""}</span>{c.label}</span>
+                {c.key && <kbd>{c.key}</kbd>}
               </button>
-            );
-          })}
+            </div>
+          ))}
           {!results.length && <p className="hint">Nada encontrado.</p>}
         </div>
       </div>

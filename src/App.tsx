@@ -1,3 +1,4 @@
+import { ExportDialog, initBackups } from "./components/ExportDialog";
 import { GraphView, OrgBar, OutlineModal } from "./components/Organize";
 import { AudioDock, ExamBar, PomodoroClock, Presenter, ReviewModal } from "./components/Study";
 import { ZoomWriter } from "./components/ZoomWriter";
@@ -51,8 +52,8 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onUp);
     window.addEventListener("blur", onBlur);
-    const stopKit = initToolKit();
-    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", onBlur); stopKit(); };
+    const stopKit = initToolKit(), stopBackups = initBackups();
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", onBlur); stopKit(); stopBackups(); };
   }, []);
 
   return (
@@ -76,6 +77,7 @@ export default function App() {
       <OrgBar />
       <OutlineModal />
       <GraphView />
+      <ExportDialog />
       <BlockEditor />
       <BlockInlineEditor />
       <PageEditor />

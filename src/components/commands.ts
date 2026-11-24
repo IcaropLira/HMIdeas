@@ -1,6 +1,7 @@
 // Registro ÚNICO de comandos do app. Teclado, menus, paleta de comandos, barra contextual e o editor de atalhos
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
+import { backupNow, pickPdfAsPages, useExport } from "./ExportDialog";
 import { openOutline, useOrgUI } from "./Organize";
 import { PROP_KEYS, SORT_KEYS } from "../core/organize";
 import { blockToMindMap, copyLink, followLink, goUp, insertBoard, mapToBlock, pasteLink, removeLink, selectSame, selectionToBoard, textsToMap, toggleIsolate } from "../core/organizeActions";
@@ -156,6 +157,10 @@ function buildCommands(): Command[] {
     { id: "tape.revealAll", cat: "Ferramentas", label: "Revelar todas as fitas", run: () => setAllTapes(true) },
     { id: "tape.hideAll", cat: "Ferramentas", label: "Esconder todas as fitas", run: () => setAllTapes(false) },
     { id: "view.zoomWriter", cat: "Exibir", label: "Janela de zoom para escrever", keys: ["Ctrl+Alt+W"], checked: () => useZoomWriter.getState().open, run: () => useZoomWriter.getState().toggle() },
+    { id: "file.export", cat: "Arquivo", label: "Exportar (PNG, JPEG, SVG, PDF)…", keys: ["Ctrl+Shift+E"], run: () => useExport.getState().set({ open: true, scope: useSel.getState().ids.length ? "selection" : "page" }) },
+    { id: "file.exportNotebook", cat: "Arquivo", label: "Exportar caderno inteiro em PDF…", run: () => useExport.getState().set({ open: true, scope: "notebook" }) },
+    { id: "file.importPdf", cat: "Arquivo", label: "Importar PDF como páginas…", run: pickPdfAsPages },
+    { id: "file.backup", cat: "Arquivo", label: "Fazer cópia de segurança agora", run: () => void backupNow() },
     { id: "org.panel", cat: "Organizar", label: "Painel Organizar", run: () => showPanel("organize") },
     { id: "org.board", cat: "Inserir", label: "Quadro aninhado (quadro dentro do quadro)", keys: ["Ctrl+Alt+B"], run: () => insertBoard() },
     { id: "org.selToBoard", cat: "Organizar", label: "Levar a seleção para um quadro aninhado", scope: "selection", run: selectionToBoard },

@@ -106,6 +106,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   quadros e gravação de áudio sincronizada com os traços
 - [x] 0.15 (Organização visual): quadros aninhados, modo tópicos do mapa, links internos e referências, grafo do caderno,
   conversões (mapa ↔ lista/tarefas/kanban, textos → mapa), isolamento, organizar em grade por propriedade, selecionar parecidos
+- [x] 0.16 (Exportar/importar): PNG/JPEG/SVG/PDF da página, seleção, quadro ou caderno; PDF como páginas; cópias de segurança
+  automáticas com versões; exportar/importar o pacote de configurações
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -507,3 +509,19 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   `arrangeSelection` (em `alignActions.ts`, usa as unidades da seleção).
 - UI `components/Organize.tsx`: `OrgBar` (trilha, isolamento, ↗ seguir link), `OutlineModal` (Tab/Shift+Tab mudam o nível, Ctrl+Enter
   aplica), `GraphView` e painel `organize`. `CanvasView` guarda os "fantasmas de fora" (`extGhosts`) e os devolve depois da borracha.
+
+### Exportar/importar (0.16)
+- `render/exportSvg.ts` (sem Pixi): `elementSvg`/`exportSvg` (texto de verdade com escape, traço com pressão em trechos, imagens
+  embutidas, blocos/figuras pelos mesmos `blockSvg`/`figureSvg`, papel via `drawPaperPattern` em coordenadas do mundo) e `contentBounds`.
+  PNG/JPEG = esse SVG desenhado num `<canvas>` (`rasterize`, limitado a 8192 px / 40 MP). Fontes embutidas não valem dentro do SVG-imagem:
+  o texto cai nas fontes do sistema.
+- `core/pdfWrite.ts` (puro, sem dependência): PDF 1.4 com UMA imagem JPEG (DCTDecode) por página, do tamanho da folha (`pxToPt`).
+- `render/pdfImport.ts` (import dinâmico): cada página do PDF vira uma página do caderno do mesmo tamanho, imagem JPEG numa camada
+  travada "PDF" + camada "Anotações"; caderno vazio é substituído, senão entra depois da página atual (um passo de desfazer).
+- `core/backups.ts`: IndexedDB `hm-ideas-backups` (fotos do caderno ativo, hash FNV-1a para não repetir, `pruneList` deixa 15 por caderno).
+  `initBackups` (App): a cada 5 min se mudou e ao esconder o app. Restaurar usa `editDoc` (Ctrl+Z volta).
+- `core/settingsBundle.ts`: junta as chaves de preferência do localStorage (`hm-ideas*`/`hmideas*`, sem o caderno ativo/autosave) e valida
+  na volta; importar grava e recarrega.
+- UI `components/ExportDialog.tsx` (`useExport`, Ctrl+Shift+E; alcance página/seleção/quadro/caderno, formato, resolução, fundo papel/
+  branco/transparente, prévia), `importPdfAsPages`/`pickPdfAsPages`, `BackupsPane` (aba Cadernos e dados). Comandos `file.export*`,
+  `file.importPdf`, `file.backup` (também no menu Arquivo).

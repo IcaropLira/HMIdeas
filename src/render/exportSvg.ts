@@ -1,6 +1,7 @@
 // Exportação (0.16): elementos → SVG (texto de verdade, imagens embutidas, papel opcional). Sem Pixi: serve para SVG,
 // e — desenhado num <canvas> — para PNG, JPEG e PDF. O mesmo desenho das prévias (ElementsPreview), em texto.
-import { HirakuElement, LinearElement, Page, isLinear } from "../core/model";
+import { HirakuElement, Layer, LinearElement, Page, isLinear } from "../core/model";
+import { clipUnits, cssBlend } from "../core/layerPro";
 import { linearPath } from "../core/linear";
 import { autoLineColor, drawPaperPattern, layerAlpha, MARGIN_COLOR } from "../core/paper";
 import { Bounds, elementBounds } from "../core/selection";
@@ -113,15 +114,17 @@ export interface SvgOpts {
   paper?: Pick<Page, "paper" | "background" | "paperScale" | "lineColor" | "size"> | null;
   /** Px por unidade do mundo (só muda width/height; o viewBox é o mundo). */
   scale?: number;
+  /** Camadas da página (0.19): ocultas saem, opacidade, modo de mesclagem e máscara de recorte entram. */
+  layers?: Layer[];
 }
 
 /** SVG completo (string) dos elementos na caixa. */
 export function exportSvg(els: HirakuElement[], o: SvgOpts): string {
   const { box } = o, w = box.maxX - box.minX, h = box.maxY - box.minY, k = o.scale ?? 1;
-  const frames = els.filter((e) => e.type === "frame").map(elementSvg).join("");
-  const rest = els.filter((e) => e.type !== "frame").map(elementSvg).join("");
+  const body = (list: HirakuElement[]) => list.filter((e) => e.type === "frame").map(elementSvg).join("") + list.filter((e) => e.type !== "frame").map(elementSvg).join("");
+  const content = o.layers?.length ? layersSvg(els, o.layers, body) : body(els);
   const bg = o.background ? `<rect x="${f(box.minX)}" y="${f(box.minY)}" width="${f(w)}" height="${f(h)}" fill="${safeColor(o.background, "#FFFFFF")}"/>` : "";
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${f(box.minX)} ${f(box.minY)} ${f(w)} ${f(h)}" width="${f(w * k)}" height="${f(h * k)}">${bg}${o.paper ? paperSvg(o.paper, box) : ""}${frames}${rest}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${f(box.minX)} ${f(box.minY)} ${f(w)} ${f(h)}" width="${f(w * k)}" height="${f(h * k)}">${bg}${o.paper ? paperSvg(o.paper, box) : ""}${content}</svg>`;
 }
 
 /** Modo de cor "tons de cinza" (0.18): embrulha o conteúdo num filtro que tira a saturação (vale no SVG e ao rasterizar). */
@@ -140,4 +143,28 @@ export function grayHex(hex: string): string {
   const y = Math.round(0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255));
   const h = y.toString(16).padStart(2, "0").toUpperCase();
   return `#${h}${h}${h}`;
+}
+
+/** Conteúdo por camada (0.19): `<g>` com opacidade e `mix-blend-mode`; recortadas usam a base como máscara de alfa. */
+function layersSvg(els: HirakuElement[], layers: Layer[], body: (l: HirakuElement[]) => string): string {
+  const ids = new Set(layers.map((l) => l.id));
+  const first = layers[0].id;
+  const of = (l: Layer) => els.filter((e) => (e.layerId && ids.has(e.layerId) ? e.layerId : first) === l.id);
+  const attrs = (l: Layer, blend = true) => {
+    const b = blend ? cssBlend(l.blend) : null;
+    return `${l.opacity < 1 ? ` opacity="${Math.round(l.opacity * 100) / 100}"` : ""}${b ? ` style="mix-blend-mode:${b}"` : ""}`;
+  };
+  let out = "", n = 0;
+  for (const u of clipUnits(layers)) {
+    if (!u.base.visible) continue;
+    const base = body(of(u.base));
+    const clipped = u.clipped.filter((l) => l.visible);
+    if (!clipped.length) { if (base) out += `<g${attrs(u.base)}>${base}</g>`; continue; }
+    const id = `hm-clip-${n++}`;
+    const inner = clipped.map((l) => `<g${attrs(l, false)}>${body(of(l))}</g>`).join("");
+    out += `<g${cssBlend(u.base.blend) ? ` style="mix-blend-mode:${cssBlend(u.base.blend)};isolation:isolate"` : ' style="isolation:isolate"'}>`
+      + `<mask id="${id}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-1e7" y="-1e7" width="2e7" height="2e7"><g${attrs(u.base, false)}>${base}</g></mask>`
+      + `<g${attrs(u.base, false)}>${base}</g><g mask="url(#${id})">${inner}</g></g>`;
+  }
+  return out;
 }

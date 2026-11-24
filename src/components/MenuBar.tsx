@@ -22,6 +22,8 @@ const MENUS: { label: string; items: () => Item[] }[] = [
     "view.pages", "view.menubar", "view.optionsbar", "view.statusbar", "view.pills", "-", "view.focus"] },
   { label: "Inserir", items: () => ["insert.library", "insert.templates", "insert.mapTemplates", "-", "insert.sticky", "insert.todo", "insert.table", "insert.card", "insert.pageBlock", "-", "file.attach", "tool.text", "tool.mindmap", "tool.frame"] },
   { label: "Objeto", items: () => ["obj.group", "obj.ungroup", "obj.release", "-", "obj.enter", "obj.exit", "-", "obj.lock", "obj.unlockAll", "obj.hide", "obj.showAll", "-", "obj.frame", "obj.edit", "obj.connect"] },
+  { label: "Camada", items: () => ["layer.new", "layer.duplicate", "layer.viaCopy", "layer.viaCut", "-", "layer.clip", "layer.solo", "-",
+    "layer.mergeDown", "layer.mergeVisible", "layer.flatten", "-", "layer.blendNext", "layer.blendPrev", "layer.above", "layer.below", "-", "panel.layers"] },
   { label: "Organizar", items: () => [
     "arr.front", "arr.forward", "arr.backward", "arr.back", "-",
     { label: "Alinhar", items: ["align.left", "align.hcenter", "align.right", "-", "align.top", "align.vcenter", "align.bottom"] },

@@ -404,14 +404,36 @@ export interface Layer {
   opacity: number;
   /** Mistura com o que está embaixo (como no Photoshop). Ausente = normal. */
   blend?: LayerBlend;
+  /** Máscara de recorte (0.19): só aparece onde a camada de baixo (a "base") tem conteúdo. */
+  clip?: boolean;
+  /** Cor de etiqueta (0.19), como as cores de camada do Photoshop. */
+  color?: LayerColor;
 }
 
-export type LayerBlend = "normal" | "multiply" | "screen" | "add";
-export const LAYER_BLENDS: { id: LayerBlend; label: string }[] = [
-  { id: "normal", label: "Normal" },
-  { id: "multiply", label: "Multiplicar" },
-  { id: "screen", label: "Tela" },
-  { id: "add", label: "Clarear (somar)" },
+/** Todos os modos de mesclagem do Photoshop (0.19). "add" = Subexposição linear (Adicionar), id antigo mantido. */
+export type LayerBlend =
+  | "normal" | "dissolve"
+  | "darken" | "multiply" | "color-burn" | "linear-burn" | "darker-color"
+  | "lighten" | "screen" | "color-dodge" | "add" | "lighter-color"
+  | "overlay" | "soft-light" | "hard-light" | "vivid-light" | "linear-light" | "pin-light" | "hard-mix"
+  | "difference" | "exclusion" | "subtract" | "divide"
+  | "hue" | "saturation" | "color" | "luminosity";
+export const BLEND_GROUPS: { label: string; modes: { id: LayerBlend; label: string }[] }[] = [
+  { label: "Normal", modes: [{ id: "normal", label: "Normal" }, { id: "dissolve", label: "Dissolver" }] },
+  { label: "Escurecer", modes: [{ id: "darken", label: "Escurecer" }, { id: "multiply", label: "Multiplicação" }, { id: "color-burn", label: "Superexposição de cores" }, { id: "linear-burn", label: "Superexposição linear" }, { id: "darker-color", label: "Cor mais escura" }] },
+  { label: "Clarear", modes: [{ id: "lighten", label: "Clarear" }, { id: "screen", label: "Divisão (Tela)" }, { id: "color-dodge", label: "Subexposição de cores" }, { id: "add", label: "Subexposição linear (Adicionar)" }, { id: "lighter-color", label: "Cor mais clara" }] },
+  { label: "Contraste", modes: [{ id: "overlay", label: "Sobrepor" }, { id: "soft-light", label: "Luz suave" }, { id: "hard-light", label: "Luz direta" }, { id: "vivid-light", label: "Luz brilhante" }, { id: "linear-light", label: "Luz linear" }, { id: "pin-light", label: "Luz do pino" }, { id: "hard-mix", label: "Mistura sólida" }] },
+  { label: "Inversão", modes: [{ id: "difference", label: "Diferença" }, { id: "exclusion", label: "Exclusão" }, { id: "subtract", label: "Subtrair" }, { id: "divide", label: "Dividir" }] },
+  { label: "Componente", modes: [{ id: "hue", label: "Matiz" }, { id: "saturation", label: "Saturação" }, { id: "color", label: "Cor" }, { id: "luminosity", label: "Luminosidade" }] },
+];
+export const LAYER_BLENDS: { id: LayerBlend; label: string }[] = BLEND_GROUPS.flatMap((g) => g.modes);
+const BLEND_IDS = new Set<string>(LAYER_BLENDS.map((b) => b.id));
+
+export type LayerColor = "red" | "orange" | "yellow" | "green" | "blue" | "violet" | "gray";
+export const LAYER_COLORS: { id: LayerColor; label: string; hex: string }[] = [
+  { id: "red", label: "Vermelho", hex: "#E5484D" }, { id: "orange", label: "Laranja", hex: "#F76B15" }, { id: "yellow", label: "Amarelo", hex: "#E2B400" },
+  { id: "green", label: "Verde", hex: "#30A46C" }, { id: "blue", label: "Azul", hex: "#3E63DD" }, { id: "violet", label: "Violeta", hex: "#8E4EC6" },
+  { id: "gray", label: "Cinza", hex: "#8B8D98" },
 ];
 
 export const makeLayer = (name = "Camada 1", id: ID = newId()): Layer => ({ id, name, visible: true, locked: false, opacity: 1 });
@@ -609,8 +631,10 @@ function cleanLayers(raw: any): Layer[] {
         name: str(l.name, `Camada ${out.length + 1}`).slice(0, 60),
         visible: l.visible !== false,
         locked: l.locked === true,
-        opacity: Math.max(0.05, Math.min(1, num(l.opacity, 1))),
-        ...(["multiply", "screen", "add"].includes(l.blend) ? { blend: l.blend } : {}),
+        opacity: Math.max(0, Math.min(1, num(l.opacity, 1))),
+        ...(BLEND_IDS.has(l.blend) && l.blend !== "normal" ? { blend: l.blend } : {}),
+        ...(l.clip === true ? { clip: true } : {}),
+        ...(LAYER_COLORS.some((c) => c.id === l.color) ? { color: l.color } : {}),
       });
     }
   }

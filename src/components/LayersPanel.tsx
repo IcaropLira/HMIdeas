@@ -3,7 +3,9 @@
 // a camada ativa é só interface.
 import { useState } from "react";
 import { Icon } from "./Icon";
-import { LAYER_BLENDS, Layer } from "../core/model";
+import { BLEND_GROUPS, LAYER_BLENDS, LAYER_COLORS, Layer } from "../core/model";
+import { LayerFilter, clipBase, filterLayers } from "../core/layerPro";
+import * as LA from "./layerActions";
 import {
   ZMove, activeLayerId, addLayer, duplicateLayer, elementsOfLayer, mergeDown, moveLayer, moveToLayer, patchLayer, removeLayer, reorder, useLayerUI,
 } from "../core/layers";
@@ -41,7 +43,9 @@ export function LayersPanel() {
   const [name, setName] = useState("");
   const edit = useDoc.getState().editPage;
   const setActive = (id: string) => useLayerUI.getState().setActive(page.id, id);
-  const layers = [...page.layers].reverse(); // de cima para baixo
+  const [filter, setFilter] = useState<LayerFilter>({ text: "", kind: "all" });
+  const shown = new Set(filterLayers(page.layers, filter).map((l) => l.id));
+  const layers = [...page.layers].reverse().filter((l) => shown.has(l.id)); // de cima para baixo
   const cur = page.layers.find((l) => l.id === active)!;
   const idx = page.layers.indexOf(cur);
 
@@ -75,14 +79,32 @@ export function LayersPanel() {
         </div>
       </div>
 
+      <div className="layer-tools">
+        <button className="btn sm" title="Nova camada via cópia (Ctrl+J)" aria-label="Camada via cópia" onClick={LA.viaCopy}><Icon><rect x="4" y="4" width="11" height="11" rx="2" /><rect x="9" y="9" width="11" height="11" rx="2" /></Icon></button>
+        <button className="btn sm" disabled={!sel.length} title="Nova camada via recorte (Ctrl+Shift+J)" aria-label="Camada via recorte" onClick={LA.viaCut}><Icon><circle cx="6" cy="7" r="2.5" /><circle cx="6" cy="17" r="2.5" /><path d="M8 8.5l12 7M8 15.5l12-7" /></Icon></button>
+        <button className={cur.clip ? "btn sm on" : "btn sm"} disabled={idx <= 0 && !cur.clip} title="Máscara de recorte: só aparece onde a camada de baixo tem conteúdo (Ctrl+Alt+C)" aria-label="Máscara de recorte" aria-pressed={!!cur.clip} onClick={() => LA.toggleClip(active)}><Icon><path d="M7 4v9a3 3 0 003 3h9" /><path d="M15 12l4 4-4 4" /></Icon></button>
+        <button className="btn sm" title="Mostrar só a camada ativa (Alt+clique no olho)" aria-label="Solo" onClick={() => LA.soloActive(active)}><Icon><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></Icon></button>
+        <button className="btn sm" disabled={page.layers.filter((l) => l.visible).length < 2} title="Mesclar visíveis (Ctrl+Alt+Shift+E)" aria-label="Mesclar visíveis" onClick={LA.mergeAllVisible}><Icon><path d="M4 6h16M4 12h16" /><path d="M12 14v6M9 17l3 3 3-3" /></Icon></button>
+        <button className="btn sm" disabled={page.layers.length < 2} title="Achatar imagem (tudo numa camada)" aria-label="Achatar imagem" onClick={LA.flattenImage}><Icon><path d="M4 16l8 4 8-4M4 12l8 4 8-4" /></Icon></button>
+      </div>
+
+      <div className="layer-filter">
+        <input type="search" value={filter.text} placeholder="Procurar camada ou modo" aria-label="Procurar camada" onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
+        <select value={filter.kind} aria-label="Filtrar camadas" onChange={(e) => setFilter({ ...filter, kind: e.target.value as LayerFilter["kind"] })}>
+          <option value="all">Todas</option><option value="visible">Visíveis</option><option value="hidden">Ocultas</option><option value="locked">Travadas</option>
+          <option value="clip">Recortadas</option><option value="blend">Com mesclagem</option><option value="color">Com cor</option>
+        </select>
+      </div>
+
       <ul className="layer-list" role="listbox" aria-label="Camadas da página">
         {layers.map((l) => {
           const n = elementsOfLayer(page, l.id).length;
           const on = l.id === active;
           return (
-            <li key={l.id} role="option" aria-selected={on} className={on ? "layer on" : "layer"} onClick={() => setActive(l.id)}>
-              <button className={l.visible ? "lbtn" : "lbtn off"} aria-label={l.visible ? "Ocultar camada" : "Mostrar camada"} title={l.visible ? "Ocultar" : "Mostrar"}
-                onClick={(e) => { e.stopPropagation(); edit((p) => patchLayer(p, l.id, { visible: !l.visible })); }}>
+            <li key={l.id} role="option" aria-selected={on} className={["layer", on && "on", clipBase(page.layers, page.layers.indexOf(l)) !== null && "clipped"].filter(Boolean).join(" ")} onClick={() => setActive(l.id)}
+              style={l.color ? { boxShadow: `inset 4px 0 0 ${LAYER_COLORS.find((c) => c.id === l.color)?.hex}` } : undefined}>
+              <button className={l.visible ? "lbtn" : "lbtn off"} aria-label={l.visible ? "Ocultar camada" : "Mostrar camada"} title={l.visible ? "Ocultar (Alt+clique: só esta)" : "Mostrar (Alt+clique: só esta)"}
+                onClick={(e) => { e.stopPropagation(); if (e.altKey) { LA.soloActive(l.id); return; } edit((p) => patchLayer(p, l.id, { visible: !l.visible })); }}>
                 <Icon size={18}>{l.visible
                   ? <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></>
                   : <><path d="M4 4l16 16" /><path d="M9.9 5.8A9 9 0 0112 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 01-3 3.7M6.3 7.6A17 17 0 002.5 12S6 18.5 12 18.5a9 9 0 004-.9" /></>}</Icon>
@@ -96,7 +118,7 @@ export function LayersPanel() {
                 ) : (
                   <b onDoubleClick={(e) => { e.stopPropagation(); setEditing(l.id); setName(l.name); }} title="Duplo clique para renomear">{l.name}</b>
                 )}
-                <small>{n} {n === 1 ? "elemento" : "elementos"}{l.opacity < 1 ? ` · ${Math.round(l.opacity * 100)}%` : ""}</small>
+                <small>{n} {n === 1 ? "elemento" : "elementos"}{l.opacity < 1 ? ` · ${Math.round(l.opacity * 100)}%` : ""}{l.blend ? ` · ${LAYER_BLENDS.find((b) => b.id === l.blend)?.label}` : ""}</small>
               </div>
               <button className={l.locked ? "lbtn lock on" : "lbtn lock"} aria-label={l.locked ? "Destravar camada" : "Travar camada"} title={l.locked ? "Travada (não seleciona nem apaga)" : "Travar"}
                 onClick={(e) => { e.stopPropagation(); edit((p) => patchLayer(p, l.id, { locked: !l.locked })); }}>
@@ -110,16 +132,24 @@ export function LayersPanel() {
       <div className="layer-props" aria-label={`Camada ativa: ${cur.name}`}>
         <label className="prow">
           <span>Opacidade</span>
-          <input type="range" min={0.05} max={1} step={0.05} value={cur.opacity} onChange={(e) => edit((p) => patchLayer(p, active, { opacity: +e.target.value }))} aria-label={`Opacidade de ${cur.name}`} />
+          <input type="range" min={0} max={1} step={0.01} value={cur.opacity} onChange={(e) => edit((p) => patchLayer(p, active, { opacity: +e.target.value }))} aria-label={`Opacidade de ${cur.name}`} />
           <output>{Math.round(cur.opacity * 100)}%</output>
         </label>
         <label className="prow">
           <span>Mistura</span>
           <select className="ob-select" value={cur.blend ?? "normal"} aria-label="Mistura da camada"
             onChange={(e) => { const v = e.target.value; edit((p) => ({ ...p, layers: p.layers.map((l) => (l.id === active ? { ...l, blend: v === "normal" ? undefined : (v as typeof l.blend) } : l)) })); }}>
-            {LAYER_BLENDS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+            {BLEND_GROUPS.map((g) => <optgroup key={g.label} label={g.label}>{g.modes.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}</optgroup>)}
           </select>
         </label>
+        <div className="prow layer-colors" role="radiogroup" aria-label="Cor da camada">
+          <span>Cor</span>
+          <button role="radio" aria-checked={!cur.color} className={!cur.color ? "lcol none on" : "lcol none"} title="Sem cor" aria-label="Sem cor" onClick={() => edit((p) => patchLayer(p, active, { color: undefined }))} />
+          {LAYER_COLORS.map((c) => (
+            <button key={c.id} role="radio" aria-checked={cur.color === c.id} className={cur.color === c.id ? "lcol on" : "lcol"} style={{ background: c.hex }} title={c.label} aria-label={c.label}
+              onClick={() => edit((p) => patchLayer(p, active, { color: c.id }))} />
+          ))}
+        </div>
       </div>
       {sel.length > 0 && (
         <button className="chip wide" onClick={() => edit((p) => moveToLayer(p, sel, active))} title="Leva os elementos selecionados para a camada ativa">

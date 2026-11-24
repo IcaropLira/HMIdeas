@@ -82,6 +82,7 @@ async function runExport(scope: Scope, fmt: Format, scale: number, bg: Bg, name:
       box: j.c.box,
       background: bg === "transparent" && !opaque ? null : bg === "white" ? "#FFFFFF" : paperBg(j.p),
       paper: bg === "paper" ? j.p : null,
+      layers: j.p.layers,
     });
     return gray ? grayscaleSvg(svg) : svg;
   };
@@ -121,7 +122,7 @@ export function ExportDialog() {
     if (!open || scope === "notebook") return null;
     const c = scopeContent(page, scope, sel);
     if (!c) return null;
-    const svg = exportSvg(c.els, { box: c.box, background: bg === "transparent" || (bg === "paper" && page.transparent) ? null : bg === "white" ? "#FFFFFF" : page.background, paper: bg === "paper" ? page : null });
+    const svg = exportSvg(c.els, { box: c.box, background: bg === "transparent" || (bg === "paper" && page.transparent) ? null : bg === "white" ? "#FFFFFF" : page.background, paper: bg === "paper" ? page : null, layers: page.layers });
     return { svg: gray ? grayscaleSvg(svg) : svg, w: c.box.maxX - c.box.minX, h: c.box.maxY - c.box.minY };
   }, [open, scope, page, sel, bg, gray]);
   useEffect(() => {

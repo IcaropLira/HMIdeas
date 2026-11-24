@@ -2,6 +2,8 @@
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
 import { openNewDocument } from "./NewDocumentDialog";
+import * as L from "./layerActions";
+import { activeLayerId } from "../core/layers";
 import { ENGINES } from "../core/engine";
 import { setEngine } from "./EnginePicker";
 import { backupNow, pickPdfAsPages, useExport } from "./ExportDialog";
@@ -45,8 +47,8 @@ import { copyWithMark, pasteFromButton } from "./clipboard";
 import { insertBlock } from "./BlockGallery";
 
 export type CmdCat =
-  | "Arquivo" | "Editar" | "Exibir" | "Inserir" | "Objeto" | "Organizar" | "Ferramentas" | "Pincéis" | "Presets" | "Macros" | "Mapa mental" | "Janela" | "Ajuda";
-export const CATEGORIES: CmdCat[] = ["Arquivo", "Editar", "Exibir", "Inserir", "Objeto", "Organizar", "Ferramentas", "Pincéis", "Presets", "Macros", "Mapa mental", "Janela", "Ajuda"];
+  | "Arquivo" | "Editar" | "Exibir" | "Inserir" | "Objeto" | "Camada" | "Organizar" | "Ferramentas" | "Pincéis" | "Presets" | "Macros" | "Mapa mental" | "Janela" | "Ajuda";
+export const CATEGORIES: CmdCat[] = ["Arquivo", "Editar", "Exibir", "Inserir", "Objeto", "Camada", "Organizar", "Ferramentas", "Pincéis", "Presets", "Macros", "Mapa mental", "Janela", "Ajuda"];
 
 export interface Command extends KeyedCommand {
   cat: CmdCat;
@@ -258,6 +260,19 @@ function buildCommands(): Command[] {
     { id: "obj.connect", cat: "Objeto", label: "Ligar os dois selecionados com seta", keys: ["K"], run: () => connectSelection() },
 
     // Organizar
+    { id: "layer.new", cat: "Camada", label: "Nova camada", keys: ["Ctrl+Shift+N"], run: L.newLayer },
+    { id: "layer.duplicate", cat: "Camada", label: "Duplicar camada", run: L.duplicateActive },
+    { id: "layer.viaCopy", cat: "Camada", label: "Nova camada via cópia", keys: ["Ctrl+J"], run: L.viaCopy },
+    { id: "layer.viaCut", cat: "Camada", label: "Nova camada via recorte", keys: ["Ctrl+Shift+J"], scope: "selection", run: L.viaCut },
+    { id: "layer.mergeDown", cat: "Camada", label: "Mesclar com a de baixo", keys: ["Ctrl+E"], run: L.mergeActiveDown },
+    { id: "layer.mergeVisible", cat: "Camada", label: "Mesclar visíveis", keys: ["Ctrl+Alt+Shift+E"], run: L.mergeAllVisible },
+    { id: "layer.flatten", cat: "Camada", label: "Achatar imagem", run: L.flattenImage },
+    { id: "layer.clip", cat: "Camada", label: "Criar/soltar máscara de recorte", keys: ["Ctrl+Alt+C"], checked: () => !!activeLayerOf().clip, run: () => L.toggleClip() },
+    { id: "layer.solo", cat: "Camada", label: "Mostrar só a camada ativa (solo)", run: () => L.soloActive() },
+    { id: "layer.blendNext", cat: "Camada", label: "Próximo modo de mesclagem", keys: ["Shift+="], repeat: true, run: () => L.stepBlend(1) },
+    { id: "layer.blendPrev", cat: "Camada", label: "Modo de mesclagem anterior", keys: ["Shift+-"], repeat: true, run: () => L.stepBlend(-1) },
+    { id: "layer.above", cat: "Camada", label: "Selecionar a camada de cima", keys: ["Alt+]"], run: () => L.stepActive(1) },
+    { id: "layer.below", cat: "Camada", label: "Selecionar a camada de baixo", keys: ["Alt+["], run: () => L.stepActive(-1) },
     { id: "arr.front", cat: "Organizar", label: "Trazer para a frente", keys: ["Ctrl+Shift+]"], scope: "selection", run: () => zSelection("front") },
     { id: "arr.forward", cat: "Organizar", label: "Avançar", keys: ["Ctrl+]"], scope: "selection", repeat: true, run: () => zSelection("forward") },
     { id: "arr.backward", cat: "Organizar", label: "Recuar", keys: ["Ctrl+["], scope: "selection", repeat: true, run: () => zSelection("backward") },
@@ -535,3 +550,9 @@ export const usePalette = create<PaletteState>((set) => ({ open: false, setOpen:
 /** Comando cuja tecla está sendo gravada no editor de atalhos (o teclado do app fica mudo enquanto isso). */
 interface CaptureState { id: string | null; set: (id: string | null) => void }
 export const useCapture = create<CaptureState>((set) => ({ id: null, set: (id) => set({ id }) }));
+
+/** Camada ativa da página atual (para marcas de "ligado" nos menus). */
+function activeLayerOf() {
+  const p = selectActivePage(useDoc.getState());
+  return p.layers.find((l) => l.id === activeLayerId(p)) ?? p.layers[0];
+}

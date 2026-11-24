@@ -5,12 +5,13 @@
 
 export type PanelId =
   | "props" | "transform" | "align" | "objects" | "layers" | "colors" | "brushes" | "history" | "navigator"
-  | "library" | "materials" | "shortcuts" | "text" | "tools" | "paper" | "map" | "science";
+  | "library" | "materials" | "shortcuts" | "text" | "tools" | "paper" | "map" | "science" | "quick";
 
 export interface PanelInfo { id: PanelId; label: string; hint: string }
 
 /** Ordem = ordem no menu Janela. */
 export const PANELS: PanelInfo[] = [
+  { id: "quick", label: "Acesso rápido", hint: "Favoritas, recentes, presets, ajustes anteriores e macros" },
   { id: "tools", label: "Ferramentas", hint: "Todas as ferramentas e subferramentas" },
   { id: "props", label: "Propriedades", hint: "Opções da ferramenta ou do objeto selecionado" },
   { id: "transform", label: "Transformação", hint: "Posição, tamanho, giro e espelhar" },

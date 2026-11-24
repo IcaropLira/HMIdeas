@@ -20,7 +20,8 @@ import { useTheme } from "./core/theme";
 import { initPaste } from "./components/clipboard";
 import { initPageViewSync } from "./core/pageView";
 import { initWorkspaces } from "./core/workspace";
-import { handleKey } from "./components/commands";
+import { handleKey, handleKeyUp, handleModifierDown } from "./components/commands";
+import { initToolKit } from "./core/toolKit";
 import { WindowChrome } from "./components/DockHost";
 import { ContextBar } from "./components/ContextBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -40,9 +41,15 @@ export default function App() {
   useEffect(() => initWorkspaces(), []);
   useEffect(() => {
     // Todo o teclado passa pelo registro de comandos (atalhos personalizáveis: components/commands.ts + core/keymap.ts).
-    const onKey = (e: KeyboardEvent) => { handleKey(e); };
+    const onKey = (e: KeyboardEvent) => { handleModifierDown(e); handleKey(e); };
+    const onUp = (e: KeyboardEvent) => handleKeyUp(e);
+    // trocar de janela com a tecla segurada não pode deixar a ferramenta temporária presa
+    const onBlur = () => { handleKeyUp(new KeyboardEvent("keyup", { key: "Control" })); handleKeyUp(new KeyboardEvent("keyup", { key: "Alt" })); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    const stopKit = initToolKit();
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", onBlur); stopKit(); };
   }, []);
 
   return (

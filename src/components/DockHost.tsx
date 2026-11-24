@@ -21,10 +21,12 @@ import {
   AlignPanel, HistoryPanel, LibraryPanel, MaterialsPanel, NavigatorPanel, ObjectsPanel, PropsPanel, ShortcutsPanel, TextPanel, ToolsPanel, TransformPanel,
 } from "./PanelViews";
 import { MenuBar } from "./MenuBar";
+import { QuickPanel } from "./QuickPanel";
 import { OptionsBar } from "./ToolOptions";
 import { StatusBar } from "./StatusBar";
 
 export const PANEL_ICON: Record<PanelId, ReactNode> = {
+  quick: <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />,
   tools: <path d="M5 3l14 7-6 2-2 6L5 3z" />,
   props: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
   transform: <><rect x="6" y="6" width="12" height="12" rx="1" strokeDasharray="3 2" /><path d="M3 3h4M3 3v4M21 21h-4M21 21v-4" /></>,
@@ -46,6 +48,7 @@ export const PANEL_ICON: Record<PanelId, ReactNode> = {
 
 function PanelView({ id }: { id: PanelId }) {
   switch (id) {
+    case "quick": return <QuickPanel />;
     case "tools": return <ToolsPanel />;
     case "props": return <PropsPanel />;
     case "transform": return <TransformPanel />;

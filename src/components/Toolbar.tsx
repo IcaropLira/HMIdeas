@@ -20,6 +20,7 @@ import { isInsideAny } from "../core/outside";
 import { Bar, ItemId, barsOn, clampPosition, floatingBars, isVertical, itemLabel, rotateBar, setBarPos, useLayout } from "../core/layout";
 import { useBarDrag } from "./BarDrag";
 import { PropsPanel } from "./PanelViews";
+import { QuickPanel } from "./QuickPanel";
 import { Settings } from "./Settings";
 import { ToolGroupBtn, ToolItem } from "./ToolGroup";
 import { usePalette, withKey } from "./commands";
@@ -85,7 +86,7 @@ const BRUSH_ICON: Record<string, ReactNode> = {
 };
 
 type DockSide = "bottom" | "left" | "right" | "float";
-type Panel = null | "options" | "blocks" | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "laser" | "map" | "templates" | "insert" | "layers" | "science";
+type Panel = null | "options" | "blocks" | "quick" | "paper" | "feel" | "shape" | "text" | "brush" | "color" | "eraser" | "laser" | "map" | "templates" | "insert" | "layers" | "science";
 
 export function Toolbar() {
   const t = useTool();
@@ -230,6 +231,7 @@ export function Toolbar() {
       </button>
     ),
     options: opt("options", "Opções da ferramenta", <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>, "panel.props"),
+    quick: opt("quick", "Acesso rápido", <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />, "panel.quick"),
     brushes: opt("brush", "Pincéis", <><path d="M20 4l-8.5 8.5" /><path d="M11.5 12.5c-2.5-.5-4.5 1-4.5 3.5 0 1.5-1 2.5-3 3 2.5 2 7.5 1 8-1.5.4-2-.2-3.8-.5-5z" /></>),
     blocks: opt("blocks", "Blocos", <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><path d="M16.5 13v7M13 16.5h7" /></>, "insert.library"),
     insert: opt("insert", "Imagem, arquivo e link", <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><circle cx="9" cy="10" r="1.8" /><path d="M4 17l5-4.5 3.5 3L16 12l4.5 4.5" /></>, "file.attach"),
@@ -479,6 +481,10 @@ export function Toolbar() {
 
       {panel === "options" && (
         <div className="panel scroll optpanel" role="dialog" aria-label="Opções da ferramenta" data-text-ui><PropsPanel /></div>
+      )}
+
+      {panel === "quick" && (
+        <div className="panel scroll optpanel" role="dialog" aria-label="Acesso rápido"><QuickPanel /></div>
       )}
 
       {panel === "blocks" && (

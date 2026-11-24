@@ -501,7 +501,8 @@ const cleanAttachment = (e: any): AttachmentElement => {
   return {
     ...e,
     frameId: typeof e.frameId === "string" ? e.frameId : null,
-    w: Math.max(80, num(e.w, 320)), h: Math.max(60, num(e.h, 220)),
+    // fita (0.12) pode ser fininha: cobre uma linha de texto
+    w: Math.max(block?.kind === "tape" ? 12 : 80, num(e.w, 320)), h: Math.max(block?.kind === "tape" ? 8 : 60, num(e.h, 220)),
     kind, title: str(e.title, "Anexo").slice(0, 300), url: str(e.url, ""), mime: str(e.mime, "application/octet-stream"),
     opacity: Math.max(0, Math.min(1, num(e.opacity, 1))),
     pages: kind === "pdf" ? Math.max(1, Math.floor(num(e.pages, 1))) : undefined,

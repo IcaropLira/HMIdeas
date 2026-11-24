@@ -1,3 +1,4 @@
+import { ZoomWriter } from "./components/ZoomWriter";
 import { useEffect } from "react";
 import { CanvasView } from "./components/CanvasView";
 import { TextEditor } from "./components/TextEditor";
@@ -64,6 +65,7 @@ export default function App() {
       <BlockLibrary />
       <FocusExit />
       <AlgoPlayer />
+      <ZoomWriter />
       <BlockEditor />
       <BlockInlineEditor />
       <PageEditor />

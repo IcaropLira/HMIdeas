@@ -1,6 +1,7 @@
 // Registro ÚNICO de comandos do app. Teclado, menus, paleta de comandos, barra contextual e o editor de atalhos
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
+import { setAllTapes, useZoomWriter } from "./ZoomWriter";
 import { BOOKMARK_COLORS } from "../core/notebook";
 import { usePageTemplates } from "../core/pageTemplateStore";
 import { create } from "zustand";
@@ -126,7 +127,7 @@ const TOOLS: [ToolId, string, string[]][] = [
   ["hand", "Mover tela (mão)", ["H"]], ["text", "Texto", ["T", "8"]], ["rect", "Retângulo", ["R", "2"]], ["diamond", "Losango", ["D", "3"]],
   ["ellipse", "Elipse", ["O", "4"]], ["arrow", "Seta", ["A", "5"]], ["line", "Linha", ["6"]], ["mindmap", "Mapa mental", ["M"]],
   ["frame", "Quadro", ["F"]], ["vertex", "Vértice (grafo)", ["N"]], ["edge", "Aresta (grafo)", ["G"]], ["laser", "Ponteiro laser", ["Z"]],
-  ["laserpen", "Caneta laser", ["Shift+Z"]],
+  ["laserpen", "Caneta laser", ["Shift+Z"]], ["tape", "Fita (esconder)", ["U"]],
 ];
 
 function buildCommands(): Command[] {
@@ -148,6 +149,9 @@ function buildCommands(): Command[] {
       const p = selectActivePage(useDoc.getState());
       useUI.getState().showToast(usePageTemplates.getState().add(p, p.name) ? `Modelo “${p.name}” salvo (Páginas → ⋯).` : "Não coube no armazenamento deste dispositivo.");
     } },
+    { id: "tape.revealAll", cat: "Ferramentas", label: "Revelar todas as fitas", run: () => setAllTapes(true) },
+    { id: "tape.hideAll", cat: "Ferramentas", label: "Esconder todas as fitas", run: () => setAllTapes(false) },
+    { id: "view.zoomWriter", cat: "Exibir", label: "Janela de zoom para escrever", keys: ["Ctrl+Alt+W"], checked: () => useZoomWriter.getState().open, run: () => useZoomWriter.getState().toggle() },
     { id: "page.prev", cat: "Arquivo", label: "Página anterior", keys: ["PageUp"], run: () => goPage(-1) },
     { id: "page.next", cat: "Arquivo", label: "Próxima página", keys: ["PageDown"], run: () => goPage(1) },
 
@@ -443,7 +447,7 @@ const NOT_TOOL = ["tool.sizeUp", "tool.sizeDown", "tool.eraserMode", "tool.recog
 let hold: { tool: ToolId; brush: string; at: number; code: string } | null = null;
 let mod: { key: "Control" | "Alt"; timer: ReturnType<typeof setTimeout> | null; prev: ToolId | null; active: boolean } | null = null;
 const HOLD_MS = 350;
-const DRAWING: ToolId[] = ["pen", "eraser", "rect", "ellipse", "diamond", "arrow", "line", "text", "laser", "laserpen", "mindmap", "frame", "vertex", "edge"];
+const DRAWING: ToolId[] = ["pen", "eraser", "tape", "rect", "ellipse", "diamond", "arrow", "line", "text", "laser", "laserpen", "mindmap", "frame", "vertex", "edge"];
 
 function cancelModHold() {
   if (mod && !mod.active && mod.timer) { clearTimeout(mod.timer); mod = null; }

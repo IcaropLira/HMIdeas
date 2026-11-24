@@ -1,3 +1,4 @@
+import type { ElCategory } from "./handwriting";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { clearBindingsTo, rebindAfterChange, reidentify } from "./binding";
@@ -9,7 +10,7 @@ import type { TextFx } from "./text";
 import { reorderPages, rotatePage as rotatePageFn } from "./notebook";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
-export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "laserpen" | "vertex" | "edge" | ShapeType | LinearType;
+export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "laserpen" | "vertex" | "edge" | "tape" | ShapeType | LinearType;
 
 const HISTORY_LIMIT = 200;
 
@@ -348,6 +349,17 @@ interface ToolState {
   gridSize: number;
   /** Mostrar a grade de encaixe na tela (só quando o encaixe na grade está ligado). */
   showGrid: boolean;
+  /** Laço e caixa só pegam estas categorias (vazio = tudo). */
+  selectFilter: ElCategory[];
+  /** Borracha só apaga estas categorias (vazio = tudo). */
+  eraserFilter: ElCategory[];
+  /** Segurar parado no fim do traço vira forma perfeita (mesmo com "Reconhecer formas" desligado). */
+  holdShape: boolean;
+  /** Rabiscar em vai-e-vem por cima de algo apaga. */
+  scribbleErase: boolean;
+  /** Fita: cor e padrão das novas. */
+  tapeColor: string;
+  tapePattern: "stripes" | "solid" | "dots";
   setTool: (t: ToolId) => void;
   /** Troca o brush (e a cor, se o brush tiver cor própria ou já tiver sido usado com outra). */
   setBrush: (id: string) => void;
@@ -393,6 +405,12 @@ export const useTool = create<ToolState>()(
       smartGuides: true,
       gridSize: 20,
       showGrid: true,
+      selectFilter: [],
+      eraserFilter: [],
+      holdShape: true,
+      scribbleErase: true,
+      tapeColor: "#F2B33D",
+      tapePattern: "stripes",
       setTool: (tool) => set({ tool, picking: false }),
       setBrush: (id) => {
         const s = get();
@@ -439,6 +457,12 @@ export const useTool = create<ToolState>()(
         lassoMode: s.lassoMode,
         fingerDraws: s.fingerDraws,
         recognize: s.recognize,
+        selectFilter: s.selectFilter,
+        eraserFilter: s.eraserFilter,
+        holdShape: s.holdShape,
+        scribbleErase: s.scribbleErase,
+        tapeColor: s.tapeColor,
+        tapePattern: s.tapePattern,
       }),
     },
   ),

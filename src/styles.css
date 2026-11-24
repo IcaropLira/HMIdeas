@@ -1643,3 +1643,33 @@ div.nb-folder { padding: 0 4px 0 0; }
 .pg-row button:disabled { opacity: .4; }
 .pg-menu > hr { padding: 0; }
 .pg-menu { background: var(--surface); }
+
+/* ---------- Escrita à mão (0.12) ---------- */
+.cat-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+.zw-target { position: fixed; z-index: 3; pointer-events: none; border: 2px solid var(--accent, var(--indigo)); border-radius: 4px; background: color-mix(in srgb, var(--accent, #6A3FD1) 7%, transparent); }
+.zoomwriter {
+  position: fixed; z-index: 8;
+  left: calc(12px + var(--insetL, 0px)); right: calc(12px + var(--insetR, 0px));
+  bottom: calc(10px + var(--insetB, 0px) + env(safe-area-inset-bottom, 0px));
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
+  display: grid; gap: 6px; padding: 8px;
+}
+.zw-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.zw-bar strong { font-size: 13px; margin-right: 6px; }
+.zw-bar .vsep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.zw-bar .btn.sm { min-width: 40px; height: 40px; }
+.zw-close { margin-left: auto; }
+.zw-pad { position: relative; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; touch-action: none; cursor: crosshair; }
+.zw-pad svg, .zw-pad canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.zw-base { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed #9AA3B5; pointer-events: none; }
+.zw-limit { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed #E0565B; opacity: .5; pointer-events: none; }
+.favpens { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.favpens.compact { flex-wrap: nowrap; }
+.favpen-wrap { position: relative; display: inline-flex; }
+.favpen { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; cursor: pointer; color: var(--ink-soft); }
+.favpen.on { border: 2px solid var(--accent, var(--indigo)); }
+.favpen.add, .favpen.edit { border-style: dashed; }
+.favpen.edit.on { border-style: solid; color: var(--ink); }
+.favpen-dot { border-radius: 50%; display: block; box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+.favpen-x { position: absolute; top: -4px; right: -4px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: var(--danger, #D2453A); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.vbar .favpens { flex-direction: column; flex-wrap: nowrap; }

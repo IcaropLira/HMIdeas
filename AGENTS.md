@@ -98,6 +98,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   recentes, histórico de ajustes, macros/sequências, busca por intenção na paleta (com blocos e sugestões)
 - [x] 0.11 (Cadernos): pastas e capas (cor, degradê, padrão, título) na Home, papéis Cornell/cabeçalho/caligrafia (+ partitura),
   modelos de página do usuário, arrastar páginas para reordenar, girar folha, índice automático, páginas favoritas e marcadores
+- [x] 0.12 (Escrita à mão): filtros por tipo no laço/caixa e na borracha, fita (esconde; toque revela), janela de zoom,
+  segurar no fim do traço = forma, rabisco apaga, canetas favoritas
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -447,3 +449,18 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   senão a lista rola); menu ⋯ (renomear, subir/descer, girar, favoritar, marcador, modelos); `goToElement` centraliza um título do índice.
 - Home: pastas em localStorage (`hm-ideas:folders-v1`); o caderno guarda `folder` e `cover` no registro do IndexedDB (não no documento).
   Arrastar um cartão (HTML5 drag, mouse) para a pasta move; no toque use ⋯ → Mover para.
+
+### Escrita à mão (0.12)
+- `core/handwriting.ts` (puro): categorias (`categoryOf`: tinta, marca-texto, formas, texto, mapas, mídia), `passes`/`filterIds`,
+  rabisco (`isScribble`: vai-e-vem ao longo do eixo PRINCIPAL do traço — ≥ 5 inversões com histerese de 18%, caminho ≥ 3,2× a extensão;
+  zigue-zague que avança não conta) e `scribbleTargets` (≥ 2 amostras tocando; nós/quadros/travados ficam), janela de zoom
+  (`advanceTarget`, `newLine`, `padToWorld`).
+- `useTool`: `selectFilter` (laço e caixa em `selectTool`), `eraserFilter` (traço inteiro e pixel em `CanvasView.eraseTo`), `holdShape`,
+  `scribbleErase`, `tapeColor`/`tapePattern` (persistidos).
+- Segurar parado 600 ms no fim do traço (`armHold` em `CanvasView`) mostra a forma reconhecida como prévia; soltar grava a forma.
+- **Fita**: bloco `tape` (`core/blocks/defs/study.ts`; `revealed`, `label`, `pattern`) — toque com Selecionar alterna. Ferramenta `tape` (U)
+  arrasta uma caixa (clique = 220×40). `cleanAttachment` deixa a fita ser fina (mín. 12×8). `setAllTapes` (comandos revelar/esconder todas).
+- **Janela de zoom** (`components/ZoomWriter.tsx`, Ctrl+Alt+W): faixa embaixo, caixa-alvo realçada no quadro (`.zw-target`), traço gravado
+  com o pincel atual; passou de 80% da faixa, a caixa anda (`auto`); ↵ muda de linha para a margem marcada.
+- **Canetas favoritas**: `FavPen` em `core/toolKit.ts` (`pens`, `addFavPen`, `applyFavPen`, `activeFavPen`); UI `components/FavPens.tsx`
+  (item de barra `pens` + opções da caneta).

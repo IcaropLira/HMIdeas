@@ -59,7 +59,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "escrita", name: "Escrita", hint: "Texto em destaque, pouca coisa na tela",
     make: () => ({
       chrome: { menubar: true, optionsbar: true, statusbar: true, pills: false },
-      toolbar: makeLayout({ bottom: [["select", "text", "pen", "eraser", "hand"], ["blocks", "insert"], ["colors"]] }),
+      toolbar: makeLayout({ bottom: [["select", "text", "pen", "eraser", "tape", "hand"], ["pens"], ["blocks", "insert"]] }),
       dock: dockOf({ right: { size: 300, iconic: false, stacks: [{ panels: ["text", "props"], size: 1 }, { panels: ["library"], size: 1 }] } }),
     }),
   },
@@ -67,7 +67,7 @@ export const PRESETS: { id: PresetId; name: string; hint: string; make: () => Om
     id: "estudos", name: "Estudos", hint: "Biblioteca de blocos, grafos, matemática e modelos",
     make: () => ({
       chrome: FULL,
-      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "laser", "hand"], ["shape", "line", "options", "quick"]], bottom: [["vertex", "edge", "science", "mindmap"], ["blocks", "insert", "templates"], ["colors", "size"]] }),
+      toolbar: makeLayout({ left: [["select", "pen", "text", "eraser", "tape", "laser", "hand"], ["shape", "line", "options", "quick"]], bottom: [["vertex", "edge", "science", "mindmap"], ["blocks", "insert", "templates"], ["colors", "size"]] }),
       dock: dockOf({ right: { size: 330, stacks: [{ panels: ["library", "materials"], size: 1.3 }, { panels: ["science", "props"], size: 1 }] } }),
     }),
   },

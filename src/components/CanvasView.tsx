@@ -6,6 +6,8 @@ import { panBy, screenToWorld, zoomAt } from "../core/camera";
 import { elementHit } from "../core/geometry";
 import { bindableAt, clearBindingsTo, makeBinding, solveArrow } from "../core/binding";
 import { eraseStep } from "../core/erase";
+import { isScribble, passes, scribbleTargets } from "../core/handwriting";
+import { blockAt } from "../core/blockElement";
 import { recognize } from "../core/recognize";
 import { makeLinear, snapAngle } from "../core/linear";
 import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, NodeElement, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
@@ -32,7 +34,7 @@ import { wheelFlip } from "../core/pageView";
 import { makeEdge, makeVertex, nextVertexName, useEdgeLabel, useGraphTool, vertexAt } from "../core/graphEdit";
 
 interface Smoothed { x: number; y: number; p: number; t: number }
-type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "laser" | "laserpen" | "graph";
+type Mode = "ink" | "erase" | "shape" | "linear" | "select" | "text" | "frame" | "tape" | "laser" | "laserpen" | "graph";
 
 const isShapeTool = (t: string): t is ShapeType => (SHAPE_TYPES as string[]).includes(t);
 const isLinearTool = (t: string): t is LinearType => t === "line" || t === "arrow";
@@ -115,6 +117,26 @@ export function CanvasView() {
     let shapeType: ShapeType = "rect";
     let shapeStart: Pt = { x: 0, y: 0 };
     let shapeBox: Box | null = null;
+    // segurar no fim do traço = forma perfeita
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let holdAt: { x: number; y: number } | null = null;
+    let holdShape: HirakuElement[] | null = null;
+    const clearHold = () => { clearTimeout(holdTimer); holdTimer = undefined; if (holdShape) { holdShape = null; renderer.previewElement(null); } };
+    const armHold = (sx: number, sy: number) => {
+      if (!useTool.getState().holdShape) return;
+      if (holdAt && Math.hypot(sx - holdAt.x, sy - holdAt.y) < 5) return; // parado: o relógio continua
+      if (holdShape && holdAt && Math.hypot(sx - holdAt.x, sy - holdAt.y) < 12) return; // tremor depois de virar forma
+      clearHold();
+      holdAt = { x: sx, y: sy };
+      holdTimer = setTimeout(() => {
+        if (mode !== "ink" || points.length < 6) return;
+        const shaped = recognizedElements(points, style);
+        if (!shaped) return;
+        holdShape = shaped;
+        renderer.previewElement(shaped[0] as ShapeElement | LinearElement);
+        navigator.vibrate?.(12);
+      }, 600);
+    };
     let linType: LinearType = "arrow";
     let linStart: Pt = { x: 0, y: 0 };
     let linEl: LinearElement | null = null;
@@ -224,7 +246,8 @@ export function CanvasView() {
         const base = eraseEls ?? pg.elements;
         // camadas ocultas/travadas ficam intactas (os pedaços de um traço cortado herdam a camada do original)
         const blocked = new Set(pg.layers.filter((l) => !l.visible || l.locked).map((l) => l.id));
-        const keep = blocked.size ? (e: HirakuElement) => blocked.has(layerIdOf(pg, e)) : undefined;
+        const ef = useTool.getState().eraserFilter;
+        const keep = blocked.size || ef.length ? (e: HirakuElement) => blocked.has(layerIdOf(pg, e)) || !passes(e, ef) : undefined;
         let els = base;
         const gone = new Set<string>();
         for (let i = 1; i <= steps; i++) {
@@ -238,7 +261,8 @@ export function CanvasView() {
           useDoc.getState().previewElements(eraseEls);
         }
       } else {
-        const elements = interactiveElements(selectActivePage(useDoc.getState()));
+        const ef = useTool.getState().eraserFilter;
+        const elements = interactiveElements(selectActivePage(useDoc.getState())).filter((e) => passes(e, ef));
         for (let i = 1; i <= steps; i++) {
           const x = from.x + ((to.x - from.x) * i) / steps;
           const y = from.y + ((to.y - from.y) * i) / steps;
@@ -393,6 +417,10 @@ export function CanvasView() {
             } else if (t.tool === "laser") {
               mode = "laser";
               renderer.laserPoint(s.x, s.y, true);
+            } else if (t.tool === "tape") {
+              mode = "tape";
+              shapeStart = screenToWorld(useView.getState().camera, s.x, s.y);
+              shapeBox = null;
             } else if (t.tool === "frame") {
               mode = "frame";
               shapeStart = screenToWorld(useView.getState().camera, s.x, s.y);
@@ -423,6 +451,8 @@ export function CanvasView() {
               points = [worldPoint(s.x, s.y, s.pressure)];
               renderer.beginLive(inkStyle());
               renderer.updateLive(points);
+              holdAt = null;
+              armHold(s.x, s.y);
             }
           },
 
@@ -475,12 +505,14 @@ export function CanvasView() {
               bindHintUI(endShape ? outlinePath(endShape) : null);
               return;
             }
-            if (mode === "shape" || mode === "frame") {
+            if (mode === "shape" || mode === "frame" || mode === "tape") {
               const s = samples[samples.length - 1];
               const to = screenToWorld(useView.getState().camera, s.x, s.y);
               shapeBox = boxFromDrag(shapeStart, to, mode === "shape" && s.shift, s.alt);
               renderer.previewElement(
-                mode === "frame"
+                mode === "tape"
+                  ? makeShape("preview", "rect", shapeBox, { stroke: useTool.getState().tapeColor, strokeWidth: 1, strokeStyle: "solid", fill: useTool.getState().tapeColor, rounded: true })
+                  : mode === "frame"
                   ? makeShape("preview", "rect", shapeBox, { stroke: "#5E6B7E", strokeWidth: 2, strokeStyle: "dashed", fill: null, rounded: true })
                   : shapeFrom("preview", shapeBox),
               );
@@ -495,6 +527,7 @@ export function CanvasView() {
                 added = true;
               }
             }
+            if (added) { const last = samples[samples.length - 1]; armHold(last.x, last.y); }
             if (added || predicted?.length) {
               // Previsão da caneta: só o traço ao vivo a enxerga (nunca entra em `points`).
               const ahead = predicted?.length ? predicted.map((q) => worldPoint(q.x, q.y, smP)) : undefined;
@@ -558,6 +591,15 @@ export function CanvasView() {
               selectCtl.refresh(); // tira o realce da forma-alvo
               return;
             }
+            if (mode === "tape") {
+              renderer.previewElement(null);
+              const z = useView.getState().camera.zoom, t = useTool.getState();
+              const box = shapeBox && shapeBox.w * z > 12 && shapeBox.h * z > 8 ? shapeBox : { x: shapeStart.x - 110, y: shapeStart.y - 20, w: 220, h: 40 };
+              const el = blockAt({ kind: "tape", revealed: false, label: "", pattern: t.tapePattern, color: t.tapeColor }, box.x, box.y, box.w, box.h);
+              useDoc.getState().addElement(el);
+              shapeBox = null;
+              return;
+            }
             if (mode === "frame") {
               renderer.previewElement(null);
               const z = useView.getState().camera.zoom;
@@ -586,7 +628,22 @@ export function CanvasView() {
               const exactEnd = worldPoint(raw.x, raw.y, smP);
               if (accept(exactEnd)) points.push(exactEnd);
             }
-            const shaped = points.length > 3 && useTool.getState().recognize ? recognizedElements(points, style) : null;
+            const held = holdShape;
+            clearTimeout(holdTimer); holdTimer = undefined; holdShape = null; holdAt = null;
+            if (held) renderer.previewElement(null);
+            // rabisco em vai-e-vem por cima de algo = apagar
+            if (!held && useTool.getState().scribbleErase && isScribble(points)) {
+              const cam = useView.getState().camera;
+              const targets = scribbleTargets(points, interactiveElements(selectActivePage(useDoc.getState())), Math.max(style.width, 6 / cam.zoom));
+              if (targets.length) {
+                useDoc.getState().removeElements(targets);
+                renderer.endLive();
+                points = [];
+                useUI.getState().showToast(targets.length === 1 ? "Rabisco apagou 1 item (Ctrl+Z desfaz)." : `Rabisco apagou ${targets.length} itens (Ctrl+Z desfaz).`);
+                return;
+              }
+            }
+            const shaped = held ?? (points.length > 3 && useTool.getState().recognize ? recognizedElements(points, style) : null);
             if (shaped) {
               useDoc.getState().addElements(shaped);
             } else if (points.length) {
@@ -625,12 +682,13 @@ export function CanvasView() {
               eraseBase = null;
               eraseEls = null;
               renderer.setGhosts(erased);
-            } else if (mode === "shape" || mode === "linear" || mode === "frame") {
+            } else if (mode === "shape" || mode === "linear" || mode === "frame" || mode === "tape") {
               renderer.previewElement(null);
               shapeBox = null;
               linEl = null;
               selectCtl.refresh();
             } else {
+              clearHold(); holdAt = null;
               renderer.endLive();
               points = [];
             }
@@ -678,7 +736,7 @@ export function CanvasView() {
         {
           getTool: () => useTool.getState().tool,
           // Com Selecionar, o dedo seleciona/arrasta; pan e zoom ficam com 2 dedos.
-          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame", "laser", "laserpen"].includes(useTool.getState().tool),
+          getFingerDraws: () => useTool.getState().fingerDraws || ["select", "mindmap", "frame", "laser", "laserpen", "tape"].includes(useTool.getState().tool),
         },
       );
     })();

@@ -40,6 +40,7 @@ export function StatusBar() {
   const idx = useDoc((s) => s.doc.pages.findIndex((p) => p.id === s.activePageId));
   const page = useDoc((s) => selectActivePage(s));
   const sel = useSel((s) => s.ids);
+  const meta = useDoc((s) => s.doc.meta);
   useGroupCtx((s) => s.ctx);
   const tool = useTool((s) => s.tool);
   const save = useSaveState((s) => s.state);
@@ -68,6 +69,14 @@ export function StatusBar() {
         <span className="sb-text">Página {idx + 1}/{pages}</span>
         <button className="sb-btn" disabled={idx >= pages - 1} onClick={() => goPage(1)} aria-label="Próxima página" title={withKey("Próxima página", "page.next")}>›</button>
       </div>
+      {page.size && (
+        <>
+          <span className="sb-sep" />
+          <span className="sb-text" title="Tamanho da folha e resolução do documento">
+            {page.size.w} × {page.size.h} px{meta?.dpi ? ` · ${Math.round(meta.dpi)} ppi` : ""}{meta?.colorMode === "gray" ? " · Cinza" : ""}
+          </span>
+        </>
+      )}
       {path.length > 0 && (
         <>
           <span className="sb-sep" />

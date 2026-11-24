@@ -18,7 +18,7 @@ export const PAGE_SIZES: { id: string; label: string; size: PageSize | null }[] 
 export function cleanPageSize(v: any): PageSize | undefined {
   if (!v || typeof v !== "object") return undefined;
   const w = Number(v.w), h = Number(v.h);
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 100 || h < 100 || w > 20000 || h > 20000) return undefined;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 16 || h < 16 || w > 30000 || h > 30000) return undefined;
   return { w: Math.round(w), h: Math.round(h), name: typeof v.name === "string" ? v.name.slice(0, 40) : "" };
 }
 

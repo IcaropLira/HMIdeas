@@ -1,6 +1,6 @@
 // Renderização com PixiJS (WebGL). Só DESENHA o modelo; nunca altera o documento.
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
-import { Application, Container, Graphics, Matrix, Text, Sprite, Texture } from "pixi.js";
+import { Application, Container, Graphics, Matrix, Text, Sprite, Texture, TilingSprite } from "pixi.js";
 import { Camera, defaultCamera } from "../core/camera";
 import { DEFAULT_BACKGROUND, Layer, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
 import { Affine, SelectionUI, frameCornersScreen, handlePositions } from "../core/selection";
@@ -46,6 +46,9 @@ export class Renderer {
   private paperLayer = new Graphics();
   /** Caderno com páginas: folha (sombra + cor do papel) num contêiner com a transformação do mundo, abaixo do padrão. */
   private sheetLayer = new Graphics();
+  /** Xadrez da folha transparente (0.18): em espaço de TELA, quadrados de tamanho fixo como no Photoshop. */
+  private checker: TilingSprite | null = null;
+  private transparent = false;
   private paperMask = new Graphics();
   private elementsMask = new Graphics();
   private sheet: { w: number; h: number } | null = null;
@@ -98,7 +101,9 @@ export class Renderer {
       powerPreference: "high-performance",
     });
     this.world.addChild(this.elementsMask, this.layerRoot, this.algoLayer, this.live, this.liveInk);
-    this.app.stage.addChild(this.sheetLayer, this.paperMask, this.paperLayer, this.world, this.selLayer, this.overlay, this.laserLayer);
+    this.checker = new TilingSprite({ texture: checkerTexture(), width: 1, height: 1 });
+    this.checker.visible = false;
+    this.app.stage.addChild(this.sheetLayer, this.checker, this.paperMask, this.paperLayer, this.world, this.selLayer, this.overlay, this.laserLayer);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
       const { width, height } = this.app.screen;
@@ -136,6 +141,13 @@ export class Renderer {
     this.applySheet();
   }
 
+  /** Folha com fundo transparente: xadrez no lugar da cor do papel. */
+  setTransparent(on: boolean) {
+    if (on === this.transparent) return;
+    this.transparent = on;
+    if (this.ready) this.applySheet();
+  }
+
   /** Folha de tamanho fixo (caderno com páginas) ou null (quadro infinito). */
   setSheet(size: { w: number; h: number } | null) {
     const cur = this.sheet;
@@ -161,7 +173,7 @@ export class Renderer {
       const dark = autoLineColor(bg) !== "#1B2233";
       this.app.renderer.background.color = this.look.desk ?? (dark ? "#0E1016" : "#D5DAE3");
       for (const [d, a] of [[18, 0.05], [10, 0.07], [4, 0.1]] as const) g.roundRect(-d / 2 + 2, -d / 2 + 6, s.w + d, s.h + d, 6).fill({ color: "#0B1020", alpha: a });
-      g.rect(0, 0, s.w, s.h).fill({ color: bg });
+      if (!this.transparent) g.rect(0, 0, s.w, s.h).fill({ color: bg });
       this.elementsMask.rect(0, 0, s.w, s.h).fill({ color: 0xffffff });
       this.elementsMask.visible = true;
       this.layerRoot.mask = this.elementsMask;
@@ -178,6 +190,21 @@ export class Renderer {
     const H = this.app.screen.height;
     this.paperSize = { w: W, h: H };
     g.clear();
+    const ck = this.checker;
+    if (ck) {
+      ck.visible = false;
+      if (this.sheet && this.transparent) {
+        const c = this.cam;
+        const x0 = Math.max(0, c.x), y0 = Math.max(0, c.y);
+        const x1 = Math.min(W, c.x + this.sheet.w * c.zoom), y1 = Math.min(H, c.y + this.sheet.h * c.zoom);
+        if (x1 > x0 && y1 > y0) {
+          ck.visible = true;
+          ck.position.set(x0, y0);
+          ck.width = x1 - x0; ck.height = y1 - y0;
+          ck.tilePosition.set(c.x - x0, c.y - y0);
+        }
+      }
+    }
     if (this.sheet) {
       const c = this.cam;
       this.paperMask.clear().rect(c.x, c.y, this.sheet.w * c.zoom, this.sheet.h * c.zoom).fill({ color: 0xffffff });
@@ -983,4 +1010,17 @@ export class Renderer {
     clearImageTextures();
     this.pdf?.clearPdf();
   }
+}
+
+let checkerTex: Texture | null = null;
+/** Textura 16×16 do xadrez de transparência (quadrados de 8 px). */
+function checkerTexture(): Texture {
+  if (checkerTex) return checkerTex;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 16;
+  const x = cv.getContext("2d")!;
+  x.fillStyle = "#FFFFFF"; x.fillRect(0, 0, 16, 16);
+  x.fillStyle = "#CCCCCC"; x.fillRect(0, 0, 8, 8); x.fillRect(8, 8, 8, 8);
+  checkerTex = Texture.from(cv);
+  return checkerTex;
 }

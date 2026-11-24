@@ -283,6 +283,7 @@ export function CanvasView() {
     const syncDoc = () => {
       const page = selectActivePage(useDoc.getState());
       renderer.setPaper(page.paper, page.background, page.paperScale ?? 1, page.lineColor ?? null);
+      renderer.setTransparent(!!page.transparent && !!page.size);
       renderer.setSheet(page.size ?? null);
       renderer.syncPage(page.elements, page.layers, hiddenIds(page));
       // Poda ids de elementos que não existem mais (apagados, desfeitos…).

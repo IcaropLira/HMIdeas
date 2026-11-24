@@ -11,7 +11,7 @@ import { parseDoc } from "../core/serialize";
 import { collectSettings, parseSettings } from "../core/settingsBundle";
 import { selectActivePage, useDoc, useSel } from "../core/store";
 import { useUI } from "../core/ui";
-import { contentBounds, exportSvg } from "../render/exportSvg";
+import { contentBounds, exportSvg, grayHex, grayscaleSvg } from "../render/exportSvg";
 import { Icon } from "./Icon";
 
 const toast = (m: string) => useUI.getState().showToast(m);
@@ -72,12 +72,20 @@ async function runExport(scope: Scope, fmt: Format, scale: number, bg: Bg, name:
   const sel = useSel.getState().ids;
   const jobs = pages.map((p) => ({ p, c: scopeContent(p, scope, sel) })).filter((j): j is { p: Page; c: NonNullable<typeof j.c> } => !!j.c);
   if (!jobs.length) { toast(scope === "frame" ? "Selecione um quadro para exportar." : scope === "selection" ? "Selecione o que quer exportar." : "Não há nada para exportar."); return; }
-  const svgOf = (j: (typeof jobs)[number]) => exportSvg(j.c.els, {
-    box: j.c.box,
-    background: bg === "transparent" && fmt !== "jpeg" && fmt !== "pdf" ? null : bg === "white" ? "#FFFFFF" : j.p.background,
-    paper: bg === "paper" ? j.p : null,
-  });
-  const fillOf = (j: (typeof jobs)[number]) => (bg === "transparent" && fmt === "png" ? null : bg === "white" ? "#FFFFFF" : j.p.background);
+  const meta = d.doc.meta, gray = meta?.colorMode === "gray";
+  const opaque = fmt === "jpeg" || fmt === "pdf";
+  // folha transparente no modo "Papel": sem fundo onde o formato aceita
+  const paperBg = (p: Page) => (p.transparent ? (opaque ? "#FFFFFF" : null) : p.background);
+  const g = (c: string | null) => (c && gray ? grayHex(c) : c);
+  const svgOf = (j: (typeof jobs)[number]) => {
+    const svg = exportSvg(j.c.els, {
+      box: j.c.box,
+      background: bg === "transparent" && !opaque ? null : bg === "white" ? "#FFFFFF" : paperBg(j.p),
+      paper: bg === "paper" ? j.p : null,
+    });
+    return gray ? grayscaleSvg(svg) : svg;
+  };
+  const fillOf = (j: (typeof jobs)[number]) => g(bg === "transparent" && fmt === "png" ? null : bg === "white" ? "#FFFFFF" : paperBg(j.p));
   if (fmt === "svg") {
     jobs.forEach((j, i) => downloadBlob(`${fileName(name)}${jobs.length > 1 ? ` - ${i + 1}` : ""}.svg`, new Blob([svgOf(j)], { type: "image/svg+xml" })));
   } else if (fmt === "pdf") {
@@ -85,7 +93,7 @@ async function runExport(scope: Scope, fmt: Format, scale: number, bg: Bg, name:
     for (const j of jobs) {
       const w = j.c.box.maxX - j.c.box.minX, h = j.c.box.maxY - j.c.box.minY;
       const r = await rasterize(svgOf(j), w, h, scale, "image/jpeg", fillOf(j) ?? "#FFFFFF");
-      pdfPages.push({ w: pxToPt(w), h: pxToPt(h), jpeg: new Uint8Array(await r.blob.arrayBuffer()), iw: r.w, ih: r.h });
+      pdfPages.push({ w: pxToPt(w, meta?.dpi), h: pxToPt(h, meta?.dpi), jpeg: new Uint8Array(await r.blob.arrayBuffer()), iw: r.w, ih: r.h });
     }
     downloadBlob(`${fileName(name)}.pdf`, new Blob([makePdf(pdfPages, name) as Uint8Array<ArrayBuffer>], { type: "application/pdf" }));
   } else {
@@ -106,13 +114,16 @@ export function ExportDialog() {
   const sel = useSel((s) => s.ids);
   const [fmt, setFmt] = useState<Format>("png"), [scale, setScale] = useState(2), [bg, setBg] = useState<Bg>("paper"), [busy, setBusy] = useState(false);
   const hasFrame = page.elements.some((e) => sel.includes(e.id) && e.type === "frame");
+  const gray = useDoc((s) => s.doc.meta?.colorMode === "gray");
   useEffect(() => { if (open && scope === "notebook") setFmt("pdf"); }, [open, scope]);
+  useEffect(() => { if (open && page.transparent) setBg("transparent"); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const preview = useMemo(() => {
     if (!open || scope === "notebook") return null;
     const c = scopeContent(page, scope, sel);
     if (!c) return null;
-    return { svg: exportSvg(c.els, { box: c.box, background: bg === "transparent" ? null : bg === "white" ? "#FFFFFF" : page.background, paper: bg === "paper" ? page : null }), w: c.box.maxX - c.box.minX, h: c.box.maxY - c.box.minY };
-  }, [open, scope, page, sel, bg]);
+    const svg = exportSvg(c.els, { box: c.box, background: bg === "transparent" || (bg === "paper" && page.transparent) ? null : bg === "white" ? "#FFFFFF" : page.background, paper: bg === "paper" ? page : null });
+    return { svg: gray ? grayscaleSvg(svg) : svg, w: c.box.maxX - c.box.minX, h: c.box.maxY - c.box.minY };
+  }, [open, scope, page, sel, bg, gray]);
   useEffect(() => {
     if (!open) return;
     const k = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); useExport.getState().set({ open: false }); } };
@@ -134,7 +145,7 @@ export function ExportDialog() {
       <section className="export dialog" role="dialog" aria-modal="true" aria-label="Exportar">
         <header><strong>Exportar</strong><button className="btn sm" onClick={close} aria-label="Fechar"><Icon><path d="M6 6l12 12M18 6L6 18" /></Icon></button></header>
         <div className="export-body">
-          <div className="export-prev" style={{ background: bg === "transparent" ? "repeating-conic-gradient(#e6e8ee 0 25%, #fff 0 50%) 0 0/16px 16px" : undefined }}>
+          <div className="export-prev" style={{ background: bg === "transparent" || (bg === "paper" && page.transparent) ? "repeating-conic-gradient(#e6e8ee 0 25%, #fff 0 50%) 0 0/16px 16px" : undefined }}>
             {preview ? <img alt="Prévia" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(preview.svg)}`} /> : <p className="hint">{scope === "notebook" ? `Todas as ${nPages} páginas, uma por página no PDF (ou um arquivo por página).` : "Nada para exportar aqui."}</p>}
             {preview && <small>{Math.round(preview.w * (fmt === "svg" ? 1 : scale))} × {Math.round(preview.h * (fmt === "svg" ? 1 : scale))} px</small>}
           </div>

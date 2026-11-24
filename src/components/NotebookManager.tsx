@@ -11,17 +11,25 @@ import { downloadDoc, parseDoc, serializeDoc } from "../core/serialize";
 import { useDoc } from "../core/store";
 import { useUI } from "../core/ui";
 import { pageThumb, safeColor } from "../render/svgThumb";
-import { resetPageCameras } from "../core/pageView";
-import { defaultCamera } from "../core/camera";
-import { useView } from "../core/store";
+import { fitActivePage, resetPageCameras } from "../core/pageView";
 import { COVER_PATTERNS, COVER_STYLES, Cover, Folder, STUDY_PAPERS, cleanCover, cleanFolders, coverCss, pageFromTemplate } from "../core/notebook";
 import { usePageTemplates } from "../core/pageTemplateStore";
+import { openNewDocument } from "./NewDocumentDialog";
 
 type Notebook = { id: string; name: string; updatedAt: number; createdAt?: number; color?: string; favorite?: boolean; folder?: string; cover?: Cover; doc: HirakuDoc };
 const FOLDERS_KEY = "hm-ideas:folders-v1";
 const loadFolders = (): Folder[] => { try { return cleanFolders(JSON.parse(localStorage.getItem(FOLDERS_KEY) || "[]")); } catch { return []; } };
 const DB = "hm-ideas-notebooks", STORE = "notebooks", ACTIVE = "hm-ideas:notebooks:active";
 export const START_HOME_KEY = "hm-ideas:start-home";
+
+/** Ponte para criar um caderno a partir de um documento pronto (diálogo "Novo documento", 0.18). A Home registra a função
+ *  enquanto está montada; sem ela, o documento só é carregado no caderno atual. */
+let createFromDoc: ((doc: HirakuDoc, name: string) => Promise<void>) | null = null;
+export async function createNotebookFromDoc(doc: HirakuDoc, name: string): Promise<void> {
+  if (createFromDoc) return createFromDoc(doc, name);
+  useDoc.getState().loadDoc(doc);
+  useUI.getState().setNotebookName(name);
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -221,7 +229,7 @@ export function NotebookManager() {
         await saveCurrent(); switching.current = true; activeRef.current = n.id; setActive(n.id); localStorage.setItem(ACTIVE, n.id);
         resetPageCameras();
         useDoc.getState().loadDoc(parseDoc(serializeDoc(n.doc))); switching.current = false;
-        useView.getState().setCamera(defaultCamera());
+        fitActivePage();
       } catch { switching.current = false; toast("Não foi possível trocar de caderno."); return; }
     }
     if (close) setOpened(false);
@@ -243,6 +251,19 @@ export function NotebookManager() {
       toast(`“${n.name}” criado. Toque no nome no topo para voltar aos cadernos.`);
     } catch { toast("Não foi possível criar o caderno."); }
   };
+  const createDoc2 = async (doc: HirakuDoc, wanted: string) => {
+    try {
+      await saveCurrent();
+      const used = new Set(itemsRef.current.map((x) => x.name));
+      const base = wanted.trim().slice(0, 80) || "Sem título";
+      let name = base, k = 2;
+      while (used.has(name)) name = `${base} (${k++})`;
+      const n: Notebook = { id: newId(), name, updatedAt: Date.now(), createdAt: Date.now(), color: COVER_COLORS[itemsRef.current.length % COVER_COLORS.length], ...(folders.some((f) => f.id === folder) ? { folder } : {}), doc: normalizeDoc(doc) };
+      await put(n); update([...itemsRef.current, n]); await switchTo(n); setQuery("");
+      toast(`“${n.name}” criado.`);
+    } catch { toast("Não foi possível criar o documento."); }
+  };
+  useEffect(() => { createFromDoc = createDoc2; return () => { createFromDoc = null; }; });
   const patch = async (n: Notebook, p: Partial<Notebook>) => {
     const next = { ...n, ...p };
     try { await put(next); update(itemsRef.current.map((x) => x.id === n.id ? next : x)); } catch { toast("Não foi possível salvar a mudança."); }
@@ -381,6 +402,7 @@ export function NotebookManager() {
             <section>
               <div className="nb-new-head">
                 <h2>Novo caderno</h2>
+                <button className="btn sm nb-newdoc" onClick={() => openNewDocument()} title="Escolher tamanho, resolução, unidade e fundo (Ctrl+N)">Novo documento…</button>
                 <div className="seg fmt-seg" role="radiogroup" aria-label="Formato do caderno">
                   {PAGE_SIZES.map((f) => (
                     <button key={f.id} role="radio" aria-checked={fmt === f.id} className={fmt === f.id ? "on" : ""} onClick={() => setFmt(f.id)} title={f.size ? "Caderno com páginas de tamanho fixo" : "Quadro sem bordas (padrão)"}>

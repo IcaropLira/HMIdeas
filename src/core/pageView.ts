@@ -15,6 +15,12 @@ const sizeOf = (id: ID) => useDoc.getState().doc.pages.find((p) => p.id === id)?
 /** Página aberta "vinda de baixo" (rolando para cima): mostra o fim da folha. */
 let enterFromBottom = false;
 
+/** Enquadra a folha da página ativa (se houver); senão volta à câmera padrão. Usado ao abrir um caderno. */
+export function fitActivePage() {
+  const size = sizeOf(useDoc.getState().activePageId);
+  useView.getState().setCamera(size ? fitSheet(size, viewW(), viewH(), 48, true) : defaultCamera());
+}
+
 export function initPageViewSync(): () => void {
   const fitIfSheet = () => {
     const s = useDoc.getState(), size = sizeOf(s.activePageId);

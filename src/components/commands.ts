@@ -1,6 +1,7 @@
 // Registro ÚNICO de comandos do app. Teclado, menus, paleta de comandos, barra contextual e o editor de atalhos
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
+import { openNewDocument } from "./NewDocumentDialog";
 import { ENGINES } from "../core/engine";
 import { setEngine } from "./EnginePicker";
 import { backupNow, pickPdfAsPages, useExport } from "./ExportDialog";
@@ -140,6 +141,7 @@ const TOOLS: [ToolId, string, string[]][] = [
 function buildCommands(): Command[] {
   const c: Command[] = [
     // Arquivo
+    { id: "file.new", cat: "Arquivo", label: "Novo documento…", keys: ["Ctrl+N"], run: () => openNewDocument() },
     { id: "file.home", cat: "Arquivo", label: "Tela inicial (cadernos)", keys: ["Ctrl+Alt+H"], run: () => useUI.getState().setNotebooksOpen(true) },
     { id: "file.open", cat: "Arquivo", label: "Abrir arquivo .hiraku…", keys: ["Ctrl+O"], run: () => openInput("hm-open-input") },
     { id: "file.save", cat: "Arquivo", label: "Salvar arquivo .hiraku", keys: ["Ctrl+S"], run: () => downloadDoc(useDoc.getState().doc, useUI.getState().notebookName || "desenho") },

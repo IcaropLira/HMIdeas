@@ -1,3 +1,4 @@
+import { useTheme } from "../core/theme";
 import { useEffect, useRef } from "react";
 import { applyColor, elementColor } from "../core/actions";
 import { brushDyn, getBrush } from "../core/brushes";
@@ -311,6 +312,8 @@ export function CanvasView() {
       }
 
       renderer.setCamera(useView.getState().camera);
+      const look = () => { const th = useTheme.getState(); renderer.setLook({ sel: th.selColor, guide: th.guideColor, desk: th.desk }); };
+      look();
       syncDoc();
 
       unsubs.push(
@@ -326,6 +329,7 @@ export function CanvasView() {
           }
         }),
         useSel.subscribe(() => selectCtl.refresh()),
+        useTheme.subscribe((s, prev) => { if (s.selColor !== prev.selColor || s.guideColor !== prev.guideColor || s.desk !== prev.desk) { look(); selectCtl.refresh(); } }),
         useGroupCtx.subscribe(() => selectCtl.refresh()),
         (() => { const t = useTool.getState(); renderer.laserConfig({ color: t.laserColor, trail: t.laserTrail, hold: t.laserHold }); return () => undefined; })(),
         useAlgo.subscribe((s, prev) => { if (s.overlay !== prev.overlay) renderer.setAlgoOverlay(s.overlay); }),
@@ -723,7 +727,10 @@ export function CanvasView() {
           hover(s) {
             const t = useTool.getState();
             if (t.tool === "eraser" || s.eraserTip) renderer.drawEraserCursor(s.x, s.y, t.eraserSize / 2);
-            else renderer.hideEraserCursor();
+            else if (t.tool === "pen" && !t.picking && useTheme.getState().brushCursor && s.pointerType !== "touch") {
+              const b = getBrush(t.brush);
+              renderer.drawBrushCursor(s.x, s.y, (t.width * b.size * useView.getState().camera.zoom) / 2, t.color);
+            } else renderer.hideEraserCursor();
             if (t.tool === "select") selectCtl.hover(s);
             if (t.tool === "laser") renderer.laserPoint(s.x, s.y, false);
           },

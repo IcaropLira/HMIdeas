@@ -100,6 +100,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   modelos de página do usuário, arrastar páginas para reordenar, girar folha, índice automático, páginas favoritas e marcadores
 - [x] 0.12 (Escrita à mão): filtros por tipo no laço/caixa e na borracha, fita (esconde; toque revela), janela de zoom,
   segurar no fim do traço = forma, rabisco apaga, canetas favoritas
+- [x] 0.13 (Aparência): editor de temas com cores por região, 17 temas prontos, importar/exportar, cantos, opacidade, contraste,
+  animações, textura do papel, cor da mesa, cursor do tamanho do pincel, cores de seleção e guias
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -464,3 +466,13 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
   com o pincel atual; passou de 80% da faixa, a caixa anda (`auto`); ↵ muda de linha para a margem marcada.
 - **Canetas favoritas**: `FavPen` em `core/toolKit.ts` (`pens`, `addFavPen`, `applyFavPen`, `activeFavPen`); UI `components/FavPens.tsx`
   (item de barra `pens` + opções da caneta).
+
+### Aparência (0.13)
+- `core/theme.ts`: tema = DADOS (`ThemeDef`: `t` = paper/ink/soft/chrome/surface/surface2/danger + `regions` opcionais menu/tools/panels/
+  pages/status/home). `PRESETS` (17) + temas do usuário (`custom`, id `custom:…`) no mesmo registro (`hm-ideas-theme-v1`).
+  `themeVars` (puro) gera as variáveis CSS; `applyAppearance` as põe INLINE no `<html>` (vence os blocos `:root[data-theme]` antigos, que
+  ficaram como reserva) e liga `html.r-<região>` (o CSS de região só vale com a classe; o texto da região sai de `inkOn`).
+- Ajustes: `radius` → `--rs` (todo `border-radius` simples de 4–24 px do CSS virou `calc(Npx * var(--rs, 1))`), `opacity` (alfa do
+  `--chrome`), `contrast` (`html.hc`), `anim` (`html.no-anim`), `texture`/`textureStrength` (`html[data-texture]` → véu `::after` no
+  `.canvas-host`, nunca no documento), `desk`, `brushCursor`, `selColor`/`guideColor` (Renderer `setLook`/`drawBrushCursor`).
+- UI: aba Aparência das Configurações (`ThemeEditor`, `saveText` para exportar).

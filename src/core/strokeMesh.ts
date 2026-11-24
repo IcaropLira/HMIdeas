@@ -10,6 +10,7 @@
 // o custo é linear no número de pontos e o mesmo cálculo serve ao traço ao vivo, ao gravado e à pré-visualização.
 import { InkPoint, StrokeDyn } from "./model";
 import { DEFAULT_BRUSH_ID, brushDyn, getBrush } from "./brushes";
+import { DEFAULT_TIP, Dab, cleanTip, dabsAlong, pressureCurve, rampFactors } from "./engine";
 
 export interface InkStyle {
   color: string;
@@ -48,7 +49,7 @@ export function dynOf(st: Pick<InkStyle, "brush" | "dyn">): StrokeDyn {
   return st.dyn ?? brushDyn(getBrush(st.brush ?? DEFAULT_BRUSH_ID));
 }
 
-interface Sample { x: number; y: number; r: number }
+interface Sample { x: number; y: number; r: number; a?: number }
 
 /** Remove amostras inválidas e repetidas (gestos curtos geravam contornos degenerados). */
 export function cleanPoints(points: InkPoint[]): InkPoint[] {
@@ -81,11 +82,25 @@ function widthFactors(pts: InkPoint[], w0: number, sens: number, dyn: StrokeDyn)
     }
   } else {
     const k = clamp(dyn.thinning * sens, 0, 1);
+    // entrada: a pressão só vale inteira depois de andar `rampIn` larguras (sem "bola" ao segurar parado no começo)
+    const ramp = rampFactors(pts, w0, dyn.rampIn ?? 0);
     if (k > 0) {
       const g = clamp(dyn.gamma, 0.2, 5);
       for (let i = 0; i < n; i++) {
-        const pc = Math.pow(clamp(pts[i].p, 0.001, 1), g);
+        const pc = Math.pow(clamp(pressureCurve(pts[i].p, dyn.curve) * ramp[i], 0.001, 1), g);
         f[i] = 1 + k * (lerp(minSize, MAX_WIDTH_FACTOR, pc) - 1);
+      }
+    } else if (dyn.rampIn) {
+      for (let i = 0; i < n; i++) f[i] = lerp(Math.max(minSize, 0.55), 1, (ramp[i] - 0.35) / 0.65);
+    }
+    // velocidade → espessura também com caneta (tinta: rápido = mais fino)
+    const sp = clamp(dyn.speedSize ?? 0, -1, 1);
+    if (Math.abs(sp) > 0.01 && n > 2) {
+      for (let i = 0; i < n; i++) {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+        const d = Math.hypot(b.x - a.x, b.y - a.y) / 2;
+        const s = clamp(d / (w0 * 4), 0, 1);
+        f[i] *= 1 + sp * 0.5 * (s * s * (3 - 2 * s));
       }
     }
   }
@@ -120,9 +135,10 @@ function relax(pts: InkPoint[], amount: number): InkPoint[] {
 }
 
 /** Centro + raio de cada ponto → curva suave que PASSA pelos pontos (Hermite com tangentes limitadas). */
-function curveSamples(pts: InkPoint[], radii: number[]): Sample[] {
+function curveSamples(pts: InkPoint[], radii: number[], alphas?: number[]): Sample[] {
   const n = pts.length;
-  if (n < 3) return pts.map((p, i) => ({ x: p.x, y: p.y, r: radii[i] }));
+  const al = (i: number) => (alphas ? alphas[i] : 1);
+  if (n < 3) return pts.map((p, i) => ({ x: p.x, y: p.y, r: radii[i], a: al(i) }));
   const dir: Array<[number, number]> = new Array(n);
   for (let i = 0; i < n; i++) {
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
@@ -130,7 +146,7 @@ function curveSamples(pts: InkPoint[], radii: number[]): Sample[] {
     const l = Math.hypot(dx, dy) || 1;
     dir[i] = [dx / l, dy / l];
   }
-  const out: Sample[] = [{ x: pts[0].x, y: pts[0].y, r: radii[0] }];
+  const out: Sample[] = [{ x: pts[0].x, y: pts[0].y, r: radii[0], a: al(0) }];
   for (let i = 0; i < n - 1; i++) {
     const p0 = pts[i], p1 = pts[i + 1];
     const cx = p1.x - p0.x, cy = p1.y - p0.y;
@@ -145,7 +161,7 @@ function curveSamples(pts: InkPoint[], radii: number[]): Sample[] {
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
       if (s === steps) {
-        out.push({ x: p1.x, y: p1.y, r: radii[i + 1] });
+        out.push({ x: p1.x, y: p1.y, r: radii[i + 1], a: al(i + 1) });
         break;
       }
       const t2 = t * t, t3 = t2 * t;
@@ -154,10 +170,48 @@ function curveSamples(pts: InkPoint[], radii: number[]): Sample[] {
         x: h00 * p0.x + h10 * d0x * L + h01 * p1.x + h11 * d1x * L,
         y: h00 * p0.y + h10 * d0y * L + h01 * p1.y + h11 * d1y * L,
         r: lerp(radii[i], radii[i + 1], t),
+        a: lerp(al(i), al(i + 1), t),
       });
     }
   }
   return out;
+}
+
+
+/**
+ * Amostras finais do traço (centro, raio e alfa dos carimbos), com suavização, pressão, entrada, velocidade e
+ * afilamento. É a base COMUM da fita (malha) e dos carimbos: os dois desenham o mesmo caminho.
+ */
+function inkSamples(clean: InkPoint[], st: InkStyle, dyn: StrokeDyn, w0: number): Sample[] {
+  const pts = relax(clean, dyn.smoothing);
+  const f = widthFactors(pts, w0, st.sens, dyn);
+
+  // Afilamento: comprimento limitado a 40% do traço por ponta e ponta nunca fecha em agulha (TIP_MIN).
+  const cum: number[] = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  const total = cum[cum.length - 1];
+  const taper = clamp(st.taper, 0, 1);
+  const tlEnd = st.openEnd ? 0 : Math.min(taper * w0 * 5, total * 0.4);
+  const tlStart = st.openStart ? 0 : Math.min(taper * clamp(dyn.taperStart, 0, 1) * w0 * 5, total * 0.4);
+  const radii = pts.map((_, i) => {
+    let m = 1;
+    if (tlStart > 0 && cum[i] < tlStart) m = Math.min(m, TIP_MIN + (1 - TIP_MIN) * Math.sin((cum[i] / tlStart) * (Math.PI / 2)));
+    const toEnd = total - cum[i];
+    if (tlEnd > 0 && toEnd < tlEnd) m = Math.min(m, TIP_MIN + (1 - TIP_MIN) * Math.sin((toEnd / tlEnd) * (Math.PI / 2)));
+    return Math.max(0.05, (w0 * f[i] * m) / 2);
+  });
+
+  // Amostras da curva (sem duplicatas para não gerar direção nula).
+  const po = clamp(dyn.pressureOpacity ?? 0, 0, 1), flow = dyn.tip ? clamp(dyn.tip.flow, 0.01, 1) : 1;
+  const mouse = !pts.some((p) => Math.abs(p.p - 0.5) > 1e-6);
+  const alphas = pts.map((p) => flow * (po > 0 && !mouse ? 1 - po * (1 - pressureCurve(p.p, dyn.curve)) : 1));
+  const raw = curveSamples(pts, radii, alphas);
+  const S: Sample[] = [raw[0]];
+  for (let i = 1; i < raw.length; i++) {
+    const a = S[S.length - 1];
+    if (Math.hypot(raw[i].x - a.x, raw[i].y - a.y) > 1e-4) S.push(raw[i]);
+  }
+  return S;
 }
 
 /** Escritor de malha indexada com buffers tipados que dobram de tamanho (sem arrays de números boxed). */
@@ -226,31 +280,7 @@ export function buildStrokeMesh(points: InkPoint[], st: InkStyle): StrokeMesh | 
     return mw.done(ox, oy);
   }
 
-  const pts = relax(clean, dyn.smoothing);
-  const f = widthFactors(pts, w0, st.sens, dyn);
-
-  // Afilamento: comprimento limitado a 40% do traço por ponta e ponta nunca fecha em agulha (TIP_MIN).
-  const cum: number[] = [0];
-  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-  const total = cum[cum.length - 1];
-  const taper = clamp(st.taper, 0, 1);
-  const tlEnd = st.openEnd ? 0 : Math.min(taper * w0 * 5, total * 0.4);
-  const tlStart = st.openStart ? 0 : Math.min(taper * clamp(dyn.taperStart, 0, 1) * w0 * 5, total * 0.4);
-  const radii = pts.map((_, i) => {
-    let m = 1;
-    if (tlStart > 0 && cum[i] < tlStart) m = Math.min(m, TIP_MIN + (1 - TIP_MIN) * Math.sin((cum[i] / tlStart) * (Math.PI / 2)));
-    const toEnd = total - cum[i];
-    if (tlEnd > 0 && toEnd < tlEnd) m = Math.min(m, TIP_MIN + (1 - TIP_MIN) * Math.sin((toEnd / tlEnd) * (Math.PI / 2)));
-    return Math.max(0.05, (w0 * f[i] * m) / 2);
-  });
-
-  // Amostras da curva (sem duplicatas para não gerar direção nula).
-  const raw = curveSamples(pts, radii);
-  const S: Sample[] = [raw[0]];
-  for (let i = 1; i < raw.length; i++) {
-    const a = S[S.length - 1];
-    if (Math.hypot(raw[i].x - a.x, raw[i].y - a.y) > 1e-4) S.push(raw[i]);
-  }
+  const S = inkSamples(clean, st, dyn, w0);
   const n = S.length;
   if (n < 2) {
     mw.fan(S[0].x, S[0].y, S[0].r, 0, Math.PI * 2, Math.max(12, capSteps(S[0].r) * 2));
@@ -338,3 +368,24 @@ export function meshToSvgPath(m: StrokeMesh, dx = 0, dy = 0, digits = 1): string
   }
   return d;
 }
+
+/**
+ * Carimbos do traço (motor de carimbos). Mesma base da fita (`inkSamples`); um toque sem arrastar vira um carimbo.
+ * A semente vem do primeiro ponto: o mesmo traço sempre sai igual (variação de tamanho estável).
+ */
+export function buildStrokeDabs(points: InkPoint[], st: InkStyle): Dab[] {
+  const dyn = dynOf(st);
+  const clean = cleanPoints(points);
+  if (!clean.length) return [];
+  const w0 = Math.max(0.1, st.width);
+  const tip = cleanTip(dyn.tip ?? {}, DEFAULT_TIP);
+  const seed = Math.floor(Math.abs(clean[0].x * 73.1 + clean[0].y * 19.7)) + 1;
+  if (clean.length === 1) {
+    const f = widthFactors(clean, w0, st.sens, dyn)[0];
+    return dabsAlong([{ x: clean[0].x, y: clean[0].y, r: Math.max(0.05, (w0 * f) / 2), a: tip.flow }], tip, seed);
+  }
+  return dabsAlong(inkSamples(clean, st, dyn, w0).map((p) => ({ x: p.x, y: p.y, r: p.r, a: p.a ?? tip.flow })), tip, seed);
+}
+
+/** Este traço usa carimbos? */
+export const usesDabs = (st: Pick<InkStyle, "brush" | "dyn">) => dynOf(st).render === "dab";

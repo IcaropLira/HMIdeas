@@ -14,7 +14,9 @@ describe("BrushPanel", () => {
   it("lista todos os brushes, cada um com pré-visualização", () => {
     for (const b of listBrushes()) expect(html).toContain(b.label);
     expect((html.match(/class="bprev"/g) ?? []).length).toBe(listBrushes().length);
-    expect((html.match(/<path d="M/g) ?? []).length).toBe(listBrushes().length); // contorno de verdade, não vazio
+    // cada prévia tem desenho de verdade (contorno da fita ou carimbos), não vazia
+    const previews = html.match(/<svg class="bprev"[\s\S]*?<\/svg>/g) ?? [];
+    expect(previews.filter((p) => /<path d="M|<ellipse/.test(p)).length).toBe(listBrushes().length);
   });
 
   it("marca a caneta como ativa por padrão e tem o controle de opacidade", () => {

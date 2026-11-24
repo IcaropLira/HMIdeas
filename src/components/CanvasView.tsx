@@ -2,7 +2,7 @@ import { useTheme } from "../core/theme";
 import { useEffect, useRef } from "react";
 import { applyColor, elementColor } from "../core/actions";
 import { brushDyn, getBrush } from "../core/brushes";
-import { OneEuro, stabilizerOptions } from "../core/oneEuro";
+import { StabilizerState, makeStabilizer } from "../core/engine";
 import { panBy, screenToWorld, zoomAt } from "../core/camera";
 import { elementHit } from "../core/geometry";
 import { bindableAt, clearBindingsTo, makeBinding, solveArrow } from "../core/binding";
@@ -13,7 +13,7 @@ import { recognize } from "../core/recognize";
 import { makeLinear, snapAngle } from "../core/linear";
 import { ArrowBinding, ArrowHead, HirakuDoc, HirakuElement, InkPoint, LinearElement, LinearType, NodeElement, SHAPE_TYPES, ShapeElement, ShapeType, TextElement, newId } from "../core/model";
 import { Box, Pt, boxFromDrag, makeShape, outlinePath } from "../core/shapes";
-import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
+import { activeEngineCfg, selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { beginEditText, beginNewText, commitText, useEdit } from "../core/textEdit";
 import { InputController, Sample } from "../input/InputController";
 import { Renderer } from "../render/Renderer";
@@ -100,8 +100,8 @@ export function CanvasView() {
     // --- estado do gesto atual ---
     let mode: Mode = "ink";
     let points: InkPoint[] = [];
-    let filtX: OneEuro | null = null; // estabilizador (filtro adaptativo: quase sem atraso em traço rápido)
-    let filtY: OneEuro | null = null;
+    let stab: StabilizerState | null = null; // estabilizador do motor (em px de tela)
+    let engineCfg = activeEngineCfg();
     let smP = 0.5; // pressão levemente suavizada
     let raw: Smoothed = { x: 0, y: 0, p: 0.5, t: 0 }; // última amostra real (tela)
     let style = {
@@ -169,19 +169,19 @@ export function CanvasView() {
      */
     const startFilters = (s: Sample) => {
       const b = getBrush(style.brush);
-      const level = (style.smoothing / 0.9) * 0.8 + b.streamline * 0.4;
-      const o = stabilizerOptions(level);
-      filtX = o ? new OneEuro(o) : null;
-      filtY = o ? new OneEuro(o) : null;
-      filtX?.filter(s.x, s.time);
-      filtY?.filter(s.y, s.time);
+      engineCfg = activeEngineCfg();
+      const level = (style.smoothing / 0.9) * 0.8 + b.streamline * 0.4 + engineCfg.stabBoost;
+      stab = makeStabilizer(engineCfg.stabilizer, level);
+      stab.push({ x: s.x, y: s.y, p: s.pressure, t: s.time });
       smP = s.pressure;
     };
-    const smoothStep = (t: Smoothed): InkPoint => {
-      const x = filtX ? filtX.filter(t.x, t.t) : t.x;
-      const y = filtY ? filtY.filter(t.y, t.t) : t.y;
-      smP += (t.p - smP) * 0.6;
-      return worldPoint(x, y, smP);
+    /** Amostra crua → pontos do mundo (o estabilizador pode segurar, soltar um ou vários). */
+    const smoothStep = (t: Smoothed): InkPoint[] => {
+      const out = stab ? stab.push({ x: t.x, y: t.y, p: t.p, t: t.t }) : [{ x: t.x, y: t.y, p: t.p, t: t.t }];
+      return out.map((q) => {
+        smP += (q.p - smP) * 0.6;
+        return worldPoint(q.x, q.y, smP);
+      });
     };
 
     /** Só aceita o ponto se andou ao menos ~0.3px de tela (evita milhares de pontos idênticos). */
@@ -200,7 +200,7 @@ export function CanvasView() {
       return {
         color: style.color, width: style.width * b.size, sens: style.sens,
         taper: b.taper ?? style.taper, // já resolvido: o traço guarda o afilamento efetivo
-        brush: b.id, opacity: b.opacity * style.opacity, dyn: brushDyn(b),
+        brush: b.id, opacity: b.opacity * style.opacity, dyn: brushDyn(b, activeEngineCfg()),
       };
     };
 
@@ -528,10 +528,11 @@ export function CanvasView() {
             let added = false;
             for (const s of samples) {
               raw = { x: s.x, y: s.y, p: s.pressure, t: s.time };
-              const pt = smoothStep(raw);
-              if (accept(pt)) {
-                points.push(pt);
-                added = true;
+              for (const pt of smoothStep(raw)) {
+                if (accept(pt)) {
+                  points.push(pt);
+                  added = true;
+                }
               }
             }
             if (added) { const last = samples[samples.length - 1]; armHold(last.x, last.y); }
@@ -629,11 +630,16 @@ export function CanvasView() {
             if (endSample) {
               const finalPressure = endSample.pointerType === "pen" && endSample.pressure === 0.5 ? raw.p : endSample.pressure;
               raw = { x: endSample.x, y: endSample.y, p: finalPressure, t: endSample.time };
-              const filtered = smoothStep(raw);
-              if (accept(filtered)) points.push(filtered);
-              // O traço termina EXATAMENTE onde a caneta soltou (sem rabicho nem ponta atrás do cursor).
-              const exactEnd = worldPoint(raw.x, raw.y, smP);
-              if (accept(exactEnd)) points.push(exactEnd);
+              for (const pt of smoothStep(raw)) if (accept(pt)) points.push(pt);
+              // Linha de chegada: com catch-up a ponta alcança o cursor e o traço termina EXATAMENTE onde a caneta soltou.
+              if (engineCfg.catchUp) {
+                for (const q of stab?.finish({ x: raw.x, y: raw.y, p: raw.p, t: raw.t }, true) ?? []) {
+                  const pt = worldPoint(q.x, q.y, smP);
+                  if (accept(pt)) points.push(pt);
+                }
+                const exactEnd = worldPoint(raw.x, raw.y, smP);
+                if (accept(exactEnd)) points.push(exactEnd);
+              }
             }
             const held = holdShape;
             clearTimeout(holdTimer); holdTimer = undefined; holdShape = null; holdAt = null;

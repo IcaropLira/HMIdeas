@@ -108,6 +108,10 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   conversões (mapa ↔ lista/tarefas/kanban, textos → mapa), isolamento, organizar em grade por propriedade, selecionar parecidos
 - [x] 0.16 (Exportar/importar): PNG/JPEG/SVG/PDF da página, seleção, quadro ou caderno; PDF como páginas; cópias de segurança
   automáticas com versões; exportar/importar o pacote de configurações
+- [x] 0.17 (Motores de pincel): perfis Fluido (GoodNotes), Krita, Photoshop e Clip Studio + Personalizado; estabilizadores
+  (adaptativo, ponderado, média, corda), curvas de pressão, entrada suave (fim da "bolinha" no começo do traço), velocidade → espessura,
+  pós-correção, ponta de carimbos (espaçamento, dureza, fluxo, arredondamento, ângulo) e pincéis Lápis, Aerógrafo, Caligrafia e Pincel redondo
+- [ ] 0.17: calibrar os perfis com caneta real (Wacom/S Pen/Apple Pencil) e medir o custo dos carimbos em traços muito longos no Android
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -525,3 +529,21 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - UI `components/ExportDialog.tsx` (`useExport`, Ctrl+Shift+E; alcance página/seleção/quadro/caderno, formato, resolução, fundo papel/
   branco/transparente, prévia), `importPdfAsPages`/`pickPdfAsPages`, `BackupsPane` (aba Cadernos e dados). Comandos `file.export*`,
   `file.importPdf`, `file.backup` (também no menu Arquivo).
+
+### Motores de pincel (0.17)
+- `core/engine.ts` (puro): `ENGINES` (fluid/krita/photoshop/csp; "custom" usa `useTool.engineCfg`), `EngineCfg` (ponta `render`,
+  `stabilizer` + `stabBoost` + `catchUp`, `curve`, `rampIn`, `speedSize`, `postSmooth`, `pressureOpacity`), `pressureCurve`,
+  `rampFactors` (entrada por DISTÂNCIA: parado no começo não engrossa — era a "bolinha"), `makeStabilizer` (none/adaptive = One Euro/
+  weighted = Krita ponderado/window = média gaussiana das últimas N/string = corda puxada do Photoshop; `finish` = linha de chegada),
+  `DabTip`/`cleanTip`/`dabsAlong` (carimbos a cada `spacing × diâmetro`, semente fixa por traço para a variação de tamanho).
+- `brushDyn(brush, cfg?)` grava no traço a curva, a entrada, a velocidade, a pós-correção e a ponta (`StrokeDyn.render/tip/pressureOpacity/
+  curve/rampIn/speedSize`, todos opcionais: traços antigos e `brushDyn(b)` sem motor continuam iguais). Pincel com `render` fixo ignora o
+  motor (marca-texto = fita; Lápis/Aerógrafo/Caligrafia/Pincel redondo = carimbos). `activeEngineCfg()` no store.
+- `core/strokeMesh.ts`: `inkSamples` é a base comum (suavização, pressão, entrada, velocidade, afilamento, alfa) da fita (`buildStrokeMesh`)
+  e dos carimbos (`buildStrokeDabs`, `usesDabs`).
+- `render/strokeDraw.ts`: carimbos = `ParticleContainer` (uma partícula por carimbo; textura radial por degrau de dureza, `tipTexture`;
+  partículas reaproveitadas entre quadros). Opacidade do traço multiplica cada carimbo (sobreposição acumula, como o fluxo do Krita).
+  Miniaturas e exportação SVG/PDF continuam pelo contorno (fita) — aerógrafo sai sólido nelas.
+- `CanvasView`: o estabilizador do motor trabalha em px de TELA e pode soltar 0..n pontos por amostra; `catchUp` termina no cursor.
+- UI: `components/EnginePicker.tsx` (cartões + "Ajustes do motor"; compacto = `<select>` na barra de opções), ponta de carimbos no editor
+  de pincel personalizado (`BrushPanel`), comandos `engine.*`. `InputController` não quebra se `setPointerCapture` falhar.

@@ -7,7 +7,7 @@ import { ZoomTarget, advanceTarget, newLine, padToWorld } from "../core/handwrit
 import { HirakuElement, InkPoint, newId } from "../core/model";
 import { elementBounds } from "../core/selection";
 import { screenToWorld } from "../core/camera";
-import { selectActivePage, useDoc, useTool, useView } from "../core/store";
+import { activeEngineCfg, selectActivePage, useDoc, useTool, useView } from "../core/store";
 import { thumbPath } from "../render/svgThumb";
 import { Icon } from "./Icon";
 
@@ -132,7 +132,7 @@ export function ZoomWriter() {
         useDoc.getState().addElement({
           id: newId(), type: "stroke", points: pts.length === 1 ? [pts[0], { ...pts[0], x: pts[0].x + 0.01 }] : pts,
           color: tool.color, width, sens: tool.pressureSens, taper: b.taper ?? tool.taper, brush: b.id,
-          opacity: b.opacity * tool.opacity, dyn: brushDyn(b),
+          opacity: b.opacity * tool.opacity, dyn: brushDyn(b, activeEngineCfg()),
         });
         // passou de 80% da faixa: a caixa anda (deixa uma sobra para emendar a palavra)
         if (useZoomWriter.getState().auto && maxX > padW * 0.8) set({ target: advanceTarget(t, left, rightEdge(t, left)) });

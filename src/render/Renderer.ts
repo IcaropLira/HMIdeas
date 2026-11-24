@@ -1,7 +1,7 @@
 // Renderização com PixiJS (WebGL). Só DESENHA o modelo; nunca altera o documento.
 // Camadas (de baixo para cima): papel (tela) → mundo [elementos + ao vivo] → seleção (tela) → cursor (tela).
 import { AlphaFilter, Application, Container, Graphics, Matrix, Text, Sprite, Texture, TilingSprite } from "pixi.js";
-import { CLIP_BLEND, pixiBlend } from "./blendModes";
+import { CLIP_BLEND, needsBackBuffer, pixiBlend } from "./blendModes";
 import { clipUnits } from "../core/layerPro";
 import { Camera, defaultCamera } from "../core/camera";
 import { DEFAULT_BACKGROUND, Layer, HirakuElement, NodeElement, InkPoint, LinearElement, PaperKind, ShapeElement, isLinear, isShape } from "../core/model";
@@ -44,6 +44,29 @@ const drawEl = (g: Graphics, el: HirakuElement) => {
 };
 
 export class Renderer {
+  /** Desenho sob demanda (0.19.2): só renderiza quando algo mudou (+ uma garantia a cada 250 ms). */
+  private dirty = true;
+  private lastRender = 0;
+  /** Fundo "congelado" enquanto se desenha um traço: a página inteira vira uma textura do tamanho da tela e,
+   *  a cada quadro, só o traço ao vivo é redesenhado por cima (custo independe de quantos traços há na página). */
+  private freezeCanvas: HTMLCanvasElement | null = null;
+  private freezeTex: Texture | null = null;
+  private freezeSprite = new Sprite();
+  private frozen: { c: Container; v: boolean }[] | null = null;
+
+  constructor() {
+    // Todo método público/privado marca a tela como "suja": qualquer mudança vinda de fora (ou de um carregamento
+    // assíncrono que chama um método) agenda um quadro. Assim não é preciso lembrar de marcar em cada lugar.
+    const proto = Renderer.prototype as unknown as Record<string, unknown>;
+    for (const k of Object.getOwnPropertyNames(proto)) {
+      if (k === "constructor" || k === "init" || k === "frame") continue;
+      const d = Object.getOwnPropertyDescriptor(proto, k);
+      if (!d || typeof d.value !== "function") continue;
+      const fn = d.value as (...a: unknown[]) => unknown;
+      (this as unknown as Record<string, unknown>)[k] = function (this: Renderer, ...a: unknown[]) { this.dirty = true; return fn.apply(this, a); };
+    }
+  }
+
   private app = new Application();
   private paperLayer = new Graphics();
   /** Caderno com páginas: folha (sombra + cor do papel) num contêiner com a transformação do mundo, abaixo do padrão. */
@@ -100,7 +123,8 @@ export class Renderer {
       background: DEFAULT_BACKGROUND,
       preference: "webgl",
       // modos de mesclagem avançados das camadas (0.19) leem o que já está desenhado embaixo
-      useBackBuffer: true,
+      // ligado só quando alguma camada usa um modo avançado (`syncLayers`): custa uma cópia da tela inteira por quadro
+      useBackBuffer: false,
       antialias: true,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
@@ -110,19 +134,25 @@ export class Renderer {
     this.checker = new TilingSprite({ texture: checkerTexture(), width: 1, height: 1 });
     this.checker.visible = false;
     this.app.stage.addChild(this.sheetLayer, this.checker, this.paperMask, this.paperLayer, this.world, this.selLayer, this.overlay, this.laserLayer);
+    // Desenho sob demanda: tira o render automático do Pixi e decide no `frame`.
+    this.app.ticker.remove(this.app.render, this.app);
+    this.freezeSprite.visible = false;
+    this.app.stage.addChildAt(this.freezeSprite, 0);
     // Redesenha o papel se a janela mudar de tamanho.
     this.app.ticker.add(() => {
       const { width, height } = this.app.screen;
       if (width !== this.paperSize.w || height !== this.paperSize.h) this.drawPaper();
       if (this.laserActive) this.drawLaser();
-      else if (this.laserDirty) { this.laserDirty = false; this.laserLayer.clear(); }
+      else if (this.laserDirty) { this.laserDirty = false; this.laserLayer.clear(); this.dirty = true; }
       // Eventos de ponteiro podem chegar muito mais rápido que a tela. Agrupa-os por frame:
       // evita redesenhar o polígono completo dezenas/centenas de vezes entre dois frames.
       if (this.liveDirty && this.liveStyle && this.pendingLivePoints) {
         this.liveDirty = false;
         // Mesma geometria durante o gesto e depois de soltar: nada "salta" no pointerup.
         this.liveInk.setStroke(decimateForPreview(this.pendingLivePoints), this.liveStyle);
+        this.dirty = true;
       }
+      this.frame();
     });
     this.ready = true;
   }
@@ -130,6 +160,7 @@ export class Renderer {
   // ---------------- câmera e papel ----------------
 
   setCamera(cam: Camera) {
+    this.unfreeze();
     this.cam = cam;
     this.world.position.set(cam.x, cam.y);
     this.world.scale.set(cam.zoom);
@@ -250,6 +281,7 @@ export class Renderer {
 
   /** Reconcilia os nós do Pixi com a lista de elementos. Elementos são imutáveis: referência nova = redesenhar. */
   syncPage(elements: HirakuElement[], layers: Layer[] = [], hidden: Set<string> = new Set()) {
+    this.unfreeze();
     const boxes = this.syncLayers(layers);
     const firstLayer = layers[0]?.id ?? "";
     const boxOf = (el: HirakuElement) => boxes.get(el.layerId && boxes.has(el.layerId) ? el.layerId : firstLayer)!;
@@ -373,6 +405,9 @@ export class Renderer {
       const c = this.clipBox.get(u.base.id) && u.clipped.length ? this.clipBox.get(u.base.id)! : this.layerBox.get(u.base.id)!.root;
       if (c.parent === this.layerRoot && this.layerRoot.getChildIndex(c) !== i) this.layerRoot.setChildIndex(c, i);
     });
+    // a cópia da tela por quadro só quando algum modo de mesclagem precisa ler o que está embaixo
+    const bb = (this.app.renderer as unknown as { backBuffer?: { useBackBuffer: boolean } }).backBuffer;
+    if (bb) bb.useBackBuffer = list.some((l) => l.visible && needsBackBuffer(l.blend));
     return this.layerBox;
   }
 
@@ -559,6 +594,7 @@ export class Renderer {
     const hold = new Graphics().roundRect(el.x, el.y, el.w, el.h, 6).fill({ color: 0xEEF1F7 }).stroke({ color: 0xB4BED0, width: 1 });
     node.addChild(hold);
     void loadImageTexture(src).then((tex) => {
+      this.dirty = true;
       // o nó pode ter sido destruído, repintado com outra imagem ou apagado enquanto carregava
       if (node.destroyed || this.imageKey.get(node) !== src) return;
       for (const ch of node.removeChildren()) ch.destroy({ children: true });
@@ -710,6 +746,7 @@ export class Renderer {
     const hit = peekImageTexture(thumb);
     if (hit) putThumb(hit);
     else void loadImageTexture(thumb).then((tex) => {
+      this.dirty = true;
       if (!tex || node.destroyed || this.imageKey.get(node) !== thumb) return;
       putThumb(tex);
     });
@@ -732,6 +769,7 @@ export class Renderer {
   private scheduleTextRes() {
     clearTimeout(this.resTimer);
     this.resTimer = setTimeout(() => {
+      this.dirty = true;
       const r = this.textRes();
       for (const n of this.nodes.values()) {
         if (n.el.type === "node" || n.el.type === "frame" || (n.el.type === "attachment" && (n.el.kind === "figure" || n.el.kind === "block")) || (isLinear(n.el) && n.el.label)) {
@@ -768,10 +806,66 @@ export class Renderer {
     }
   }
 
+  /** Renderiza se algo mudou (ou a cada 250 ms, para pegar texturas que terminaram de carregar sozinhas). */
+  private frame() {
+    const now = performance.now();
+    if (!this.dirty && now - this.lastRender < 250) return;
+    if (this.frozen && (this.app.canvas.width !== this.freezeCanvas?.width || this.app.canvas.height !== this.freezeCanvas?.height)) this.unfreeze();
+    this.dirty = false;
+    this.lastRender = now;
+    this.app.render();
+  }
+
+  /** Força um quadro já (exportações/miniaturas que leem o canvas). */
+  requestRender() { this.dirty = true; }
+
+  private freeze() {
+    if (this.frozen || !this.ready) return;
+    const r = this.app.renderer;
+    const { width, height } = this.app.screen;
+    const cv = this.app.canvas as HTMLCanvasElement;
+    if (width < 1 || height < 1 || cv.width < 1) return;
+    // fotografa tudo menos o que muda durante o traço: desenha o quadro normal NA TELA e copia os pixels dela para um
+    // canvas 2D (cópia exata — renderizar numa textura à parte dava um antisserrilhado um pouco diferente e a página "piscava")
+    const live = [this.live, this.liveInk, this.selLayer, this.overlay, this.laserLayer];
+    const was = live.map((c) => c.visible);
+    live.forEach((c) => (c.visible = false));
+    try {
+      this.app.render();
+      if (!this.freezeCanvas) this.freezeCanvas = document.createElement("canvas");
+      const fc = this.freezeCanvas;
+      if (fc.width !== cv.width || fc.height !== cv.height) { fc.width = cv.width; fc.height = cv.height; }
+      const ctx = fc.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, fc.width, fc.height);
+      ctx.drawImage(cv, 0, 0);
+    } finally { live.forEach((c, i) => (c.visible = was[i])); }
+    const fc = this.freezeCanvas!;
+    if (!this.freezeTex || this.freezeTex.source.pixelWidth !== fc.width || this.freezeTex.source.pixelHeight !== fc.height || this.freezeTex.source.resolution !== r.resolution) {
+      this.freezeTex?.destroy(true);
+      this.freezeTex = Texture.from({ resource: fc, resolution: r.resolution } as never);
+    } else this.freezeTex.source.update();
+    this.freezeSprite.texture = this.freezeTex;
+    this.freezeSprite.position.set(0, 0);
+    this.freezeSprite.setSize(width, height);
+    this.freezeSprite.visible = true;
+    const still = [this.sheetLayer, this.checker, this.paperLayer, this.layerRoot, this.algoLayer].filter((c): c is Container => !!c);
+    this.frozen = still.map((c) => ({ c, v: c.visible }));
+    still.forEach((c) => (c.visible = false));
+  }
+
+  private unfreeze() {
+    if (!this.frozen) return;
+    for (const { c, v } of this.frozen) c.visible = v;
+    this.frozen = null;
+    this.freezeSprite.visible = false;
+  }
+
   // ---------------- pré-visualização ao vivo ----------------
   // Refaz só o contorno do traço/forma EM ANDAMENTO (custo proporcional a ele, não à página).
 
   beginLive(style: InkStyle) {
+    this.freeze();
     this.live.clear();
     this.liveInk.setStroke([], style); // só aplica cor/opacidade/mistura
     this.liveStyle = style;
@@ -796,6 +890,7 @@ export class Renderer {
   }
 
   endLive() {
+    this.unfreeze();
     this.live.clear();
     this.live.alpha = 1;
     this.live.blendMode = "normal";

@@ -70,3 +70,7 @@ export function pixiBlend(b: string | undefined): BLEND_MODES {
   }
 }
 export const CLIP_BLEND = "hm-clip" as BLEND_MODES;
+
+/** Modos que o WebGL faz sozinho (sem ler a tela): não precisam do back buffer. */
+const NATIVE = new Set(["normal", "add", "multiply", "screen"]);
+export const needsBackBuffer = (b: string | undefined) => !NATIVE.has(b ?? "normal");

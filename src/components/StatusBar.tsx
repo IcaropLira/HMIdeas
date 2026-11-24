@@ -1,6 +1,6 @@
 // Barra de status: zoom, coordenadas do cursor, página, grupo aberto (caminho clicável), seleção, ferramenta e estado
 // do documento (cópia automática).
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import { screenToWorld } from "../core/camera";
 import { selectActivePage, useDoc, useSel, useTool, useView } from "../core/store";
 import { goPage } from "../core/actions";
@@ -11,27 +11,34 @@ import { groupMap } from "../core/groups";
 import { commandById, runCommand, withKey } from "./commands";
 import { Icon } from "./Icon";
 
-function useCursorWorld() {
-  const [p, setP] = useState<{ x: number; y: number } | null>(null);
+/** Coordenadas do cursor escritas direto no DOM (0.19.2): antes era estado do React e a barra inteira re-renderizava
+ *  a cada quadro enquanto se desenhava. Não atualiza com botão/caneta apertados (desenhando). */
+function CursorCoords() {
+  const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     let raf = 0;
     let last: PointerEvent | null = null;
+    let text = "";
     const on = (e: PointerEvent) => {
+      if (e.buttons) return;
       last = e;
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
         const ev = last!;
         const t = ev.target as HTMLElement | null;
-        if (!t?.closest?.(".canvas-host")) { setP(null); return; }
-        const w = screenToWorld(useView.getState().camera, ev.clientX, ev.clientY);
-        setP({ x: Math.round(w.x), y: Math.round(w.y) });
+        let next = "x — · y —";
+        if (t?.closest?.(".canvas-host")) {
+          const w = screenToWorld(useView.getState().camera, ev.clientX, ev.clientY);
+          next = `x ${Math.round(w.x)} · y ${Math.round(w.y)}`;
+        }
+        if (next !== text && ref.current) { text = next; ref.current.textContent = next; }
       });
     };
     window.addEventListener("pointermove", on, { passive: true });
     return () => { window.removeEventListener("pointermove", on); cancelAnimationFrame(raf); };
   }, []);
-  return p;
+  return <span ref={ref} className="sb-coords" title="Posição do cursor no quadro">x — · y —</span>;
 }
 
 export function StatusBar() {
@@ -45,7 +52,6 @@ export function StatusBar() {
   const tool = useTool((s) => s.tool);
   const save = useSaveState((s) => s.state);
   const ws = useWorkspace((s) => s.list.find((w) => w.id === s.activeId)?.name ?? "");
-  const cur = useCursorWorld();
   const path = ctxPath(page);
   const grp = sel.length ? selectedGroup() : null;
   const grpName = grp ? groupMap(page).get(grp)?.name : null;
@@ -62,7 +68,7 @@ export function StatusBar() {
         </button>
       </div>
       <span className="sb-sep" />
-      <span className="sb-coords" title="Posição do cursor no quadro">{cur ? `x ${cur.x} · y ${cur.y}` : "x — · y —"}</span>
+      <CursorCoords />
       <span className="sb-sep" />
       <div className="sb-group">
         <button className="sb-btn" disabled={idx <= 0} onClick={() => goPage(-1)} aria-label="Página anterior" title={withKey("Página anterior", "page.prev")}>‹</button>

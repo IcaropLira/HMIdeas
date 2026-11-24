@@ -117,7 +117,8 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
 - [ ] 0.18: "Tamanho da tela/imagem" para documentos já criados (âncora pronta em `anchorOffset`), miniatura com xadrez na folha transparente
 - [x] 0.19 (Camadas profissionais): os 27 modos de mesclagem do Photoshop, máscara de recorte, opacidade 0–100%, cores de etiqueta,
   solo (Alt+clique no olho), camada via cópia/recorte, mesclar visíveis, achatar, busca/filtro de camadas, menu Camada e atalhos
-- [ ] 0.19: medir no Android o custo do `useBackBuffer` (modos avançados) e, se pesar, ligar só quando alguma camada usar um modo avançado
+- [x] 0.19.2 (Desempenho): desenho sob demanda, página "congelada" durante o traço, back buffer só com modo avançado, barra de status sem re-render
+- [ ] 0.19.2: medir no Android/iPad a latência da caneta e o custo da foto da página ao encostar a caneta (`freeze`)
 - [ ] Próximos da lista Photoshop/CSP: grupos de camadas (pastas), máscaras de camada, travas parciais (posição/transparência), estilos de camada,
   camadas de ajuste/preenchimento, liquify/deformar, seleções avançadas, filtros, réguas/simetria/perspectiva, ferramentas vetoriais, retoque
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
@@ -588,3 +589,16 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - Exportar SVG/PNG/PDF: `exportSvg(..., { layers })` agrupa por camada (ocultas saem, `opacity`, `mix-blend-mode`, recorte por `<mask style="mask-type:alpha">`).
 - UI: `LayersPanel` (ferramentas extras, busca/filtro, modos em `<optgroup>`, cores, ↳ nas recortadas), `components/layerActions.ts`, comandos
   `layer.*` (categoria e menu "Camada": Ctrl+Shift+N, Ctrl+J, Ctrl+Shift+J, Ctrl+E, Ctrl+Alt+Shift+E, Ctrl+Alt+C, Shift+= / Shift+-, Alt+] / Alt+[).
+
+### Desempenho do desenho (0.19.2)
+- **Sob demanda**: o `Renderer` tira o `app.render` do ticker e só renderiza em `frame()` quando `dirty` (ou a cada 250 ms, garantia para
+  texturas que terminam de carregar sozinhas). O construtor embrulha TODO método da classe para marcar `dirty`; código que mexe no Pixi
+  fora de um método (callbacks de `.then`, `setTimeout`, ticker) precisa pôr `this.dirty = true` à mão. Parado = zero quadros.
+- **Página congelada durante o traço**: `beginLive` → `freeze()` desenha o quadro normal sem o traço ao vivo/overlays, copia o canvas para um
+  canvas 2D (`drawImage`, cópia exata dos pixels; renderizar numa RenderTexture dava antisserrilhado diferente e a página "piscava") e mostra
+  isso num `Sprite` no fundo do palco, escondendo folha/papel/camadas. Cada quadro do traço = 1 sprite + o traço. `endLive`, `setCamera`,
+  `syncPage` e mudança de tamanho descongelam.
+- `useBackBuffer` começa desligado; `syncLayers` liga só se alguma camada visível usa modo que não é normal/somar/multiplicação/divisão
+  (`needsBackBuffer`).
+- `StatusBar`: as coordenadas do cursor são escritas direto no DOM (`CursorCoords`) e não atualizam com botão apertado.
+- Medição (Chrome com SwiftShader, 500 traços na página): antes ~1 quadro a cada 33 ms e o teste não terminava em 2 min; agora ~16,7 ms.

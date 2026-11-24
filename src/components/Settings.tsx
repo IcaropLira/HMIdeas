@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { START_HOME_KEY } from "./NotebookManager";
 import { Icon } from "./Icon";
+import { BackupsPane, pickPdfAsPages, useExport } from "./ExportDialog";
 import { BarsPane } from "./LayoutSettings";
 import { ShortcutEditor } from "./ShortcutEditor";
 import { WorkspacePane } from "./WorkspacePane";
@@ -168,6 +169,11 @@ export function Settings() {
           <input ref={fileRef} type="file" accept=".hiraku,application/json" hidden onChange={(e) => { void openFile(e.target.files?.[0]); e.target.value = ""; }} />
         </div>
         <p className="hint">Anexos colados ou arrastados (prints, imagens, arquivos de até 15 MB) são guardados dentro do caderno.</p>
+        <div className="row">
+          <button className="chip" onClick={() => { close(); useExport.getState().set({ open: true, scope: "page" }); }}>Exportar PNG/JPEG/SVG/PDF…</button>
+          <button className="chip" onClick={() => { close(); pickPdfAsPages(); }}>Importar PDF como páginas…</button>
+        </div>
+        <BackupsPane />
       </section>
     );
   } else if (tab === "sobre") {

@@ -131,7 +131,10 @@ function targetAt(x: number, y: number, L: DockLayout, dragIds: PanelId[]): { ta
 
 export function WindowChrome() {
   const ws = useWorkspace();
-  const focus = useTheme((s) => s.focus);
+  // modo foco e a tela inicial (Home) escondem menus, opções, painéis e status: a Home ocupa a tela inteira sozinha
+  const focusMode = useTheme((s) => s.focus);
+  const home = useUI((s) => s.notebooksOpen);
+  const focus = focusMode || home;
   const L = ws.dock;
   const chrome = ws.chrome;
   const [drag, setDrag] = useState<Drag | null>(null);

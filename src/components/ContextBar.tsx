@@ -80,6 +80,7 @@ export function ContextBar() {
   const tool = useTool((s) => s.tool);
   const editing = useEdit((s) => !!s.session);
   const pageEditing = usePageEdit((s) => !!s.id);
+  const home = useUI((s) => s.notebooksOpen);
   const page = useDoc((s) => selectActivePage(s));
   useGroupCtx((s) => s.ctx);
   const [pop, setPop] = useState<Pop>(null);
@@ -92,7 +93,7 @@ export function ContextBar() {
     return () => document.removeEventListener("pointerdown", off, true);
   }, [pop]);
 
-  if (!ids.length || busy || editing || pageEditing || (tool !== "select" && tool !== "lasso")) return null;
+  if (!ids.length || busy || editing || pageEditing || home || (tool !== "select" && tool !== "lasso")) return null;
   const b = selectionBox();
   if (!b) return null;
   const grp = selectedGroup();

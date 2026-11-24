@@ -552,6 +552,8 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - `render/strokeDraw.ts`: carimbos = `ParticleContainer` (uma partícula por carimbo; textura radial por degrau de dureza, `tipTexture`;
   partículas reaproveitadas entre quadros). Opacidade do traço multiplica cada carimbo (sobreposição acumula, como o fluxo do Krita).
   Miniaturas e exportação SVG/PDF continuam pelo contorno (fita) — aerógrafo sai sólido nelas.
+- (0.19.1) O círculo do pincel (`drawBrushCursor`, opção "Cursor com o tamanho do pincel" em Aparência) some no `drawStart`: antes ficava parado
+  onde a caneta encostou e parecia uma bolinha no começo do traço.
 - `CanvasView`: o estabilizador do motor trabalha em px de TELA e pode soltar 0..n pontos por amostra; `catchUp` termina no cursor.
 - UI: `components/EnginePicker.tsx` (cartões + "Ajustes do motor"; compacto = `<select>` na barra de opções), ponta de carimbos no editor
   de pincel personalizado (`BrushPanel`), comandos `engine.*`. `InputController` não quebra se `setPointerCapture` falhar.

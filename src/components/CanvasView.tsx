@@ -355,6 +355,9 @@ export function CanvasView() {
         {
           drawStart(s) {
             const t = useTool.getState();
+            // O círculo do pincel ficava parado onde a caneta encostou (parecia uma "bolinha" no começo do traço):
+            // some enquanto desenha e volta no próximo movimento sem encostar.
+            if (t.tool !== "eraser" && !s.eraserTip) renderer.hideEraserCursor();
             style = {
               color: t.color, width: t.width, sens: t.pressureSens, smoothing: t.smoothing, taper: t.taper,
               brush: t.brush, opacity: t.opacity,

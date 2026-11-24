@@ -1,4 +1,6 @@
 import { ExportDialog, initBackups } from "./components/ExportDialog";
+import { NewDocumentDialog } from "./components/NewDocumentDialog";
+import { useDoc } from "./core/store";
 import { GraphView, OrgBar, OutlineModal } from "./components/Organize";
 import { AudioDock, ExamBar, PomodoroClock, Presenter, ReviewModal } from "./components/Study";
 import { ZoomWriter } from "./components/ZoomWriter";
@@ -43,6 +45,9 @@ export default function App() {
   useEffect(() => initPaste(), []);
 
   useEffect(() => initWorkspaces(), []);
+  // Modo de cor do documento (0.18): escala de cinza deixa a tela em cinza (as exportações também saem em cinza).
+  const gray = useDoc((s) => s.doc.meta?.colorMode === "gray");
+  useEffect(() => { document.documentElement.classList.toggle("doc-gray", gray); }, [gray]);
   useEffect(() => {
     // Todo o teclado passa pelo registro de comandos (atalhos personalizáveis: components/commands.ts + core/keymap.ts).
     const onKey = (e: KeyboardEvent) => { handleModifierDown(e); handleKey(e); };
@@ -78,6 +83,7 @@ export default function App() {
       <OutlineModal />
       <GraphView />
       <ExportDialog />
+      <NewDocumentDialog />
       <BlockEditor />
       <BlockInlineEditor />
       <PageEditor />

@@ -112,6 +112,9 @@ HM Ideas é um app próprio de quadro branco + caderno de anotações com caneta
   (adaptativo, ponderado, média, corda), curvas de pressão, entrada suave (fim da "bolinha" no começo do traço), velocidade → espessura,
   pós-correção, ponta de carimbos (espaçamento, dureza, fluxo, arredondamento, ângulo) e pincéis Lápis, Aerógrafo, Caligrafia e Pincel redondo
 - [ ] 0.17: calibrar os perfis com caneta real (Wacom/S Pen/Apple Pencil) e medir o custo dos carimbos em traços muito longos no Android
+- [x] 0.18 (Novo documento): diálogo no estilo do Photoshop (categorias, predefinições, recentes, salvas), tamanho em px/pol/cm/mm/pt/paica,
+  resolução (ppi ou px/cm), orientação, pranchetas, modo de cor RGB/cinza, profundidade, fundo branco/preto/transparente/personalizado
+- [ ] 0.18: "Tamanho da tela/imagem" para documentos já criados (âncora pronta em `anchorOffset`), miniatura com xadrez na folha transparente
 - [ ] M3: **Reconhecimento de formas, escrita→texto, busca em manuscrito**, templates, adesivos, áudio
 
 ## Brushes (pincéis)
@@ -547,3 +550,20 @@ O dono NÃO baixa zip a cada mudança. Ele aplica **patches** com `npm run patch
 - `CanvasView`: o estabilizador do motor trabalha em px de TELA e pode soltar 0..n pontos por amostra; `catchUp` termina no cursor.
 - UI: `components/EnginePicker.tsx` (cartões + "Ajustes do motor"; compacto = `<select>` na barra de opções), ponta de carimbos no editor
   de pincel personalizado (`BrushPanel`), comandos `engine.*`. `InputController` não quebra se `setPointerCapture` falhar.
+
+### Novo documento (0.18)
+- `core/docSetup.ts` (puro): `DocSpec` (nome, largura/altura + `unit`, `resolution` + `resUnit`, `colorMode`, `bitDepth`, `bg`, `pages`
+  = pranchetas, `paper`, `infinite`), conversões (`toPx`/`fromPx`/`ppi`/`changeUnit`), `DOC_PRESETS` por categoria (`DOC_CATS`), `specErrors`
+  (lado ≤ `MAX_PX` = 30 000 px; o diálogo também exige ≥ 16 px), `memLabel` (como o "Tamanho da imagem" do Photoshop, em MiB), `specToDoc`.
+- **1 unidade do mundo = 1 px do arquivo.** A folha (`Page.size`) guarda pixels; a resolução vai em `HirakuDoc.meta` (`DocMeta`: `title`,
+  `dpi`, `unit`, `colorMode`, `bitDepth`; saneado por `cleanDocMeta`). `Page.transparent?` = fundo transparente. `.hiraku` segue `version: 1`.
+  `cleanPageSize` aceita 16–30 000 px.
+- Renderer: `setTransparent` troca o preenchimento da folha por um xadrez em espaço de TELA (`TilingSprite`, quadrados fixos de 8 px,
+  recortado à parte visível da folha em `drawPaper`).
+- Escala de cinza: `html.doc-gray` (filtro CSS no canvas) + exportações pelo filtro SVG `grayscaleSvg` (o fundo pintado fora do SVG usa
+  `grayHex`). 16/32 bits só ficam registrados (a tela e as exportações são 8 bits por canal).
+- Exportar: folha transparente sai sem fundo em PNG/SVG no modo "Papel" (e o diálogo já abre em "Transparente"); o PDF usa `meta.dpi`
+  para o tamanho físico (`pxToPt(px, dpi)`; sem meta, 96).
+- UI `components/NewDocumentDialog.tsx` (`useNewDoc`/`openNewDocument`; Ctrl+N, menu Arquivo, botão "Novo documento…" na Home).
+  Recentes (`hm-ideas:doc-recent-v1`, 8) e predefinições salvas (`hm-ideas:doc-presets-v1`, 40). Criar chama `createNotebookFromDoc`
+  (ponte registrada pela Home → caderno novo no IndexedDB com o nome do documento; sem a Home, só carrega). `fitActivePage` enquadra a folha.

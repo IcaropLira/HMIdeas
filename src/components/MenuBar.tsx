@@ -13,7 +13,7 @@ import { checkForUpdates, isTauri } from "../core/updater";
 type Item = string | "-" | { label: string; items: Item[] } | { label: string; act: () => void; hint?: string };
 
 const MENUS: { label: string; items: () => Item[] }[] = [
-  { label: "Arquivo", items: () => ["file.home", "-", "file.open", "file.save", "file.attach", "-", "file.export", "file.exportNotebook", "file.importPdf", "file.backup", "-", "page.new", "page.duplicate", "page.prev", "page.next",
+  { label: "Arquivo", items: () => ["file.new", "file.home", "-", "file.open", "file.save", "file.attach", "-", "file.export", "file.exportNotebook", "file.importPdf", "file.backup", "-", "page.new", "page.duplicate", "page.prev", "page.next",
     "-", { label: `Verificar atualizações · v${APP_VERSION}`, act: () => void checkForUpdates(true) },
     ...(isTauri() ? [] : [{ label: "Baixar o app", act: () => { location.href = `${import.meta.env.BASE_URL}download.html`; } } as Item])] },
   { label: "Editar", items: () => ["edit.undo", "edit.redo", "-", "edit.cut", "edit.copy", "edit.paste", "edit.duplicate", "edit.delete", "-",

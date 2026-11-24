@@ -123,3 +123,21 @@ export function exportSvg(els: HirakuElement[], o: SvgOpts): string {
   const bg = o.background ? `<rect x="${f(box.minX)}" y="${f(box.minY)}" width="${f(w)}" height="${f(h)}" fill="${safeColor(o.background, "#FFFFFF")}"/>` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${f(box.minX)} ${f(box.minY)} ${f(w)} ${f(h)}" width="${f(w * k)}" height="${f(h * k)}">${bg}${o.paper ? paperSvg(o.paper, box) : ""}${frames}${rest}</svg>`;
 }
+
+/** Modo de cor "tons de cinza" (0.18): embrulha o conteúdo num filtro que tira a saturação (vale no SVG e ao rasterizar). */
+export function grayscaleSvg(svg: string): string {
+  const open = svg.indexOf(">", svg.indexOf("<svg"));
+  const close = svg.lastIndexOf("</svg>");
+  if (open < 0 || close < 0) return svg;
+  return `${svg.slice(0, open + 1)}<defs><filter id="hm-gray" color-interpolation-filters="sRGB"><feColorMatrix type="saturate" values="0"/></filter></defs><g filter="url(#hm-gray)">${svg.slice(open + 1, close)}</g></svg>`;
+}
+
+/** Cor em cinza pela luminância (Rec. 709), para o fundo pintado fora do SVG. */
+export function grayHex(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const y = Math.round(0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255));
+  const h = y.toString(16).padStart(2, "0").toUpperCase();
+  return `#${h}${h}${h}`;
+}

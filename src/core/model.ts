@@ -450,11 +450,24 @@ export interface Page {
   recordings?: Recording[];
   /** Página "mãe" quando esta é um quadro aninhado (0.15): mostra o caminho de volta. */
   parentPage?: ID;
+  /** Fundo transparente (0.18): xadrez na tela, transparente ao exportar PNG/SVG. */
+  transparent?: boolean;
+}
+
+/** Metadados do documento (0.18, "Novo documento"): nome, resolução e unidade de trabalho, modo de cor. */
+export interface DocMeta {
+  title?: string;
+  /** Pixels por polegada (1 unidade do mundo = 1 px do arquivo). */
+  dpi?: number;
+  unit?: "px" | "in" | "cm" | "mm" | "pt" | "pica";
+  colorMode?: "rgb" | "gray";
+  bitDepth?: 8 | 16 | 32;
 }
 
 export interface HirakuDoc {
   version: 1;
   pages: Page[];
+  meta?: DocMeta;
 }
 
 export const newId = (): ID => crypto.randomUUID();
@@ -652,8 +665,24 @@ export function normalizeDoc(raw: unknown): HirakuDoc {
       starred: p.starred === true ? true : undefined,
       recordings: cleanRecordings(p.recordings),
       parentPage: typeof p.parentPage === "string" && p.parentPage ? p.parentPage : undefined,
+      transparent: p.transparent === true ? true : undefined,
     })),
+    ...(cleanDocMeta(d.meta) ? { meta: cleanDocMeta(d.meta) } : {}),
   };
+}
+
+/** Metadados do documento saneados (0.18). Sem nada válido = sem `meta`. */
+export function cleanDocMeta(m: unknown): DocMeta | undefined {
+  if (!m || typeof m !== "object") return undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const x = m as any;
+  const out: DocMeta = {};
+  if (typeof x.title === "string" && x.title.trim()) out.title = x.title.trim().slice(0, 120);
+  if (Number.isFinite(x.dpi) && x.dpi >= 1 && x.dpi <= 9600) out.dpi = Math.round(x.dpi * 100) / 100;
+  if (["px", "in", "cm", "mm", "pt", "pica"].includes(x.unit)) out.unit = x.unit;
+  if (x.colorMode === "rgb" || x.colorMode === "gray") out.colorMode = x.colorMode;
+  if (x.bitDepth === 8 || x.bitDepth === 16 || x.bitDepth === 32) out.bitDepth = x.bitDepth;
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Link interno saneado (0.15). */

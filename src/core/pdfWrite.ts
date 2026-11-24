@@ -49,4 +49,5 @@ export function makePdf(pages: PdfPage[], title = "HM Ideas"): Uint8Array {
 }
 
 /** Pixels do mundo (96 dpi) → pontos do PDF (72 dpi). */
-export const pxToPt = (px: number) => (px * 72) / 96;
+/** Pixels → pontos do PDF. `dpi` = resolução do documento (0.18); sem ela, 96 (CSS). */
+export const pxToPt = (px: number, dpi = 96) => (px * 72) / (dpi > 0 ? dpi : 96);

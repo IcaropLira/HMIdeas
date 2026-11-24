@@ -1,6 +1,8 @@
 // Registro ÚNICO de comandos do app. Teclado, menus, paleta de comandos, barra contextual e o editor de atalhos
 // leem daqui: um comando = id + nome + categoria + teclas padrão + o que fazer. Trocar o atalho de qualquer coisa
 // é só mudar o mapa de teclas (core/keymap.ts), sem tocar no código.
+import { BOOKMARK_COLORS } from "../core/notebook";
+import { usePageTemplates } from "../core/pageTemplateStore";
 import { create } from "zustand";
 import { defaultCamera, zoomAt } from "../core/camera";
 import {
@@ -136,6 +138,16 @@ function buildCommands(): Command[] {
     { id: "file.attach", cat: "Arquivo", label: "Importar imagem, PDF ou arquivo…", keys: ["Ctrl+Shift+O"], run: () => openInput("hm-attach-input") },
     { id: "page.new", cat: "Arquivo", label: "Nova página", keys: ["Ctrl+Alt+N"], run: () => useDoc.getState().addPage() },
     { id: "page.duplicate", cat: "Arquivo", label: "Duplicar página", run: () => useDoc.getState().duplicatePage(useDoc.getState().activePageId) },
+    { id: "page.rotate", cat: "Arquivo", label: "Girar folha (retrato/paisagem)", when: () => !!selectActivePage(useDoc.getState()).size, run: () => useDoc.getState().rotatePage(useDoc.getState().activePageId) },
+    { id: "page.star", cat: "Arquivo", label: "Favoritar página", checked: () => !!selectActivePage(useDoc.getState()).starred, run: () => { const p = selectActivePage(useDoc.getState()); useDoc.getState().setPageMeta(p.id, { starred: !p.starred }); } },
+    { id: "page.bookmark", cat: "Arquivo", label: "Marcador da página (trocar cor)", run: () => {
+      const p = selectActivePage(useDoc.getState()), i = p.bookmark ? BOOKMARK_COLORS.indexOf(p.bookmark) : -1;
+      useDoc.getState().setPageMeta(p.id, { bookmark: i + 1 < BOOKMARK_COLORS.length ? BOOKMARK_COLORS[i + 1] : undefined });
+    } },
+    { id: "page.saveTemplate", cat: "Arquivo", label: "Salvar página como modelo", run: () => {
+      const p = selectActivePage(useDoc.getState());
+      useUI.getState().showToast(usePageTemplates.getState().add(p, p.name) ? `Modelo “${p.name}” salvo (Páginas → ⋯).` : "Não coube no armazenamento deste dispositivo.");
+    } },
     { id: "page.prev", cat: "Arquivo", label: "Página anterior", keys: ["PageUp"], run: () => goPage(-1) },
     { id: "page.next", cat: "Arquivo", label: "Próxima página", keys: ["PageDown"], run: () => goPage(1) },
 

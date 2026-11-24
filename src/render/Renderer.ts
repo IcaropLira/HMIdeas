@@ -194,14 +194,14 @@ export class Renderer {
         layers[layer].push(x1, y1, x2, y2);
       },
       dot: (x, y, r) => dots.push(x, y, r),
-    }, { scale });
+    }, { scale, sheetH: this.sheet?.h });
     layers.forEach((arr, layer) => {
       if (!arr.length) return;
       for (let i = 0; i < arr.length; i += 4) g.moveTo(arr[i], arr[i + 1]).lineTo(arr[i + 2], arr[i + 3]);
       const accent = layer === 2;
       g.stroke({
         width: accent ? 1.5 : 1,
-        color: accent && kind === "margin" ? MARGIN_COLOR : color,
+        color: accent && (kind === "margin" || kind === "header" || kind === "cornell") ? MARGIN_COLOR : color,
         alpha: layerAlpha(layer as PaperLayer, dark),
       });
     });

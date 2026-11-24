@@ -6,6 +6,7 @@ import { getBrush } from "./brushes";
 import { Camera, defaultCamera } from "./camera";
 import { activeLayerId } from "./layers";
 import type { TextFx } from "./text";
+import { reorderPages, rotatePage as rotatePageFn } from "./notebook";
 import { ArrowHead, FontFamily, HirakuDoc, HirakuElement, ID, LineStyle, LinearType, Page, ShapeType, TextAlign, createDoc, createPage, newId } from "./model";
 
 export type ToolId = "pen" | "eraser" | "hand" | "select" | "lasso" | "text" | "mindmap" | "frame" | "laser" | "laserpen" | "vertex" | "edge" | ShapeType | LinearType;
@@ -47,6 +48,14 @@ interface DocState {
   deletePage: (id: ID) => void;
   movePage: (id: ID, dir: -1 | 1) => void;
   renamePage: (id: ID, name: string) => void;
+  /** Leva a página para a posição `to` (arrastar na barra lateral). */
+  reorderPage: (id: ID, to: number) => void;
+  /** Gira a folha (retrato ↔ paisagem). */
+  rotatePage: (id: ID) => void;
+  /** Marcador colorido e favorita. */
+  setPageMeta: (id: ID, patch: Partial<Pick<Page, "bookmark" | "starred">>) => void;
+  /** Insere uma página pronta (modelo) depois da atual e vai para ela. */
+  insertPage: (page: Page) => void;
   undo: () => void;
   redo: () => void;
   loadDoc: (doc: HirakuDoc) => void;
@@ -195,6 +204,37 @@ export const useDoc = create<DocState>((set, get) => {
       const pages = [...doc.pages];
       [pages[i], pages[j]] = [pages[j], pages[i]];
       commit({ ...doc, pages });
+    },
+
+    reorderPage: (id, to) => {
+      const { doc } = get();
+      const pages = reorderPages(doc.pages, id, to);
+      if (pages !== doc.pages) commit({ ...doc, pages });
+    },
+
+    rotatePage: (id) => {
+      const { doc } = get();
+      const p = doc.pages.find((x) => x.id === id);
+      if (!p?.size) return;
+      commit({ ...doc, pages: doc.pages.map((x) => (x.id === id ? rotatePageFn(x) : x)) });
+    },
+
+    setPageMeta: (id, patch) => {
+      const { doc } = get();
+      commit({ ...doc, pages: doc.pages.map((p) => {
+        if (p.id !== id) return p;
+        const next = { ...p, ...patch };
+        if (!next.bookmark) delete next.bookmark;
+        if (!next.starred) delete next.starred;
+        return next;
+      }) });
+    },
+
+    insertPage: (page) => {
+      const { doc, activePageId } = get();
+      const pages = [...doc.pages];
+      pages.splice(doc.pages.findIndex((p) => p.id === activePageId) + 1, 0, page);
+      commit({ ...doc, pages }, page.id);
     },
 
     renamePage: (id, name) => {

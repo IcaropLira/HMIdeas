@@ -14,8 +14,12 @@ import { pageThumb, safeColor } from "../render/svgThumb";
 import { resetPageCameras } from "../core/pageView";
 import { defaultCamera } from "../core/camera";
 import { useView } from "../core/store";
+import { COVER_PATTERNS, COVER_STYLES, Cover, Folder, STUDY_PAPERS, cleanCover, cleanFolders, coverCss, pageFromTemplate } from "../core/notebook";
+import { usePageTemplates } from "../core/pageTemplateStore";
 
-type Notebook = { id: string; name: string; updatedAt: number; createdAt?: number; color?: string; favorite?: boolean; doc: HirakuDoc };
+type Notebook = { id: string; name: string; updatedAt: number; createdAt?: number; color?: string; favorite?: boolean; folder?: string; cover?: Cover; doc: HirakuDoc };
+const FOLDERS_KEY = "hm-ideas:folders-v1";
+const loadFolders = (): Folder[] => { try { return cleanFolders(JSON.parse(localStorage.getItem(FOLDERS_KEY) || "[]")); } catch { return []; } };
 const DB = "hm-ideas-notebooks", STORE = "notebooks", ACTIVE = "hm-ideas:notebooks:active";
 export const START_HOME_KEY = "hm-ideas:start-home";
 
@@ -35,7 +39,7 @@ async function all(): Promise<Notebook[]> {
     const out: Notebook[] = [];
     for (const n of raw) {
       if (!n?.id || !n.doc?.pages?.length) continue;
-      try { out.push({ ...n, doc: normalizeDoc(n.doc) }); } catch { /* caderno ilegível: fica de fora em vez de derrubar tudo */ }
+      try { out.push({ ...n, cover: cleanCover(n.cover), folder: typeof n.folder === "string" ? n.folder : undefined, doc: normalizeDoc(n.doc) }); } catch { /* caderno ilegível: fica de fora em vez de derrubar tudo */ }
     }
     return out;
   }
@@ -83,6 +87,7 @@ const NEW_PAPERS: { kind: PaperKind; bg: string; label: string }[] = [
   { kind: "iso", bg: "#FFFFFF", label: "Isométrico" },
   { kind: "grid", bg: "#1F3B2D", label: "Lousa" },
   { kind: "blank", bg: DEFAULT_BACKGROUND, label: "Quadro branco" },
+  ...STUDY_PAPERS,
 ];
 
 function ago(t: number): string {
@@ -96,9 +101,17 @@ function ago(t: number): string {
 
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? "Boa noite" : h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite"; };
 
-/** Capa: papel + conteúdo real da primeira página, com a lombada colorida. */
-const Cover = memo(function Cover({ page, color }: { page: Page; color: string }) {
+/** Capa: papel + conteúdo real da primeira página (ou cor/degradê/padrão com título), com a lombada colorida. */
+const CoverArt = memo(function CoverArt({ page, color, cover, title }: { page: Page; color: string; cover?: Cover; title: string }) {
   const { paths, viewBox } = useMemo(() => pageThumb(page), [page]);
+  if (cover && cover.style !== "page") return (
+    <div className="nb-cover" style={{ ["--spine" as string]: color }}>
+      <div className="nb-paper nb-art" style={{ background: coverCss(cover, color) }}>
+        {cover.title && <span className="nb-title">{title}</span>}
+      </div>
+      <span className="nb-spine" />
+    </div>
+  );
   return (
     <div className="nb-cover" style={{ ["--spine" as string]: color }}>
       <div className="nb-paper">
@@ -112,7 +125,7 @@ const Cover = memo(function Cover({ page, color }: { page: Page; color: string }
       <span className="nb-spine" />
     </div>
   );
-}, (a, b) => a.page === b.page && a.color === b.color);
+}, (a, b) => a.page === b.page && a.color === b.color && a.cover === b.cover && a.title === b.title);
 
 export function NotebookManager() {
   const opened = useUI((u) => u.notebooksOpen), setOpened = useUI.getState().setNotebooksOpen;
@@ -122,6 +135,14 @@ export function NotebookManager() {
   useEffect(() => { try { localStorage.setItem("hm-ideas:new-format", fmt); } catch { /* sem armazenamento */ } }, [fmt]);
   const [sort, setSort] = useState<"recent" | "name" | "created">(() => (localStorage.getItem("hm-ideas:home-sort") as "recent") || "recent");
   const [menu, setMenu] = useState<string | null>(null);
+  const [folders, setFoldersState] = useState<Folder[]>(loadFolders);
+  const [folder, setFolder] = useState<string>(() => localStorage.getItem("hm-ideas:home-folder") || "");
+  const [folderEdit, setFolderEdit] = useState<string | null>(null);
+  const [coverFor, setCoverFor] = useState<string | null>(null);
+  const [dropFolder, setDropFolder] = useState<string | null>(null);
+  const pageTemplates = usePageTemplates((t) => t.list);
+  const setFolders = (list: Folder[]) => { setFoldersState(list); try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(list)); } catch { /* sem armazenamento */ } };
+  useEffect(() => { try { localStorage.setItem("hm-ideas:home-folder", folder); } catch { /* sem armazenamento */ } }, [folder]);
   const [deleteTarget, setDeleteTarget] = useState<Notebook | null>(null), [ready, setReady] = useState(false);
   const itemsRef = useRef<Notebook[]>([]), activeRef = useRef(""), readyRef = useRef(false), switching = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -179,12 +200,14 @@ export function NotebookManager() {
 
   const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase();
   const sorted = useMemo(() => {
-    const list = items.filter((n) => norm(n.name).includes(norm(query)));
+    const fid = folder === "none" || folders.some((f) => f.id === folder) ? folder : "";
+    const inFolder = (n: Notebook) => !fid || (fid === "none" ? !n.folder || !folders.some((f) => f.id === n.folder) : n.folder === fid);
+    const list = items.filter((n) => norm(n.name).includes(norm(query)) && (query ? true : inFolder(n)));
     if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name, "pt", { numeric: true }));
     else if (sort === "created") list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
     else list.sort((a, b) => b.updatedAt - a.updatedAt);
     return list;
-  }, [items, query, sort]);
+  }, [items, query, sort, folder, folders]);
   const favorites = sorted.filter((n) => n.favorite);
 
   const saveCurrent = async () => {
@@ -203,17 +226,19 @@ export function NotebookManager() {
     }
     if (close) setOpened(false);
   };
-  const create = async (paper?: { kind: PaperKind; bg: string; label: string }) => {
+  const create = async (paper?: { kind: PaperKind; bg: string; label: string }, fromTemplate?: string) => {
     try {
       await saveCurrent();
       const doc = createDoc();
+      const tpl = fromTemplate ? pageTemplates.find((t) => t.id === fromTemplate) : undefined;
+      if (tpl) doc.pages = [pageFromTemplate(tpl, "Página 1")];
       const size = PAGE_SIZES.find((f) => f.id === fmt)?.size ?? undefined;
-      if (paper) doc.pages = doc.pages.map((p) => ({ ...p, paper: paper.kind, background: paper.bg }));
-      if (size) doc.pages = doc.pages.map((p) => ({ ...p, size }));
+      if (paper && !tpl) doc.pages = doc.pages.map((p) => ({ ...p, paper: paper.kind, background: paper.bg }));
+      if (size && !tpl) doc.pages = doc.pages.map((p) => ({ ...p, size }));
       const used = new Set(itemsRef.current.map((x) => x.name));
       let k = itemsRef.current.length + 1;
       while (used.has(`Caderno ${k}`)) k++;
-      const n: Notebook = { id: newId(), name: `Caderno ${k}`, updatedAt: Date.now(), createdAt: Date.now(), color: COVER_COLORS[k % COVER_COLORS.length], doc };
+      const n: Notebook = { id: newId(), name: `Caderno ${k}`, updatedAt: Date.now(), createdAt: Date.now(), color: COVER_COLORS[k % COVER_COLORS.length], ...(folders.some((f) => f.id === folder) ? { folder } : {}), doc };
       await put(n); update([...itemsRef.current, n]); await switchTo(n); setQuery("");
       toast(`“${n.name}” criado. Toque no nome no topo para voltar aos cadernos.`);
     } catch { toast("Não foi possível criar o caderno."); }
@@ -221,6 +246,24 @@ export function NotebookManager() {
   const patch = async (n: Notebook, p: Partial<Notebook>) => {
     const next = { ...n, ...p };
     try { await put(next); update(itemsRef.current.map((x) => x.id === n.id ? next : x)); } catch { toast("Não foi possível salvar a mudança."); }
+  };
+  const addFolder = () => {
+    const used = new Set(folders.map((f) => f.name));
+    let k = folders.length + 1;
+    while (used.has(`Pasta ${k}`)) k++;
+    const f: Folder = { id: newId(), name: `Pasta ${k}`, color: COVER_COLORS[(k + 2) % COVER_COLORS.length] };
+    setFolders([...folders, f]); setFolder(f.id); setFolderEdit(f.id);
+  };
+  const removeFolder = async (f: Folder) => {
+    setFolders(folders.filter((x) => x.id !== f.id));
+    if (folder === f.id) setFolder("");
+    for (const n of itemsRef.current.filter((x) => x.folder === f.id)) await patch(n, { folder: undefined });
+    toast(`Pasta “${f.name}” apagada. Os cadernos dela continuam em “Todos”.`);
+  };
+  const moveTo = (n: Notebook, id: string | undefined) => {
+    void patch(n, { folder: id });
+    const f = folders.find((x) => x.id === id);
+    toast(f ? `“${n.name}” foi para “${f.name}”.` : `“${n.name}” saiu da pasta.`);
   };
   const duplicate = async (n: Notebook) => {
     try { const copy: Notebook = { ...n, id: newId(), name: `${n.name} (cópia)`, updatedAt: Date.now(), createdAt: Date.now(), favorite: false, doc: parseDoc(serializeDoc(n.doc)) }; await put(copy); update([...itemsRef.current, copy]); }
@@ -255,9 +298,10 @@ export function NotebookManager() {
   const current = items.find((n) => n.id === active);
 
   const card = (n: Notebook) => (
-    <article className={n.id === active ? "nb-card active" : "nb-card"} key={n.id}>
+    <article className={n.id === active ? "nb-card active" : "nb-card"} key={n.id} draggable={!renameId}
+      onDragStart={(e) => { e.dataTransfer.setData("text/x-hm-notebook", n.id); e.dataTransfer.effectAllowed = "move"; }}>
       <button className="nb-open" onClick={() => void switchTo(n)} aria-label={`Abrir ${n.name}`}>
-        <Cover page={n.doc.pages[0]} color={coverOf(n)} />
+        <CoverArt page={n.doc.pages[0]} color={coverOf(n)} cover={n.cover} title={n.name} />
       </button>
       <div className="nb-info">
         {renameId === n.id ? (
@@ -280,6 +324,29 @@ export function NotebookManager() {
             <button role="menuitem" onClick={() => { setRenameId(n.id); setRenameValue(n.name); }}>Renomear</button>
             <button role="menuitem" onClick={() => void duplicate(n)}>Duplicar</button>
             <button role="menuitem" onClick={() => downloadDoc(n.doc, n.name.replace(/[^\w\- À-ú]/g, "").trim() || "caderno")}>Exportar .hiraku</button>
+            <button role="menuitem" onClick={(e) => { e.stopPropagation(); setCoverFor(coverFor === n.id ? null : n.id); }}>Capa…</button>
+            {coverFor === n.id && (
+              <div className="nb-cover-ed" onClick={(e) => e.stopPropagation()}>
+                <div className="seg small" role="radiogroup" aria-label="Estilo da capa">
+                  {COVER_STYLES.map((c) => <button key={c.id} role="radio" aria-checked={(n.cover?.style ?? "page") === c.id} className={(n.cover?.style ?? "page") === c.id ? "on" : ""} onClick={() => void patch(n, { cover: { ...n.cover, style: c.id, title: c.id === "page" ? undefined : n.cover?.title ?? true } })}>{c.label}</button>)}
+                </div>
+                {n.cover?.style === "pattern" && (
+                  <div className="nb-patterns">
+                    {COVER_PATTERNS.map((pt) => <button key={pt.id} className={(n.cover?.pattern ?? "dots") === pt.id ? "nb-pat on" : "nb-pat"} style={{ background: coverCss({ style: "pattern", pattern: pt.id }, coverOf(n)) }} aria-label={pt.label} title={pt.label} onClick={() => void patch(n, { cover: { ...n.cover!, pattern: pt.id } })} />)}
+                  </div>
+                )}
+                {n.cover && n.cover.style !== "page" && (
+                  <label className="nb-check"><input type="checkbox" checked={!!n.cover.title} onChange={(e) => void patch(n, { cover: { ...n.cover!, title: e.target.checked || undefined } })} /> Título na capa</label>
+                )}
+              </div>
+            )}
+            {folders.length > 0 && (
+              <div className="nb-folders-menu" onClick={(e) => e.stopPropagation()}>
+                <small>Mover para</small>
+                {n.folder && <button role="menuitem" onClick={() => { moveTo(n, undefined); setMenu(null); }}>Sem pasta</button>}
+                {folders.filter((f) => f.id !== n.folder).map((f) => <button key={f.id} role="menuitem" onClick={() => { moveTo(n, f.id); setMenu(null); }}><span className="dot" style={{ background: f.color }} />{f.name}</button>)}
+              </div>
+            )}
             <div className="nb-colors" onClick={(e) => e.stopPropagation()}>
               {COVER_COLORS.map((c) => <button key={c} className={coverOf(n) === c ? "swatch on" : "swatch"} style={{ background: c }} aria-label={`Capa ${c}`} onClick={() => { void patch(n, { color: c }); setMenu(null); }} />)}
             </div>
@@ -329,12 +396,47 @@ export function NotebookManager() {
                     <span>{p.label}</span>
                   </button>
                 ))}
+                {pageTemplates.slice(0, 6).map((t) => (
+                  <button key={t.id} className="nb-newcard mine" onClick={() => void create(undefined, t.id)} title={`Criar caderno com o seu modelo “${t.name}”`}>
+                    <PaperSwatch kind={t.page.paper} bg={safeColor(t.page.background, "#FFFFFF")} w={96} h={124} zoom={0.4} />
+                    <span>{t.name}</span>
+                  </button>
+                ))}
                 <button className="nb-newcard tpl" onClick={() => { void create(NEW_PAPERS[NEW_PAPERS.length - 1]).then(() => useUI.getState().setTemplatesOpen(true)); }} title="Criar um caderno e escolher um modelo pronto">
                   <span className="nb-tpl-art"><Icon size={34}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></Icon></span>
                   <span>De um modelo…</span>
                 </button>
               </div>
             </section>
+          )}
+
+          {!query && (
+            <nav className="nb-folders" aria-label="Pastas">
+              {([["", "Todos", items.length], ["none", "Sem pasta", items.filter((n) => !n.folder || !folders.some((f) => f.id === n.folder)).length]] as const).map(([id, label, count]) => (
+                <button key={id || "all"} className={folder === id ? "nb-folder on" : "nb-folder"} onClick={() => setFolder(id)}>{label} <small>{count}</small></button>
+              ))}
+              {folders.map((f) => (
+                <div key={f.id} className={["nb-folder", folder === f.id && "on", dropFolder === f.id && "drop"].filter(Boolean).join(" ")}
+                  onDragOver={(e) => { if (e.dataTransfer.types.includes("text/x-hm-notebook")) { e.preventDefault(); setDropFolder(f.id); } }}
+                  onDragLeave={() => setDropFolder(null)}
+                  onDrop={(e) => { e.preventDefault(); setDropFolder(null); const n = items.find((x) => x.id === e.dataTransfer.getData("text/x-hm-notebook")); if (n) moveTo(n, f.id); }}>
+                  {folderEdit === f.id ? (
+                    <input className="rename" autoFocus defaultValue={f.name} maxLength={40} aria-label="Nome da pasta" onFocus={(e) => e.currentTarget.select()}
+                      onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v) setFolders(folders.map((x) => x.id === f.id ? { ...x, name: v } : x)); setFolderEdit(null); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setFolderEdit(null); }} />
+                  ) : (
+                    <button className="nb-folder-btn" onClick={() => setFolder(f.id)} onDoubleClick={() => setFolderEdit(f.id)} title="Duplo clique renomeia · arraste cadernos para cá">
+                      <span className="dot" style={{ background: f.color }} />{f.name} <small>{items.filter((n) => n.folder === f.id).length}</small>
+                    </button>
+                  )}
+                  {folder === f.id && folderEdit !== f.id && <>
+                    <button className="nb-folder-x" onClick={() => setFolderEdit(f.id)} aria-label={`Renomear pasta ${f.name}`} title="Renomear"><Icon size={14}><path d="M4 20l4-1 11-11a2.1 2.1 0 00-3-3L5 16l-1 4z" /></Icon></button>
+                    <button className="nb-folder-x" onClick={() => void removeFolder(f)} aria-label={`Apagar pasta ${f.name}`} title="Apagar pasta (os cadernos ficam)"><Icon size={14}><path d="M6 6l12 12M18 6L6 18" /></Icon></button>
+                  </>}
+                </div>
+              ))}
+              <button className="nb-folder add" onClick={addFolder} title="Nova pasta"><Icon size={16}><path d="M12 5v14M5 12h14" /></Icon> Pasta</button>
+            </nav>
           )}
 
           {favorites.length > 0 && !query && (
@@ -346,7 +448,7 @@ export function NotebookManager() {
 
           <section>
             <div className="home-row">
-              <h2>{query ? `Resultados para “${query}”` : "Todos os cadernos"} <small>{sorted.length}</small></h2>
+              <h2>{query ? `Resultados para “${query}”` : folder === "" ? "Todos os cadernos" : folder === "none" ? "Sem pasta" : folders.find((f) => f.id === folder)?.name ?? "Pasta"} <small>{sorted.length}</small></h2>
               <div className="seg small" role="tablist" aria-label="Ordenar">
                 {([["recent", "Recentes"], ["name", "Nome"], ["created", "Criação"]] as const).map(([v, l]) => (
                   <button key={v} role="tab" aria-selected={sort === v} className={sort === v ? "on" : ""} onClick={() => { setSort(v); localStorage.setItem("hm-ideas:home-sort", v); }}>{l}</button>
